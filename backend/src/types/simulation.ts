@@ -92,3 +92,6 @@ export interface SimulationEvent {
   timestamp: number;
   data: any;
 }
+
+// Re-export Trader and TraderProfile types to avoid circular dependency issues
+export type { Trader, TraderProfile };

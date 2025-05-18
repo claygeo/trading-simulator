@@ -1,5 +1,5 @@
 // frontend/src/services/websocket.ts
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 const WS_BASE_URL = process.env.REACT_APP_WS_BASE_URL || 'ws://localhost:3001';
 
@@ -18,6 +18,17 @@ export const useWebSocket = (simulationId?: string) => {
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
   const [messages, setMessages] = useState<WebSocketMessage[]>([]);
   
+  // Store the simulationId in a ref to avoid dependency issues
+  const simulationIdRef = useRef<string | undefined>(simulationId);
+  
+  // Update the ref when the simulationId changes
+  useEffect(() => {
+    simulationIdRef.current = simulationId;
+  }, [simulationId]);
+
+  // Track the last processed message to avoid duplicate processing
+  const lastProcessedMessageRef = useRef<string>('');
+  
   useEffect(() => {
     // Create WebSocket connection
     const ws = new WebSocket(WS_BASE_URL);
@@ -27,10 +38,10 @@ export const useWebSocket = (simulationId?: string) => {
       setIsConnected(true);
       
       // If a simulation ID is provided, send a message to subscribe to that simulation
-      if (simulationId) {
+      if (simulationIdRef.current) {
         ws.send(JSON.stringify({ 
           type: 'subscribe', 
-          simulationId 
+          simulationId: simulationIdRef.current 
         }));
       }
     };
@@ -38,8 +49,33 @@ export const useWebSocket = (simulationId?: string) => {
     ws.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data) as WebSocketMessage;
+        
+        // Create a unique identifier for this message to avoid duplicate processing
+        const messageId = `${message.simulationId}-${message.event.type}-${message.event.timestamp}`;
+        
+        // Skip if we've already processed this exact message
+        if (messageId === lastProcessedMessageRef.current) {
+          return;
+        }
+        
+        // Store this message ID as the last processed
+        lastProcessedMessageRef.current = messageId;
+        
+        // Only process messages for our current simulation
+        if (simulationIdRef.current && message.simulationId !== simulationIdRef.current) {
+          return;
+        }
+        
         setLastMessage(message);
-        setMessages(prev => [...prev, message]);
+        
+        // Limit the number of stored messages to prevent memory issues
+        setMessages(prev => {
+          const newMessages = [...prev, message];
+          if (newMessages.length > 100) {
+            return newMessages.slice(-100);
+          }
+          return newMessages;
+        });
       } catch (error) {
         console.error('Error parsing message:', error);
       }
@@ -58,9 +94,11 @@ export const useWebSocket = (simulationId?: string) => {
     
     // Clean up on unmount
     return () => {
-      ws.close();
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
     };
-  }, [simulationId]);
+  }, []); // Empty dependency array to only create the connection once
   
   // Function to send messages to the server
   const sendMessage = (message: any) => {

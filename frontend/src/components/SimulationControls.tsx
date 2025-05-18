@@ -1,6 +1,14 @@
 // frontend/src/components/SimulationControls.tsx
 import React, { useState } from 'react';
-import { SimulationParameters } from '../types';
+
+interface SimulationParameters {
+  timeCompressionFactor: number;
+  initialPrice: number;
+  initialLiquidity: number;
+  volatilityFactor: number;
+  duration: number;
+  scenarioType: string;
+}
 
 interface SimulationControlsProps {
   isRunning: boolean;
@@ -19,112 +27,92 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
   onReset,
   parameters
 }) => {
-  const [showParameters, setShowParameters] = useState(false);
-  
-  const handleToggleParameters = () => {
-    setShowParameters(!showParameters);
+  const [speed, setSpeed] = useState<number>(parameters.timeCompressionFactor);
+
+  const handleSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newSpeed = parseInt(e.target.value, 10);
+    setSpeed(newSpeed);
+    // In a real implementation, you would call an API to change the simulation speed
   };
-  
-  const formatScenario = (scenario: string) => {
-    return scenario
-      .split('_')
-      .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ');
-  };
-  
+
   return (
-    <div className="bg-white p-4 rounded-lg shadow">
-      <h2 className="text-xl font-semibold mb-4">Simulation Controls</h2>
+    <div className="bg-surface rounded-lg shadow-lg p-6">
+      <h2 className="text-xl font-bold mb-4">Simulation Controls</h2>
       
-      <div className="flex space-x-4 mb-4">
-        {!isRunning || isPaused ? (
-          <button 
-            onClick={onStart}
-            className="bg-green-500 hover:bg-green-600 text-white font-semibold py-2 px-6 rounded transition-colors"
-          >
-            {isPaused ? 'Resume' : 'Start'} Simulation
-          </button>
-        ) : (
-          <button 
-            onClick={onPause}
-            className="bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-2 px-6 rounded transition-colors"
-          >
-            Pause Simulation
-          </button>
-        )}
-        
-        <button 
-          onClick={onReset}
-          className="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-6 rounded transition-colors"
-        >
-          Reset Simulation
-        </button>
-        
-        <button 
-          onClick={handleToggleParameters}
-          className="bg-blue-500 hover:bg-blue-600 text-white font-semibold py-2 px-6 rounded transition-colors"
-        >
-          {showParameters ? 'Hide' : 'Show'} Parameters
-        </button>
-      </div>
-      
-      {showParameters && (
-        <div className="bg-gray-100 p-4 rounded">
-          <h3 className="font-semibold mb-3">Simulation Parameters</h3>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="flex flex-col">
+          <div className="mb-4">
+            <div className="flex space-x-4">
+              {!isRunning || isPaused ? (
+                <button 
+                  onClick={onStart}
+                  className="px-4 py-2 bg-accent text-white rounded hover:bg-accent-hover transition"
+                >
+                  {isPaused ? 'Resume' : 'Start'} Simulation
+                </button>
+              ) : (
+                <button 
+                  onClick={onPause} 
+                  className="px-4 py-2 bg-warning text-text-primary rounded hover:bg-warning-hover transition"
+                >
+                  Pause Simulation
+                </button>
+              )}
+              
+              <button 
+                onClick={onReset}
+                className="px-4 py-2 bg-danger text-white rounded hover:bg-danger-hover transition"
+              >
+                Reset Simulation
+              </button>
+            </div>
+          </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <div className="text-gray-600 text-sm">Scenario</div>
-              <div className="font-semibold">
-                {formatScenario(parameters.scenarioType)}
-              </div>
-            </div>
-            
-            <div>
-              <div className="text-gray-600 text-sm">Initial Price</div>
-              <div className="font-semibold">
-                ${parameters.initialPrice.toFixed(2)}
-              </div>
-            </div>
-            
-            <div>
-              <div className="text-gray-600 text-sm">Initial Liquidity</div>
-              <div className="font-semibold">
-                ${parameters.initialLiquidity.toLocaleString()}
-              </div>
-            </div>
-            
-            <div>
-              <div className="text-gray-600 text-sm">Volatility Factor</div>
-              <div className="font-semibold">
-                {parameters.volatilityFactor.toFixed(2)}x
-              </div>
-            </div>
-            
-            <div>
-              <div className="text-gray-600 text-sm">Time Compression</div>
-              <div className="font-semibold">
-                1 day = {parameters.timeCompressionFactor} seconds
-              </div>
-            </div>
-            
-            <div>
-              <div className="text-gray-600 text-sm">Duration</div>
-              <div className="font-semibold">
-                {parameters.duration} minutes
-              </div>
-            </div>
+          <div>
+            <label htmlFor="speed" className="block mb-2">
+              Simulation Speed: {speed}x
+            </label>
+            <input
+              type="range"
+              id="speed"
+              min="1"
+              max="60"
+              step="1"
+              value={speed}
+              onChange={handleSpeedChange}
+              className="w-full h-2 bg-surface-variant rounded-lg appearance-none cursor-pointer"
+            />
           </div>
         </div>
-      )}
-      
-      <div className="mt-4">
-        <div className="flex items-center">
-          <div className="text-gray-600 mr-2">Simulation Status:</div>
-          <div className={`w-3 h-3 rounded-full mr-2 ${isRunning && !isPaused ? 'bg-green-500' : isPaused ? 'bg-yellow-500' : 'bg-gray-500'}`}></div>
-          <div className="font-semibold">
-            {isRunning && !isPaused ? 'Running' : isPaused ? 'Paused' : 'Ready'}
+        
+        <div className="flex flex-col">
+          <h3 className="font-medium mb-2">Simulation Parameters</h3>
+          
+          <div className="grid grid-cols-2 gap-2 text-text-secondary text-sm">
+            <div>Initial Price:</div>
+            <div className="text-text-primary">${parameters.initialPrice.toFixed(2)}</div>
+            
+            <div>Liquidity:</div>
+            <div className="text-text-primary">${(parameters.initialLiquidity / 1000000).toFixed(2)}M</div>
+            
+            <div>Volatility:</div>
+            <div className="text-text-primary">{(parameters.volatilityFactor * 100).toFixed(0)}%</div>
+            
+            <div>Duration:</div>
+            <div className="text-text-primary">{parameters.duration / 60} hours</div>
+            
+            <div>Scenario:</div>
+            <div className="text-text-primary capitalize">{parameters.scenarioType.replace('_', ' ')}</div>
           </div>
+        </div>
+      </div>
+      
+      <div className="mt-4 border-t border-surface-variant pt-4 flex items-center">
+        <div className="mr-4">
+          <span className="text-text-secondary">Status: </span>
+          <span className={`font-medium ${isRunning && !isPaused ? 'text-success' : isPaused ? 'text-warning' : 'text-text-secondary'}`}>
+            {isRunning ? (isPaused ? 'Paused' : 'Running') : 'Stopped'}
+          </span>
         </div>
       </div>
     </div>

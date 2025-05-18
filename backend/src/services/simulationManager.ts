@@ -4,8 +4,14 @@ import {
   SimulationState, 
   SimulationParameters,
   SimulationEvent,
-  TradeAction
+  TradeAction,
+  PricePoint,
+  TraderPosition,
+  Trade,
+  OrderBookLevel,
+  OrderBook
 } from '../types/simulation';
+import { Trader, TraderProfile } from '../types/traders';
 import duneApi from '../api/duneApi';
 import traderService from './traderService';
 import { WebSocket } from 'ws';
@@ -39,15 +45,67 @@ class SimulationManager {
   }
   
   async createSimulation(parameters: Partial<SimulationParameters> = {}): Promise<SimulationState> {
-    // Fetch trader data
-    const rawData = await duneApi.getTraderData();
-    if (!rawData || !rawData.result || !Array.isArray(rawData.result.rows)) {
-      throw new Error('Invalid data format from Dune API');
+    try {
+      // Fetch trader data
+      console.log('Fetching trader data from Dune API...');
+      const rawData = await duneApi.getTraderData();
+      
+      if (!rawData || !rawData.result || !Array.isArray(rawData.result.rows)) {
+        console.error('Invalid data format from Dune API:', rawData);
+        // If no data, create some dummy traders for testing
+        const dummyTraders = Array.from({ length: 10 }, (_, i) => ({
+          position: i + 1,
+          wallet: `Trader${i+1}`,
+          net_pnl: Math.random() * 100000 - 50000,
+          total_volume: 100000 + Math.random() * 900000,
+          buy_volume: 50000 + Math.random() * 450000,
+          sell_volume: 50000 + Math.random() * 450000,
+          bullx_portfolio: 'Portfolio',
+          trade_count: 10 + Math.floor(Math.random() * 90),
+          fees_usd: 500 + Math.random() * 4500
+        }));
+        
+        console.log('Created dummy traders:', dummyTraders.length);
+        const traders = traderService.transformRawTraders(dummyTraders);
+        const traderProfiles = traderService.generateTraderProfiles(traders);
+        
+        // Create simulation with dummy data
+        return this.finalizeSimulationCreation(parameters, traders, traderProfiles);
+      }
+      
+      console.log('Trader data received, rows:', rawData.result.rows.length);
+      const traders = traderService.transformRawTraders(rawData.result.rows);
+      const traderProfiles = traderService.generateTraderProfiles(traders);
+      
+      return this.finalizeSimulationCreation(parameters, traders, traderProfiles);
+    } catch (error) {
+      console.error('Error creating simulation:', error);
+      // Create simulation with dummy data on error
+      const dummyTraders = Array.from({ length: 10 }, (_, i) => ({
+        position: i + 1,
+        wallet: `Trader${i+1}`,
+        net_pnl: Math.random() * 100000 - 50000,
+        total_volume: 100000 + Math.random() * 900000,
+        buy_volume: 50000 + Math.random() * 450000,
+        sell_volume: 50000 + Math.random() * 450000,
+        bullx_portfolio: 'Portfolio',
+        trade_count: 10 + Math.floor(Math.random() * 90),
+        fees_usd: 500 + Math.random() * 4500
+      }));
+      
+      const traders = traderService.transformRawTraders(dummyTraders);
+      const traderProfiles = traderService.generateTraderProfiles(traders);
+      
+      return this.finalizeSimulationCreation(parameters, traders, traderProfiles);
     }
-    
-    const traders = traderService.transformRawTraders(rawData.result.rows);
-    const traderProfiles = traderService.generateTraderProfiles(traders);
-    
+  }
+  
+  // Helper method to create the simulation object
+  private finalizeSimulationCreation(
+    parameters: Partial<SimulationParameters>,
+    traders: Trader[],
+    traderProfiles: TraderProfile[]
+  ): SimulationState {
     // Create default parameters
     const defaultParams: SimulationParameters = {
       timeCompressionFactor: 30, // 1 day = 30 seconds
@@ -66,6 +124,30 @@ class SimulationManager {
     
     // Create the initial simulation state
     const now = Date.now();
+    
+    // Create initial price history (last 10 minutes)
+    const initialPriceHistory: PricePoint[] = [];
+    for (let i = 0; i < 10; i++) {
+      const timestamp = now - (10 - i) * 60000; // Going back in time
+      const basePrice = finalParams.initialPrice;
+      // Add some random variation to create a realistic price history
+      const variation = (Math.random() - 0.5) * 0.02; // ±1% variation
+      const close = basePrice * (1 + variation);
+      const open = close * (1 + (Math.random() - 0.5) * 0.01);
+      const high = Math.max(open, close) * (1 + Math.random() * 0.005);
+      const low = Math.min(open, close) * (1 - Math.random() * 0.005);
+      const volume = Math.random() * 100000;
+      
+      initialPriceHistory.push({
+        timestamp,
+        open,
+        high,
+        low,
+        close,
+        volume
+      });
+    }
+    
     const simulation: SimulationState = {
       id,
       startTime: now,
@@ -79,14 +161,7 @@ class SimulationManager {
         trend: 'sideways',
         volume: finalParams.initialLiquidity * 0.1
       },
-      priceHistory: [{
-        timestamp: now,
-        open: finalParams.initialPrice,
-        high: finalParams.initialPrice,
-        low: finalParams.initialPrice,
-        close: finalParams.initialPrice,
-        volume: 0
-      }],
+      priceHistory: initialPriceHistory,
       currentPrice: finalParams.initialPrice,
       orderBook: {
         bids: this.generateInitialOrderBook('bids', finalParams.initialPrice, finalParams.initialLiquidity),
@@ -103,6 +178,8 @@ class SimulationManager {
     // Store the simulation
     this.simulations.set(id, simulation);
     
+    console.log(`Simulation ${id} created with ${traders.length} traders`);
+    
     return simulation;
   }
   
@@ -110,8 +187,8 @@ class SimulationManager {
     side: 'bids' | 'asks', 
     basePrice: number, 
     liquidity: number
-  ) {
-    const levels: { price: number; quantity: number }[] = [];
+  ): OrderBookLevel[] {
+    const levels: OrderBookLevel[] = [];
     const count = 20; // Number of levels
     
     // Spread percentage from base price
@@ -214,19 +291,35 @@ class SimulationManager {
     const now = Date.now();
     const params = simulation.parameters;
     
+    // Create initial price history (last 10 minutes)
+    const initialPriceHistory: PricePoint[] = [];
+    for (let i = 0; i < 10; i++) {
+      const timestamp = now - (10 - i) * 60000; // Going back in time
+      const basePrice = params.initialPrice;
+      // Add some random variation to create a realistic price history
+      const variation = (Math.random() - 0.5) * 0.02; // ±1% variation
+      const close = basePrice * (1 + variation);
+      const open = close * (1 + (Math.random() - 0.5) * 0.01);
+      const high = Math.max(open, close) * (1 + Math.random() * 0.005);
+      const low = Math.min(open, close) * (1 - Math.random() * 0.005);
+      const volume = Math.random() * 100000;
+      
+      initialPriceHistory.push({
+        timestamp,
+        open,
+        high,
+        low,
+        close,
+        volume
+      });
+    }
+    
     simulation.startTime = now;
     simulation.currentTime = now;
     simulation.endTime = now + (params.duration * 60 * 1000);
     simulation.isRunning = false;
     simulation.isPaused = false;
-    simulation.priceHistory = [{
-      timestamp: now,
-      open: params.initialPrice,
-      high: params.initialPrice,
-      low: params.initialPrice,
-      close: params.initialPrice,
-      volume: 0
-    }];
+    simulation.priceHistory = initialPriceHistory;
     simulation.currentPrice = params.initialPrice;
     simulation.orderBook = {
       bids: this.generateInitialOrderBook('bids', params.initialPrice, params.initialLiquidity),
@@ -246,6 +339,11 @@ class SimulationManager {
     if (!simulation || !simulation.isRunning || simulation.isPaused) {
       return;
     }
+    
+    console.log(`Advancing simulation ${id} at time ${new Date(simulation.currentTime).toISOString()}`);
+    console.log(`Current price: ${simulation.currentPrice}`);
+    console.log(`Active positions: ${simulation.activePositions.length}`);
+    console.log(`Recent trades: ${simulation.recentTrades.length}`);
     
     // Update the current time
     const timeStep = 100; // ms
@@ -281,7 +379,7 @@ class SimulationManager {
   }
   
   private updatePrice(simulation: SimulationState): void {
-    const { marketConditions, currentPrice, parameters } = simulation;
+    const { marketConditions, currentPrice } = simulation;
     
     // Base volatility adjusted by the volatility factor
     const baseVolatility = marketConditions.volatility;
@@ -332,17 +430,31 @@ class SimulationManager {
       const profile = trader;
       const { tradingFrequency } = profile;
       
-      // Probability of action in this step
-      const actionProbability = tradingFrequency * 0.01; // 0.01 = 1% chance per step for highest frequency
+      // SIGNIFICANTLY increase probability of action to generate more trades
+      // This is much higher than a real trading system would be but helps for visualization
+      const actionProbability = tradingFrequency * 0.2; // 20x more likely to trade!
       
       if (Math.random() < actionProbability) {
         // Decide whether to enter or exit position
         this.processTraderDecision(simulation, trader);
       }
     });
+    
+    // Also, if we have no trades yet, force some initial trades
+    if (simulation.recentTrades.length === 0 && simulation.traders.length > 0) {
+      // Force at least 3 random traders to make trades on startup
+      const forcedTraderCount = Math.min(3, simulation.traders.length);
+      const randomTraders = [...simulation.traders].sort(() => 0.5 - Math.random()).slice(0, forcedTraderCount);
+      
+      randomTraders.forEach(trader => {
+        this.processTraderDecision(simulation, trader);
+      });
+      
+      console.log(`Forced ${forcedTraderCount} initial trades`);
+    }
   }
   
-  private processTraderDecision(simulation: SimulationState, traderProfile: any): void {
+  private processTraderDecision(simulation: SimulationState, traderProfile: TraderProfile): void {
     const trader = traderProfile.trader;
     
     // Check if trader has active position
@@ -357,7 +469,7 @@ class SimulationManager {
     }
   }
   
-  private processEntryDecision(simulation: SimulationState, traderProfile: any): void {
+  private processEntryDecision(simulation: SimulationState, traderProfile: TraderProfile): void {
     const { entryThreshold, positionSizing, sentimentSensitivity } = traderProfile;
     const trader = traderProfile.trader;
     
@@ -375,23 +487,23 @@ class SimulationManager {
     const sentimentBoost = marketTrend === 'bullish' ? sentimentSensitivity * 0.01 : 
                            marketTrend === 'bearish' ? -sentimentSensitivity * 0.01 : 0;
     
-    // Adjust threshold based on sentiment
-    const adjustedThreshold = entryThreshold * (1 - sentimentBoost);
+    // Adjust threshold based on sentiment - lower threshold for more trades
+    const adjustedThreshold = entryThreshold * (1 - sentimentBoost) * 0.5; // Reduced threshold by 50%
     
     // Check if price movement exceeds threshold
     if (Math.abs(priceChange) > adjustedThreshold) {
       // Determine action based on price direction and trader's characteristics
       const action: TradeAction = priceChange > 0 ? 'buy' : 'sell';
       
-      // Skip if this doesn't match trader's style
-      if (trader.riskProfile === 'conservative' && priceChange < 0) return;
+      // Removed this restriction to generate more trades
+      // if (trader.riskProfile === 'conservative' && priceChange < 0) return;
       
       // Calculate position size based on trader's profile
       const maxPositionValue = trader.totalVolume * 0.1 * positionSizing;
       const quantity = maxPositionValue / simulation.currentPrice;
       
       // Create a new position
-      const position = {
+      const position: TraderPosition = {
         trader: trader,
         entryPrice: simulation.currentPrice,
         quantity: quantity,
@@ -404,7 +516,7 @@ class SimulationManager {
       simulation.activePositions.push(position);
       
       // Create a trade record
-      const trade = {
+      const trade: Trade = {
         id: uuidv4(),
         timestamp: simulation.currentTime,
         trader: trader,
@@ -442,7 +554,7 @@ class SimulationManager {
     }
   }
   
-  private processExitDecision(simulation: SimulationState, traderProfile: any, position: any): void {
+  private processExitDecision(simulation: SimulationState, traderProfile: TraderProfile, position: TraderPosition): void {
     const { exitProfitThreshold, exitLossThreshold } = traderProfile;
     
     // Calculate current P&L
@@ -459,29 +571,35 @@ class SimulationManager {
     const shouldTakeProfit = pnlPercentage >= exitProfitThreshold;
     const shouldCutLoss = pnlPercentage <= -exitLossThreshold;
     
-    if (shouldTakeProfit || shouldCutLoss) {
+    // Force position close more frequently
+    const forceClose = Math.random() < 0.01; // 1% chance to just close position
+    
+    if (shouldTakeProfit || shouldCutLoss || forceClose) {
       // Close the position
       this.closePosition(simulation, position);
     }
   }
   
-  private closePosition(simulation: SimulationState, position: any): void {
+  private closePosition(simulation: SimulationState, position: TraderPosition): void {
     // Remove from active positions
     simulation.activePositions = simulation.activePositions.filter(
       p => p.trader.walletAddress !== position.trader.walletAddress
     );
     
     // Add to closed positions
-    position.exitPrice = simulation.currentPrice;
-    position.exitTime = simulation.currentTime;
-    simulation.closedPositions.push(position);
+    const closedPosition = {
+      ...position,
+      exitPrice: simulation.currentPrice,
+      exitTime: simulation.currentTime
+    };
+    simulation.closedPositions.push(closedPosition);
     
     // Create a trade record
-    const trade = {
+    const trade: Trade = {
       id: uuidv4(),
       timestamp: simulation.currentTime,
       trader: position.trader,
-      action: position.currentPnl >= 0 ? 'sell' as TradeAction : 'buy' as TradeAction,
+      action: position.currentPnl >= 0 ? 'sell' : 'buy',
       price: simulation.currentPrice,
       quantity: position.quantity,
       value: simulation.currentPrice * position.quantity,
@@ -508,11 +626,7 @@ class SimulationManager {
     this.broadcastEvent(simulation.id, {
       type: 'position_close',
       timestamp: simulation.currentTime,
-      data: {
-        ...position,
-        exitPrice: simulation.currentPrice,
-        exitTime: simulation.currentTime
-      }
+      data: closedPosition
     });
     
     // Update the last candle volume
@@ -554,23 +668,38 @@ class SimulationManager {
     // Update timestamp
     orderBook.lastUpdateTime = simulation.currentTime;
     
-    // Regenerate order book around current price
-    // This is a simplified model; in reality, the order book would evolve more organically
+    // Generate more realistic levels - vary quantity at each level
+    // to make it more dynamic
+    const generateLevel = (side: 'bids' | 'asks', basePrice: number, index: number, volatility: number): OrderBookLevel => {
+      // Adjust spread based on volatility
+      const spread = 0.001 * (1 + volatility * 5);
+      const distanceFromMid = (index + 1) * spread;
+      const price = side === 'bids' 
+        ? basePrice * (1 - distanceFromMid)
+        : basePrice * (1 + distanceFromMid);
+      
+      // Add more randomness to quantity based on volatility and market conditions
+      const volumeFactor = Math.exp(-index / 5);
+      const randomFactor = 0.5 + (Math.random() * volatility * 10);
+      const quantity = (marketConditions.volume / 100) * volumeFactor * randomFactor;
+      
+      return {
+        price,
+        quantity
+      };
+    };
     
-    // Adjust spread based on volatility
-    const spread = 0.001 * (1 + marketConditions.volatility * 5);
+    // Create new bids and asks with more variation
+    const bidBasePrice = currentPrice * 0.999; // Slight spread
+    const askBasePrice = currentPrice * 1.001; // Slight spread
     
-    // Create new bids and asks
-    orderBook.bids = this.generateInitialOrderBook(
-      'bids', 
-      currentPrice * (1 - spread/2), 
-      marketConditions.volume
+    // Generate multiple levels with varying quantities
+    orderBook.bids = Array.from({ length: 15 }, (_, i) => 
+      generateLevel('bids', bidBasePrice, i, marketConditions.volatility)
     );
     
-    orderBook.asks = this.generateInitialOrderBook(
-      'asks', 
-      currentPrice * (1 + spread/2), 
-      marketConditions.volume
+    orderBook.asks = Array.from({ length: 15 }, (_, i) => 
+      generateLevel('asks', askBasePrice, i, marketConditions.volatility)
     );
   }
 }
