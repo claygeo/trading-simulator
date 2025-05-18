@@ -11,6 +11,14 @@ interface CacheEntry<T> {
   data: T;
 }
 
+interface DuneResult {
+  result: {
+    rows: any[];
+    metadata: any;
+  };
+  // Add other properties as needed
+}
+
 class DuneApiClient {
   private client: DuneClient;
   private cachePath: string;
@@ -71,16 +79,16 @@ class DuneApiClient {
     return ageInSeconds < this.cacheTTL;
   }
   
-  async getTraderData() {
+  async getTraderData(): Promise<DuneResult> {
     const queryId = 4436353; // Pump.fun traders query ID
     
     try {
       // Check cache first
-      const cachedData = await this.readFromCache(queryId);
+      const cachedData = await this.readFromCache<DuneResult>(queryId);
       
       if (this.isCacheValid(cachedData)) {
         console.log('Returning cached data for query', queryId);
-        return cachedData.data;
+        return cachedData!.data; // Add non-null assertion
       }
       
       // If cache is invalid or doesn't exist, fetch from Dune
@@ -90,18 +98,24 @@ class DuneApiClient {
       // Cache the result
       await this.writeToCache(queryId, queryResult);
       
-      return queryResult;
+      return queryResult as DuneResult;
     } catch (error) {
       console.error('Error fetching data from Dune:', error);
       
       // If fetching fails, try to return potentially stale cache as fallback
-      const cachedData = await this.readFromCache(queryId);
+      const cachedData = await this.readFromCache<DuneResult>(queryId);
       if (cachedData) {
         console.log('Returning stale cached data as fallback');
         return cachedData.data;
       }
       
-      throw error;
+      // If no cached data is available, return a default empty result
+      return {
+        result: {
+          rows: [],
+          metadata: {}
+        }
+      };
     }
   }
 }

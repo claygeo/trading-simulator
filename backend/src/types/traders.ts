@@ -24,6 +24,7 @@ export interface Trader {
   winRate: number;
   riskProfile: 'conservative' | 'moderate' | 'aggressive';
   portfolioEfficiency: number; // PnL relative to volume
+  simulationPnl?: number;
 }
 
 export interface TraderProfile {

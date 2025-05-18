@@ -3,7 +3,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { 
   SimulationState, 
   SimulationParameters,
-  SimulationEvent
+  SimulationEvent,
+  TradeAction
 } from '../types/simulation';
 import duneApi from '../api/duneApi';
 import traderService from './traderService';
@@ -40,6 +41,10 @@ class SimulationManager {
   async createSimulation(parameters: Partial<SimulationParameters> = {}): Promise<SimulationState> {
     // Fetch trader data
     const rawData = await duneApi.getTraderData();
+    if (!rawData || !rawData.result || !Array.isArray(rawData.result.rows)) {
+      throw new Error('Invalid data format from Dune API');
+    }
+    
     const traders = traderService.transformRawTraders(rawData.result.rows);
     const traderProfiles = traderService.generateTraderProfiles(traders);
     
@@ -376,7 +381,7 @@ class SimulationManager {
     // Check if price movement exceeds threshold
     if (Math.abs(priceChange) > adjustedThreshold) {
       // Determine action based on price direction and trader's characteristics
-      const action = priceChange > 0 ? 'buy' : 'sell';
+      const action: TradeAction = priceChange > 0 ? 'buy' : 'sell';
       
       // Skip if this doesn't match trader's style
       if (trader.riskProfile === 'conservative' && priceChange < 0) return;
@@ -403,7 +408,7 @@ class SimulationManager {
         id: uuidv4(),
         timestamp: simulation.currentTime,
         trader: trader,
-        action: action as 'buy' | 'sell',
+        action,
         price: simulation.currentPrice,
         quantity: quantity,
         value: simulation.currentPrice * quantity,
@@ -476,7 +481,7 @@ class SimulationManager {
       id: uuidv4(),
       timestamp: simulation.currentTime,
       trader: position.trader,
-      action: position.currentPnl >= 0 ? 'sell' : 'buy', // Opposite of entry
+      action: position.currentPnl >= 0 ? 'sell' as TradeAction : 'buy' as TradeAction,
       price: simulation.currentPrice,
       quantity: position.quantity,
       value: simulation.currentPrice * position.quantity,

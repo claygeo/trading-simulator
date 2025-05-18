@@ -1,16 +1,21 @@
 // backend/src/api/routes.ts
-import express from 'express';
+import express, { Request, Response } from 'express';
 import duneApi from './duneApi';
 import traderService from '../services/traderService';
 import { simulationManager } from '../services/simulationManager';
+import { RawTrader } from '../types/traders';
 
 const router = express.Router();
 
 // Get all traders
-router.get('/traders', async (req, res) => {
+router.get('/traders', async (req: Request, res: Response) => {
   try {
     const rawData = await duneApi.getTraderData();
-    const traders = traderService.transformRawTraders(rawData.result.rows);
+    if (!rawData || !rawData.result || !Array.isArray(rawData.result.rows)) {
+      throw new Error('Invalid data format from Dune API');
+    }
+    
+    const traders = traderService.transformRawTraders(rawData.result.rows as RawTrader[]);
     res.json(traders);
   } catch (error) {
     console.error('Error fetching traders:', error);
@@ -19,10 +24,14 @@ router.get('/traders', async (req, res) => {
 });
 
 // Get trader profiles (includes derived behavior metrics)
-router.get('/trader-profiles', async (req, res) => {
+router.get('/trader-profiles', async (req: Request, res: Response) => {
   try {
     const rawData = await duneApi.getTraderData();
-    const traders = traderService.transformRawTraders(rawData.result.rows);
+    if (!rawData || !rawData.result || !Array.isArray(rawData.result.rows)) {
+      throw new Error('Invalid data format from Dune API');
+    }
+    
+    const traders = traderService.transformRawTraders(rawData.result.rows as RawTrader[]);
     const profiles = traderService.generateTraderProfiles(traders);
     res.json(profiles);
   } catch (error) {
@@ -32,10 +41,10 @@ router.get('/trader-profiles', async (req, res) => {
 });
 
 // Create a new simulation
-router.post('/simulations', (req, res) => {
+router.post('/simulations', async (req: Request, res: Response) => {
   try {
     const parameters = req.body;
-    const simulation = simulationManager.createSimulation(parameters);
+    const simulation = await simulationManager.createSimulation(parameters);
     res.json({ simulationId: simulation.id });
   } catch (error) {
     console.error('Error creating simulation:', error);
@@ -44,13 +53,13 @@ router.post('/simulations', (req, res) => {
 });
 
 // Get all simulations
-router.get('/simulations', (req, res) => {
+router.get('/simulations', (req: Request, res: Response) => {
   const simulations = simulationManager.getAllSimulations();
   res.json(simulations);
 });
 
 // Get a specific simulation
-router.get('/simulations/:id', (req, res) => {
+router.get('/simulations/:id', (req: Request, res: Response) => {
   const { id } = req.params;
   const simulation = simulationManager.getSimulation(id);
   
@@ -62,7 +71,7 @@ router.get('/simulations/:id', (req, res) => {
 });
 
 // Start a simulation
-router.post('/simulations/:id/start', (req, res) => {
+router.post('/simulations/:id/start', (req: Request, res: Response) => {
   const { id } = req.params;
   
   try {
@@ -75,7 +84,7 @@ router.post('/simulations/:id/start', (req, res) => {
 });
 
 // Pause a simulation
-router.post('/simulations/:id/pause', (req, res) => {
+router.post('/simulations/:id/pause', (req: Request, res: Response) => {
   const { id } = req.params;
   
   try {
@@ -88,7 +97,7 @@ router.post('/simulations/:id/pause', (req, res) => {
 });
 
 // Reset a simulation
-router.post('/simulations/:id/reset', (req, res) => {
+router.post('/simulations/:id/reset', (req: Request, res: Response) => {
   const { id } = req.params;
   
   try {
