@@ -1,0 +1,8 @@
+"# Backend .gitignore" 
+"node_modules/" 
+"dist/" 
+"cache/" 
+".env" 
+"*.log" 
+"coverage/" 
+".DS_Store" 
