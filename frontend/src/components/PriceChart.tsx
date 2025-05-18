@@ -91,7 +91,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ priceHistory, currentPrice, tra
           >
             <CartesianGrid strokeDasharray="3 3" />
             <XAxis 
-              dataKey="timestamp" PriceChart.tsx
+              dataKey="timestamp" 
               tickFormatter={formatXAxis} 
               type="number"
               domain={['dataMin', 'dataMax']}
@@ -110,9 +110,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ priceHistory, currentPrice, tra
               strokeWidth={2}
               isAnimationActive={false}
             />
-			
-			
-			// frontend/src/components/PriceChart.tsx (continued)
+            
             {/* Add markers for buy trades */}
             {buyMarkers.map((marker, index) => (
               <ReferenceLine
