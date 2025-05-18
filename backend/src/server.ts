@@ -1,8 +1,13 @@
+// backend/src/server.ts
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
 import path from 'path';
+import http from 'http';
+import { WebSocketServer } from 'ws';
+import apiRoutes from './api/routes';
+import { simulationManager } from './services/simulationManager';
 
 // Load environment variables
 dotenv.config();
@@ -17,9 +22,7 @@ app.use(helmet());
 app.use(express.json());
 
 // API Routes
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date() });
-});
+app.use('/api', apiRoutes);
 
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
@@ -30,8 +33,36 @@ if (process.env.NODE_ENV === 'production') {
   });
 }
 
+// Create HTTP server
+const server = http.createServer(app);
+
+// Create WebSocket server
+const wss = new WebSocketServer({ server });
+
+wss.on('connection', (ws) => {
+  console.log('Client connected to WebSocket');
+  
+  // Register the client with the simulation manager
+  simulationManager.registerClient(ws);
+  
+  ws.on('message', (message) => {
+    try {
+      const data = JSON.parse(message.toString());
+      console.log('Received message:', data);
+      
+      // Handle client messages if needed
+    } catch (error) {
+      console.error('Invalid message format:', error);
+    }
+  });
+  
+  ws.on('close', () => {
+    console.log('Client disconnected');
+  });
+});
+
 // Start server
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
 
