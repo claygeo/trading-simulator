@@ -1,0 +1,19 @@
+ 
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - DUNE_API_KEY=${DUNE_API_KEY}
+      - PORT=3001
+    restart: unless-stopped
+    volumes:
+      - cache-data:/app/cache
+
+volumes:
+  cache-data:
