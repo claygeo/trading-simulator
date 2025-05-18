@@ -44,7 +44,8 @@ export const TraderApi = {
 };
 
 export const SimulationApi = {
-  createSimulation: async (parameters: any) => {
+  // Make parameters optional with a default empty object
+  createSimulation: async (parameters: any = {}) => {
     try {
       const response = await api.post('/simulations', parameters);
       return { data: response.data };
