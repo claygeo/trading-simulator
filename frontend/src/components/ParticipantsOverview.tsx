@@ -1,5 +1,5 @@
-// frontend/src/components/ParticipantsOverview.tsx
-import React, { useEffect } from 'react';
+// frontend/src/components/ParticipantsOverview.tsx - Without Leaderboard
+import React, { useState, useEffect } from 'react';
 import { Trader, TraderPosition } from '../types';
 
 interface ParticipantsOverviewProps {
@@ -7,17 +7,23 @@ interface ParticipantsOverviewProps {
   activePositions: TraderPosition[];
 }
 
+interface TraderData extends Trader {
+  activePosition?: TraderPosition;
+  // Additional calculated fields for display
+  entryPrice?: number;
+  liquidationPrice?: number;
+  unrealizedPnl?: number;
+  realizedPnl?: number;
+  totalBalance?: number;
+}
+
 const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ traders, activePositions }) => {
-  // Add logging to debug the component data
-  useEffect(() => {
-    console.log(`Traders in ParticipantsOverview: ${traders.length}`);
-    if (traders.length > 0) {
-      console.log('First trader:', traders[0]);
-    }
-  }, [traders]);
+  const [isExpandedView, setIsExpandedView] = useState<boolean>(false);
+  const [enrichedTraders, setEnrichedTraders] = useState<TraderData[]>([]);
   
   // Format numbers for display
-  const formatUSD = (value: number) => {
+  const formatUSD = (value: number | undefined) => {
+    if (value === undefined) return '-';
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
@@ -26,7 +32,8 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ traders, ac
     }).format(value);
   };
   
-  const formatPercentage = (value: number) => {
+  const formatPercentage = (value: number | undefined) => {
+    if (value === undefined) return '-';
     return `${(value * 100).toFixed(2)}%`;
   };
   
@@ -36,18 +43,64 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ traders, ac
     return `${address.slice(0, 4)}...${address.slice(-4)}`;
   };
   
-  // Get trader position if active
-  const getTraderPosition = (walletAddress: string) => {
-    return activePositions.find(pos => pos.trader.walletAddress === walletAddress);
+  // Calculate liquidation price (simplified model)
+  const calculateLiquidationPrice = (position: TraderPosition) => {
+    // A simple model - in a real application, this would be more complex
+    // Assuming a 5x leverage and 20% maintenance margin
+    const direction = position.quantity > 0 ? 1 : -1;
+    const leverageMultiplier = 5;
+    const maintenanceMargin = 0.2;
+    
+    // Simplified formula: entry price * (1 ± (1/leverage) * (1 - maintenance margin))
+    // + for shorts, - for longs
+    return position.entryPrice * (1 - direction * (1/leverageMultiplier) * (1 - maintenanceMargin));
   };
   
-  // If no traders, show a placeholder
+  // Enrich traders with additional data
+  useEffect(() => {
+    const enriched = traders.map(trader => {
+      const activePosition = activePositions.find(pos => pos.trader.walletAddress === trader.walletAddress);
+      
+      let entryPrice, liquidationPrice, unrealizedPnl, realizedPnl, totalBalance;
+      
+      if (activePosition) {
+        entryPrice = activePosition.entryPrice;
+        liquidationPrice = calculateLiquidationPrice(activePosition);
+        unrealizedPnl = activePosition.currentPnl;
+        realizedPnl = trader.netPnl;
+        totalBalance = (trader.netPnl || 0) + (activePosition.currentPnl || 0);
+      } else {
+        realizedPnl = trader.netPnl;
+        totalBalance = trader.netPnl;
+      }
+      
+      return {
+        ...trader,
+        activePosition,
+        entryPrice,
+        liquidationPrice,
+        unrealizedPnl,
+        realizedPnl,
+        totalBalance
+      };
+    });
+    
+    setEnrichedTraders(enriched);
+  }, [traders, activePositions]);
+  
+  // Sort the traders by total balance
+  const sortedTraders = [...enrichedTraders].sort((a, b) => {
+    const aBalance = a.totalBalance || 0;
+    const bBalance = b.totalBalance || 0;
+    return bBalance - aBalance;
+  });
+  
   if (traders.length === 0) {
     return (
-      <div className="bg-surface p-4 rounded-lg shadow-lg">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className="text-xl font-semibold text-text-primary">Participants Overview</h2>
-          <span className="text-text-secondary text-sm">
+      <div className="bg-surface p-3 rounded-lg shadow-lg">
+        <div className="flex justify-between items-center mb-2">
+          <h2 className="text-lg font-semibold text-text-primary">Participants</h2>
+          <span className="text-text-secondary text-xs">
             Waiting for trader data...
           </span>
         </div>
@@ -60,160 +113,133 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ traders, ac
   }
   
   return (
-    <div className="bg-surface p-4 rounded-lg shadow-lg">
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-xl font-semibold text-text-primary">Participants Overview</h2>
-        <span className="text-text-secondary text-sm">
-          {traders.length} traders competing
-        </span>
+    <div className="bg-surface p-3 rounded-lg shadow-lg h-full overflow-hidden">
+      <div className="flex justify-between items-center mb-2">
+        <h2 className="text-base font-semibold text-text-primary">Participants</h2>
+        <div className="flex items-center">
+          <span className="text-text-secondary text-xs mr-2">
+            {traders.length} traders
+          </span>
+          <button 
+            onClick={() => setIsExpandedView(!isExpandedView)}
+            className="text-accent text-xs hover:text-accent-hover focus:outline-none"
+          >
+            {isExpandedView ? 'Collapse' : 'Expand'}
+          </button>
+        </div>
       </div>
       
-      <div className="overflow-x-auto pb-2">
-        <div className="flex space-x-4 pb-2 min-w-full">
-          {traders.slice(0, 10).map((trader, index) => {
-            const position = getTraderPosition(trader.walletAddress);
-            const isActive = !!position;
-            
-            return (
-              <div 
-                key={trader.walletAddress} 
-                className={`flex-shrink-0 w-64 p-4 rounded-lg ${
-                  isActive 
-                    ? 'border-2 border-accent bg-panel' 
-                    : 'border border-border bg-panel'
-                }`}
-              >
-                <div className="flex items-center mb-3">
-                  <div className={`flex items-center justify-center w-6 h-6 rounded-full mr-2 text-xs font-semibold ${
-                    index < 3 
-                      ? 'bg-accent text-white' 
-                      : 'bg-panel text-text-secondary border border-border'
-                  }`}>
-                    {index + 1}
-                  </div>
-                  <div className="font-semibold truncate text-text-primary">
-                    {truncateAddress(trader.walletAddress)}
-                  </div>
-                </div>
-                
-                <div className="grid grid-cols-2 gap-2 text-sm mb-3">
-                  <div>
-                    <div className="text-text-secondary">Net PnL</div>
-                    <div className={`font-semibold font-mono ${trader.netPnl >= 0 ? 'text-chart-up' : 'text-chart-down'}`}>
-                      {formatUSD(trader.netPnl)}
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <div className="text-text-secondary">Win Rate</div>
-                    <div className="font-semibold font-mono text-text-primary">
-                      {formatPercentage(trader.winRate)}
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <div className="text-text-secondary">Volume</div>
-                    <div className="font-semibold font-mono text-text-primary">
-                      {formatUSD(trader.totalVolume)}
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <div className="text-text-secondary">Trades</div>
-                    <div className="font-semibold font-mono text-text-primary">
-                      {trader.tradeCount}
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="mb-3">
-                  <div className="text-text-secondary text-sm">Risk Profile</div>
-                  <div className="flex mt-1 h-2 rounded overflow-hidden bg-panel">
-                    <div 
-                      className={`${
+      {/* Main Participants Table - taking full height now */}
+      <div className="overflow-y-auto h-[calc(100%-32px)] scrollbar-thin">
+        <table className="min-w-full">
+          <thead className="sticky top-0 bg-surface z-10">
+            <tr className="text-xs border-b border-border">
+              <th className="py-1 px-2 text-left text-text-secondary font-medium">#</th>
+              <th className="py-1 px-2 text-left text-text-secondary font-medium">Trader</th>
+              <th className="py-1 px-2 text-right text-text-secondary font-medium">Size</th>
+              <th className="py-1 px-2 text-right text-text-secondary font-medium">Entry</th>
+              <th className="py-1 px-2 text-right text-text-secondary font-medium">Liquidation</th>
+              <th className="py-1 px-2 text-right text-text-secondary font-medium">Unrealized</th>
+              <th className="py-1 px-2 text-right text-text-secondary font-medium">Realized</th>
+              <th className="py-1 px-2 text-right text-text-secondary font-medium">Balance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedTraders.map((trader, index) => {
+              const isActive = !!trader.activePosition;
+              const positionSize = isActive ? 
+                Math.abs(trader.activePosition!.quantity).toFixed(2) : '-';
+              const positionDirection = isActive && trader.activePosition!.quantity > 0 ? 'LONG' : 'SHORT';
+              
+              // Highlight the top 3 traders
+              const isTopTrader = index < 3;
+              const rankIndicator = isTopTrader ? 
+                <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full mr-1 text-white text-[10px] ${
+                  index === 0 ? 'bg-yellow-500' : 
+                  index === 1 ? 'bg-gray-300' : 
+                  'bg-amber-700'
+                }`}>{index + 1}</span> : 
+                <span className="text-xs text-text-muted mr-1">{index + 1}</span>;
+              
+              return (
+                <tr key={trader.walletAddress} className={`text-xs border-b border-border hover:bg-panel-hover ${isTopTrader ? 'bg-panel-hover bg-opacity-25' : ''}`}>
+                  <td className="py-1 px-2 text-center">
+                    {rankIndicator}
+                  </td>
+                  <td className="py-1 px-2">
+                    <div className="flex items-center">
+                      <span className={`inline-block w-2 h-2 rounded-full mr-1 ${
                         trader.riskProfile === 'aggressive' ? 'bg-danger' : 
                         trader.riskProfile === 'moderate' ? 'bg-warning' : 
                         'bg-success'
-                      }`}
-                      style={{ width: `${
-                        trader.riskProfile === 'aggressive' ? '100%' : 
-                        trader.riskProfile === 'moderate' ? '66%' : 
-                        '33%'
-                      }` }}
-                    ></div>
-                  </div>
-                  <div className="text-right text-xs mt-1 capitalize text-text-secondary">
-                    {trader.riskProfile}
-                  </div>
-                </div>
-                
-                {/* Show simulation PnL if available */}
-                {trader.simulationPnl !== undefined && (
-                  <div className="mb-3">
-                    <div className="flex justify-between">
-                      <span className="text-text-secondary text-sm">Simulation P&L:</span>
-                      <span className={`font-mono font-semibold ${
-                        (trader.simulationPnl || 0) >= 0 ? 'text-chart-up' : 'text-chart-down'
-                      }`}>
-                        {formatUSD(trader.simulationPnl || 0)}
-                      </span>
+                      }`}></span>
+                      <span className="text-text-primary">{truncateAddress(trader.walletAddress)}</span>
+                      {isActive && (
+                        <span className={`ml-1 text-[9px] px-1 rounded ${
+                          positionDirection === 'LONG' ? 'bg-chart-up text-white' : 'bg-chart-down text-white'
+                        }`}>
+                          {positionDirection}
+                        </span>
+                      )}
                     </div>
-                  </div>
-                )}
-                
-                {isActive && position && (
-                  <div className="p-2 bg-accent bg-opacity-10 rounded text-sm border border-accent border-opacity-30">
-                    <div className="font-semibold mb-1 text-accent">Active Position</div>
-                    <div className="flex justify-between">
-                      <span className="text-text-secondary">Entry:</span>
-                      <span className="text-text-primary font-mono">${position.entryPrice.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-text-secondary">Current P&L:</span>
-                      <span className={`font-mono ${position.currentPnl >= 0 ? 'text-chart-up' : 'text-chart-down'}`}>
-                        {formatPercentage(position.currentPnlPercentage)}
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                  </td>
+                  <td className="py-1 px-2 text-right font-mono">
+                    {positionSize}
+                  </td>
+                  <td className="py-1 px-2 text-right font-mono">
+                    {trader.entryPrice ? `$${trader.entryPrice.toFixed(2)}` : '-'}
+                  </td>
+                  <td className="py-1 px-2 text-right font-mono text-danger">
+                    {trader.liquidationPrice ? `$${trader.liquidationPrice.toFixed(2)}` : '-'}
+                  </td>
+                  <td className={`py-1 px-2 text-right font-mono ${
+                    (trader.unrealizedPnl || 0) >= 0 ? 'text-chart-up' : 'text-chart-down'
+                  }`}>
+                    {formatUSD(trader.unrealizedPnl)}
+                  </td>
+                  <td className={`py-1 px-2 text-right font-mono ${
+                    (trader.realizedPnl || 0) >= 0 ? 'text-chart-up' : 'text-chart-down'
+                  }`}>
+                    {formatUSD(trader.realizedPnl)}
+                  </td>
+                  <td className={`py-1 px-2 text-right font-mono ${
+                    (trader.totalBalance || 0) >= 0 ? 'text-chart-up' : 'text-chart-down'
+                  }`}>
+                    {formatUSD(trader.totalBalance)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
       
-      {/* Show a note if there are more traders */}
-      {traders.length > 10 && (
-        <div className="mt-2 text-center text-text-secondary text-sm">
-          Showing top 10 of {traders.length} traders
+      {isExpandedView && (
+        <div className="mt-2 p-2 border border-border rounded bg-panel">
+          <div className="grid grid-cols-4 gap-3 text-xs">
+            <div>
+              <div className="text-text-secondary">Total Traders</div>
+              <div className="font-semibold text-text-primary">{traders.length}</div>
+            </div>
+            <div>
+              <div className="text-text-secondary">Active Positions</div>
+              <div className="font-semibold text-text-primary">{activePositions.length}</div>
+            </div>
+            <div>
+              <div className="text-text-secondary">Avg. Win Rate</div>
+              <div className="font-semibold text-text-primary">
+                {formatPercentage(traders.reduce((sum, t) => sum + t.winRate, 0) / traders.length)}
+              </div>
+            </div>
+            <div>
+              <div className="text-text-secondary">Total Volume</div>
+              <div className="font-semibold text-text-primary">
+                {formatUSD(traders.reduce((sum, t) => sum + t.totalVolume, 0))}
+              </div>
+            </div>
+          </div>
         </div>
       )}
-      
-      {/* Summary statistics */}
-      <div className="mt-4 p-3 border border-border rounded bg-panel">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div>
-            <div className="text-text-secondary text-sm">Total Traders</div>
-            <div className="font-semibold text-text-primary">{traders.length}</div>
-          </div>
-          <div>
-            <div className="text-text-secondary text-sm">Active Positions</div>
-            <div className="font-semibold text-text-primary">{activePositions.length}</div>
-          </div>
-          <div>
-            <div className="text-text-secondary text-sm">Avg. Win Rate</div>
-            <div className="font-semibold text-text-primary">
-              {formatPercentage(traders.reduce((sum, t) => sum + t.winRate, 0) / traders.length)}
-            </div>
-          </div>
-          <div>
-            <div className="text-text-secondary text-sm">Total Volume</div>
-            <div className="font-semibold text-text-primary">
-              {formatUSD(traders.reduce((sum, t) => sum + t.totalVolume, 0))}
-            </div>
-          </div>
-        </div>
-      </div>
     </div>
   );
 };
