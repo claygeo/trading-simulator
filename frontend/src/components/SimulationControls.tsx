@@ -1,4 +1,4 @@
-// frontend/src/components/SimulationControls.tsx
+// frontend/src/components/SimulationControls.tsx - Simplified Speed Settings
 import React, { useState } from 'react';
 
 interface SimulationParameters {
@@ -29,17 +29,32 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
   parameters,
   onSpeedChange
 }) => {
-  const [speed, setSpeed] = useState<number>(parameters.timeCompressionFactor);
+  // Simplified speed options: 1 = Slow, 2 = Medium, 3 = Fast
+  const [speedSetting, setSpeedSetting] = useState<number>(1); // Default to Slow
   const [showDetails, setShowDetails] = useState<boolean>(false);
 
-  const handleSpeedChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newSpeed = parseInt(e.target.value, 10);
-    setSpeed(newSpeed);
-    onSpeedChange(newSpeed);
+  // Handle speed setting change with buttons instead of slider
+  const handleSpeedChange = (newSpeed: number) => {
+    setSpeedSetting(newSpeed);
+    
+    // Convert simplified speed settings to actual speed values
+    // Slow = 1x, Medium = 3x, Fast = 5x
+    const actualSpeed = newSpeed === 1 ? 1 : (newSpeed === 2 ? 3 : 5);
+    onSpeedChange(actualSpeed);
   };
 
   const toggleDetails = () => {
     setShowDetails(!showDetails);
+  };
+
+  // Get display text for current speed
+  const getSpeedText = () => {
+    switch(speedSetting) {
+      case 1: return "Slow";
+      case 2: return "Medium";
+      case 3: return "Fast";
+      default: return "Slow";
+    }
   };
 
   return (
@@ -62,26 +77,48 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
         </button>
       </div>
       
-      {/* Simulation speed control */}
-      <div className="mt-2">
-        <div className="flex justify-between items-center mb-1 text-xs">
-          <span>Speed: {speed}x</span>
-          <span className="text-text-secondary text-xs">Max: 10x</span>
+      {/* Simulation speed control - simplified to 3 buttons */}
+      <div className="mt-3">
+        <div className="flex justify-between items-center mb-1">
+          <span className="text-xs">Speed: {getSpeedText()}</span>
         </div>
-        <input
-          type="range"
-          id="speed"
-          min="1"
-          max="10"
-          step="1"
-          value={speed}
-          onChange={handleSpeedChange}
-          className="w-full h-1.5 bg-surface-variant rounded-lg appearance-none cursor-pointer"
-        />
+        
+        <div className="flex space-x-2 mt-1">
+          <button
+            onClick={() => handleSpeedChange(1)}
+            className={`px-3 py-1 text-xs rounded flex-1 transition ${
+              speedSetting === 1 
+                ? 'bg-accent text-white' 
+                : 'bg-surface-variant text-text-muted hover:bg-panel'
+            }`}
+          >
+            Slow
+          </button>
+          <button
+            onClick={() => handleSpeedChange(2)}
+            className={`px-3 py-1 text-xs rounded flex-1 transition ${
+              speedSetting === 2 
+                ? 'bg-accent text-white' 
+                : 'bg-surface-variant text-text-muted hover:bg-panel'
+            }`}
+          >
+            Medium
+          </button>
+          <button
+            onClick={() => handleSpeedChange(3)}
+            className={`px-3 py-1 text-xs rounded flex-1 transition ${
+              speedSetting === 3 
+                ? 'bg-accent text-white' 
+                : 'bg-surface-variant text-text-muted hover:bg-panel'
+            }`}
+          >
+            Fast
+          </button>
+        </div>
       </div>
       
       {/* Control buttons */}
-      <div className="flex items-center space-x-2 mt-2">
+      <div className="flex items-center space-x-2 mt-3">
         {!isRunning || isPaused ? (
           <button 
             onClick={onStart}
