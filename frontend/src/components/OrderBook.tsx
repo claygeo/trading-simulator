@@ -1,4 +1,4 @@
-// frontend/src/components/OrderBook.tsx
+// frontend/src/components/OrderBook.tsx - Compact Version
 import React, { useEffect, useRef } from 'react';
 import { OrderBook } from '../types';
 
@@ -26,8 +26,12 @@ const OrderBookComponent: React.FC<OrderBookProps> = ({ orderBook }) => {
     });
   };
   
-  const bidsWithDepth = calculateDepth(bids);
-  const asksWithDepth = calculateDepth(asks);
+  // Limit to exactly 10 sell and 10 buy orders
+  const limitedAsks = asks.slice(0, 10);
+  const limitedBids = bids.slice(0, 10);
+  
+  const bidsWithDepth = calculateDepth(limitedBids);
+  const asksWithDepth = calculateDepth(limitedAsks);
   
   // Calculate max depth for visualization
   const maxDepth = Math.max(
@@ -40,8 +44,8 @@ const OrderBookComponent: React.FC<OrderBookProps> = ({ orderBook }) => {
     ? asks[0].price - bids[0].price
     : 0;
   
-  const spreadPercentage = asks.length > 0 && bids.length > 0
-    ? (spread / asks[0].price) * 100
+  const spreadPercentage = asks.length > 0 && bids[0].price > 0
+    ? (spread / bids[0].price) * 100
     : 0;
   
   // Check if price has changed from previous render
@@ -55,34 +59,33 @@ const OrderBookComponent: React.FC<OrderBookProps> = ({ orderBook }) => {
   }, [orderBook]);
   
   return (
-    <div className="bg-surface p-4 rounded-lg shadow-lg h-full">
-      <h2 className="text-xl font-semibold mb-4 text-text-primary">Order Book</h2>
-      
-      <div className="mb-4 p-2 bg-panel rounded">
-        <div className="flex justify-between">
-          <span className="text-text-secondary">Spread</span>
+    <div className="bg-surface p-2 rounded-lg shadow-lg h-full overflow-hidden">
+      <div className="flex justify-between items-center mb-1">
+        <h2 className="text-base font-semibold text-text-primary">Order Book</h2>
+        <div className="text-xs bg-panel px-2 py-0.5 rounded">
+          <span className="text-text-secondary">Spread: </span>
           <span className="font-semibold text-text-primary">
             {formatPrice(spread)} ({spreadPercentage.toFixed(2)}%)
           </span>
         </div>
       </div>
       
-      <div className="flex justify-between mb-2">
-        <div className="w-1/3 text-left text-text-secondary text-sm">Price</div>
-        <div className="w-1/3 text-right text-text-secondary text-sm">Quantity</div>
-        <div className="w-1/3 text-right text-text-secondary text-sm">Total</div>
+      <div className="grid grid-cols-3 text-xs text-text-secondary py-0.5 border-b border-border">
+        <div className="text-left">Price</div>
+        <div className="text-right">Quantity</div>
+        <div className="text-right">Total</div>
       </div>
       
-      {/* Sell orders (asks) */}
-      <div className="mb-4 max-h-32 overflow-y-auto scrollbar-thin scrollbar-thumb-border scrollbar-track-panel">
-        {asksWithDepth.slice(0, 10).map((ask, index) => {
+      {/* Sell orders (asks) - Now fixed height to show exactly 10 asks */}
+      <div>
+        {asksWithDepth.map((ask, index) => {
           const prevAsk = previousOrderBookRef.current?.asks[index];
           const priceChanged = hasPriceChanged(ask.price, prevAsk?.price);
           
           return (
             <div 
               key={`ask-${index}`} 
-              className={`flex justify-between mb-1 ${priceChanged ? 'animate-flash-red' : ''}`}
+              className={`flex justify-between text-xs py-0.5 ${priceChanged ? 'animate-flash-red' : ''}`}
             >
               <div className="w-1/3 text-left text-chart-down font-mono">
                 {formatPrice(ask.price)}
@@ -104,18 +107,18 @@ const OrderBookComponent: React.FC<OrderBookProps> = ({ orderBook }) => {
         })}
       </div>
       
-      <div className="h-px bg-border my-2"></div>
+      <div className="h-px bg-border my-0.5"></div>
       
-      {/* Buy orders (bids) */}
-      <div className="max-h-32 overflow-y-auto scrollbar-thin scrollbar-thumb-border scrollbar-track-panel">
-        {bidsWithDepth.slice(0, 10).map((bid, index) => {
+      {/* Buy orders (bids) - Now fixed height to show exactly 10 bids */}
+      <div>
+        {bidsWithDepth.map((bid, index) => {
           const prevBid = previousOrderBookRef.current?.bids[index];
           const priceChanged = hasPriceChanged(bid.price, prevBid?.price);
           
           return (
             <div 
               key={`bid-${index}`} 
-              className={`flex justify-between mb-1 ${priceChanged ? 'animate-flash-green' : ''}`}
+              className={`flex justify-between text-xs py-0.5 ${priceChanged ? 'animate-flash-green' : ''}`}
             >
               <div className="w-1/3 text-left text-chart-up font-mono">
                 {formatPrice(bid.price)}
@@ -137,8 +140,12 @@ const OrderBookComponent: React.FC<OrderBookProps> = ({ orderBook }) => {
         })}
       </div>
       
-      <div className="mt-4 text-xs text-text-muted text-right">
-        Last Updated: {new Date(orderBook.lastUpdateTime).toLocaleTimeString()}
+      <div className="text-xs text-text-muted text-right mt-0.5">
+        Updated: {new Date(orderBook.lastUpdateTime).toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        })}
       </div>
     </div>
   );
