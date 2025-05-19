@@ -1,4 +1,4 @@
-// frontend/src/components/Dashboard.tsx - Simplified Version without TokenInfo
+// frontend/src/components/Dashboard.tsx - Relocated Controls to Header
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -8,7 +8,6 @@ import OrderBookComponent from './OrderBook';
 import RecentTrades from './RecentTrades';
 import ParticipantsOverview from './ParticipantsOverview';
 import DynamicMusicPlayer from './DynamicMusicPlayer';
-import SimulationControls from './SimulationControls';
 
 const Dashboard: React.FC = () => {
   const [simulation, setSimulation] = useState<Simulation | null>(null);
@@ -419,86 +418,140 @@ const Dashboard: React.FC = () => {
         onToggle={toggleAudio}
       />
       
-      {/* Header Bar with price info */}
-      <div className="flex justify-between items-center mb-2 h-10 bg-surface p-2 rounded-md shadow-sm">
-        <div className="flex items-center">
-          <h1 className="text-base font-bold mr-2">Pump.fun Simulation</h1>
-          <div className="ml-2 text-xs bg-panel px-2 py-1 rounded">
-            <span className="text-text-secondary mr-1">Price:</span>
-            <span className="text-text-primary font-medium">${safeData.currentPrice.toFixed(6)}</span>
-          </div>
-          <div className={`ml-2 w-2 h-2 rounded-full mr-1 ${isConnected ? 'bg-success' : 'bg-danger'}`}></div>
-          <span className="text-xs text-text-secondary">{isConnected ? 'Connected' : 'Disconnected'}</span>
-        </div>
-        
-        <div className="flex items-center space-x-2">
-          <div className="cursor-pointer" onClick={toggleAudio}>
-            {audioEnabled ? (
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-accent">
-                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-                <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-              </svg>
-            ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted">
-                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-                <line x1="23" y1="9" x2="17" y2="15"></line>
-                <line x1="17" y1="9" x2="23" y2="15"></line>
-              </svg>
-            )}
+      {/* Header Bar with controls - Combined controls into header */}
+      <div className="flex flex-col mb-2 bg-surface rounded-md shadow-sm">
+        {/* Top header with price and connection info */}
+        <div className="flex justify-between items-center h-10 p-2">
+          <div className="flex items-center">
+            <h1 className="text-base font-bold mr-2">Pump.fun Simulation</h1>
+            <div className="ml-2 text-xs bg-panel px-2 py-1 rounded">
+              <span className="text-text-secondary mr-1">Price:</span>
+              <span className="text-text-primary font-medium">${safeData.currentPrice.toFixed(6)}</span>
+            </div>
+            <div className={`ml-2 w-2 h-2 rounded-full mr-1 ${isConnected ? 'bg-success' : 'bg-danger'}`}></div>
+            <span className="text-xs text-text-secondary">{isConnected ? 'Connected' : 'Disconnected'}</span>
           </div>
           
-          {/* Debug toggle button - only visible in development */}
-          {process.env.NODE_ENV !== 'production' && (
+          <div className="flex items-center space-x-2">
+            <div className="text-xs bg-panel px-2 py-1 rounded">
+              <span className="text-text-secondary">Time:</span>
+              <span className="ml-1 font-mono text-text-primary">{elapsedTime}</span>
+            </div>
+            <div className="cursor-pointer" onClick={toggleAudio}>
+              {audioEnabled ? (
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-accent">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                  <line x1="23" y1="9" x2="17" y2="15"></line>
+                  <line x1="17" y1="9" x2="23" y2="15"></line>
+                </svg>
+              )}
+            </div>
+            
+            {/* Debug toggle button - only visible in development */}
+            {process.env.NODE_ENV !== 'production' && (
+              <button 
+                onClick={toggleDebugInfo}
+                className="text-xs bg-surface-variant text-text-muted px-2 py-0.5 rounded"
+              >
+                {showDebugInfo ? 'Hide Debug' : 'Debug'}
+              </button>
+            )}
+          </div>
+        </div>
+        
+        {/* Controls bar below */}
+        <div className="flex justify-between items-center h-10 p-2 border-t border-border">
+          {/* Speed Controls */}
+          <div className="flex items-center space-x-2">
+            <span className="text-xs text-text-secondary">Speed:</span>
+            <div className="flex space-x-1">
+              <button
+                onClick={() => handleSpeedChange(1)}
+                className={`px-2 py-0.5 text-xs rounded transition ${
+                  simulationSpeed === 1 
+                    ? 'bg-accent text-white' 
+                    : 'bg-surface-variant text-text-muted hover:bg-panel'
+                }`}
+              >
+                Slow
+              </button>
+              <button
+                onClick={() => handleSpeedChange(3)}
+                className={`px-2 py-0.5 text-xs rounded transition ${
+                  simulationSpeed === 3 
+                    ? 'bg-accent text-white' 
+                    : 'bg-surface-variant text-text-muted hover:bg-panel'
+                }`}
+              >
+                Medium
+              </button>
+              <button
+                onClick={() => handleSpeedChange(5)}
+                className={`px-2 py-0.5 text-xs rounded transition ${
+                  simulationSpeed === 5 
+                    ? 'bg-accent text-white' 
+                    : 'bg-surface-variant text-text-muted hover:bg-panel'
+                }`}
+              >
+                Fast
+              </button>
+            </div>
+          </div>
+          
+          {/* Simulation Controls */}
+          <div className="flex space-x-2">
+            {!simulation.isRunning || simulation.isPaused ? (
+              <button 
+                onClick={handleStartSimulation}
+                className="px-3 py-0.5 bg-accent text-white rounded hover:bg-accent-hover transition"
+              >
+                {simulation.isPaused ? 'Resume' : 'Start'}
+              </button>
+            ) : (
+              <button 
+                onClick={handlePauseSimulation} 
+                className="px-3 py-0.5 bg-warning text-text-primary rounded hover:bg-warning-hover transition"
+              >
+                Pause
+              </button>
+            )}
+            
             <button 
-              onClick={toggleDebugInfo}
-              className="text-xs bg-surface-variant text-text-muted px-2 py-0.5 rounded"
+              onClick={handleResetSimulation}
+              className="px-3 py-0.5 bg-danger text-white rounded hover:bg-danger-hover transition"
             >
-              {showDebugInfo ? 'Hide Debug' : 'Debug'}
+              Reset
             </button>
-          )}
+          </div>
         </div>
       </div>
       
-      {/* Main dashboard - using CSS grid */}
+      {/* Main dashboard - using CSS grid with updated layout (2 columns, 2 rows) */}
       <div style={{ 
         display: 'grid', 
         gridTemplateColumns: '3fr 9fr', 
-        gridTemplateRows: '1fr 1fr 1fr', 
+        gridTemplateRows: '1fr 1fr', 
         gap: '8px',
-        height: 'calc(100vh - 60px)',
+        height: 'calc(100vh - 85px)', // Adjusted for the new header height
         overflow: 'hidden'
       }}>
-        {/* Simulation Controls - Left Top */}
+        {/* Order Book - Left Top */}
         <div style={{ gridColumn: '1 / 2', gridRow: '1 / 2', overflow: 'hidden' }}>
-          <SimulationControls 
-            isRunning={safeData.isRunning}
-            isPaused={safeData.isPaused}
-            onStart={handleStartSimulation}
-            onPause={handlePauseSimulation}
-            onReset={handleResetSimulation}
-            parameters={safeData.parameters}
-            onSpeedChange={handleSpeedChange}
-          />
-        </div>
-        
-        {/* Order Book - Left Middle */}
-        <div style={{ gridColumn: '1 / 2', gridRow: '2 / 3', overflow: 'hidden' }}>
           <OrderBookComponent orderBook={safeData.orderBook} />
         </div>
         
         {/* Recent Trades - Left Bottom */}
-        <div style={{ gridColumn: '1 / 2', gridRow: '3 / 4', overflow: 'hidden' }}>
+        <div style={{ gridColumn: '1 / 2', gridRow: '2 / 3', overflow: 'hidden' }}>
           <RecentTrades trades={safeData.recentTrades} />
         </div>
         
-        {/* Price Chart - Right Top and Middle */}
-        <div style={{ gridColumn: '2 / 3', gridRow: '1 / 3', position: 'relative', overflow: 'hidden' }} className="bg-[#131722] rounded-lg shadow-lg">
-          {/* Simulation timer in top right */}
-          <div className="absolute top-2 right-2 z-10 bg-[#1E2230] text-[#D9D9D9] rounded px-2 py-1 text-xs font-mono">
-            {elapsedTime}
-          </div>
-          
-          {/* Price Chart - 15min timeframe */}
+        {/* Price Chart - Right Top */}
+        <div style={{ gridColumn: '2 / 3', gridRow: '1 / 2', position: 'relative', overflow: 'hidden' }} className="bg-[#131722] rounded-lg shadow-lg">
           <div className="h-full">
             <PriceChart 
               priceHistory={safeData.priceHistory} 
@@ -509,7 +562,7 @@ const Dashboard: React.FC = () => {
         </div>
         
         {/* Participants/Leaderboard - Right Bottom */}
-        <div style={{ gridColumn: '2 / 3', gridRow: '3 / 4', overflow: 'hidden' }}>
+        <div style={{ gridColumn: '2 / 3', gridRow: '2 / 3', overflow: 'hidden' }}>
           <ParticipantsOverview 
             traders={safeData.traderRankings} 
             activePositions={safeData.activePositions} 
