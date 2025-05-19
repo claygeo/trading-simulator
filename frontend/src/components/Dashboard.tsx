@@ -1,4 +1,4 @@
-// frontend/src/components/Dashboard.tsx - Fixed Version
+// frontend/src/components/Dashboard.tsx - Simplified Version without TokenInfo
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -8,6 +8,7 @@ import OrderBookComponent from './OrderBook';
 import RecentTrades from './RecentTrades';
 import ParticipantsOverview from './ParticipantsOverview';
 import DynamicMusicPlayer from './DynamicMusicPlayer';
+import SimulationControls from './SimulationControls';
 
 const Dashboard: React.FC = () => {
   const [simulation, setSimulation] = useState<Simulation | null>(null);
@@ -15,10 +16,11 @@ const Dashboard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [audioEnabled, setAudioEnabled] = useState<boolean>(false);
   const [marketCondition, setMarketCondition] = useState<'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash'>('calm');
-  const [simulationSpeed, setSimulationSpeed] = useState<number>(2); // Default to 2x instead of 5x
+  const [simulationSpeed, setSimulationSpeed] = useState<number>(1); // Default to slow (1x)
   const [simulationStartTime, setSimulationStartTime] = useState<number | null>(null);
   const [elapsedTime, setElapsedTime] = useState<string>("00:00:00");
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
+  const [showDebugInfo, setShowDebugInfo] = useState<boolean>(false);
   
   // Timer ref for simulation duration
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -60,7 +62,7 @@ const Dashboard: React.FC = () => {
             const data = simulationResponse.data;
             if (data) {
               addDebugLog(`Price history: ${data.priceHistory?.length || 0} points`);
-              addDebugLog(`Current price: $${data.currentPrice?.toFixed(2) || 'N/A'}`);
+              addDebugLog(`Current price: $${data.currentPrice?.toFixed(6) || 'N/A'}`);
               addDebugLog(`Order book: ${data.orderBook ? 'Available' : 'Not available'}`);
             }
           }
@@ -100,9 +102,6 @@ const Dashboard: React.FC = () => {
     const mean = priceChanges.reduce((sum, change) => sum + change, 0) / priceChanges.length;
     const variance = priceChanges.reduce((sum, change) => sum + Math.pow(change - mean, 2), 0) / priceChanges.length;
     const volatility = Math.sqrt(variance);
-    
-    // Calculate trading volume - but don't store as unused variable
-    const totalVolume = recentPrices.reduce((sum, p) => sum + (p.volume || 0), 0);
     
     // Calculate rate of change (acceleration)
     const firstHalf = recentPrices.slice(0, Math.floor(recentPrices.length / 2));
@@ -191,7 +190,7 @@ const Dashboard: React.FC = () => {
     
     switch (type) {
       case 'price_update':
-        addDebugLog(`Price update: $${data.price.toFixed(2)}`);
+        addDebugLog(`Price update: $${data.price.toFixed(6)}`);
         setSimulation(prev => {
           if (!prev) return prev;
           
@@ -331,20 +330,33 @@ const Dashboard: React.FC = () => {
     }
   }, [simulation, addDebugLog]);
   
-  const handleSpeedChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const newSpeed = parseInt(e.target.value, 10);
-    setSimulationSpeed(newSpeed);
-    addDebugLog(`Speed changed to ${newSpeed}x`);
+  const handleSpeedChange = useCallback(async (newSpeed: number) => {
+    // Convert UI speed setting to actual speed multiplier
+    // Slow = 1x, Medium = 3x, Fast = 5x
+    const speedValue = newSpeed;
     
-    // In a real implementation, you would call an API to change the simulation speed
+    setSimulationSpeed(speedValue);
+    addDebugLog(`Speed changed to ${speedValue}x`);
+    
+    // Update speed on the server
     if (simulation) {
-      console.log(`Changed simulation speed to ${newSpeed}x`);
-      // SimulationApi.setSimulationSpeed(simulation.id, newSpeed);
+      try {
+        await SimulationApi.setSimulationSpeed(simulation.id, speedValue);
+        addDebugLog(`Server speed updated to ${speedValue}x`);
+      } catch (error) {
+        console.error(`Failed to update simulation speed:`, error);
+        addDebugLog(`Failed to update simulation speed: ${JSON.stringify(error)}`);
+      }
     }
   }, [simulation, addDebugLog]);
   
   const toggleAudio = useCallback(() => {
     setAudioEnabled(prev => !prev);
+  }, []);
+  
+  // Toggle debug info visibility
+  const toggleDebugInfo = useCallback(() => {
+    setShowDebugInfo(prev => !prev);
   }, []);
   
   if (loading) {
@@ -398,19 +410,6 @@ const Dashboard: React.FC = () => {
     priceHistory: simulation.priceHistory || [],
   };
   
-  // Check if we have price history data
-  const hasPriceData = safeData.priceHistory && safeData.priceHistory.length > 0;
-  if (hasPriceData) {
-    // Log some information about the price history data
-    console.log(`Price history has ${safeData.priceHistory.length} points`);
-    if (safeData.priceHistory.length > 0) {
-      const firstPoint = safeData.priceHistory[0];
-      const lastPoint = safeData.priceHistory[safeData.priceHistory.length - 1];
-      console.log(`First point: ${new Date(firstPoint.timestamp).toISOString()}, price: $${firstPoint.close.toFixed(2)}`);
-      console.log(`Last point: ${new Date(lastPoint.timestamp).toISOString()}, price: $${lastPoint.close.toFixed(2)}`);
-    }
-  }
-  
   return (
     <div className="h-screen w-full bg-background text-text-primary p-2 flex flex-col overflow-hidden">
       {/* Audio player (hidden) */}
@@ -420,51 +419,19 @@ const Dashboard: React.FC = () => {
         onToggle={toggleAudio}
       />
       
-      {/* Small Header Bar */}
+      {/* Header Bar with price info */}
       <div className="flex justify-between items-center mb-2 h-10 bg-surface p-2 rounded-md shadow-sm">
         <div className="flex items-center">
           <h1 className="text-base font-bold mr-2">Pump.fun Simulation</h1>
-          <div className={`w-2 h-2 rounded-full mr-1 ${isConnected ? 'bg-success' : 'bg-danger'}`}></div>
+          <div className="ml-2 text-xs bg-panel px-2 py-1 rounded">
+            <span className="text-text-secondary mr-1">Price:</span>
+            <span className="text-text-primary font-medium">${safeData.currentPrice.toFixed(6)}</span>
+          </div>
+          <div className={`ml-2 w-2 h-2 rounded-full mr-1 ${isConnected ? 'bg-success' : 'bg-danger'}`}></div>
           <span className="text-xs text-text-secondary">{isConnected ? 'Connected' : 'Disconnected'}</span>
         </div>
         
         <div className="flex items-center space-x-2">
-          <div className="bg-panel p-1 rounded text-xs flex items-center">
-            <span className="mr-1">Speed: {simulationSpeed}x</span>
-            <input
-              type="range"
-              min="1"
-              max="5" // Max speed 5x instead of 10x
-              step="1"
-              value={simulationSpeed}
-              onChange={handleSpeedChange}
-              className="w-24 h-1 bg-surface-variant rounded-lg appearance-none cursor-pointer"
-            />
-          </div>
-          
-          <div className="flex space-x-1">
-            <button 
-              className={`px-2 py-0.5 rounded text-xs ${!simulation.isRunning || simulation.isPaused ? 'bg-accent text-white' : 'bg-surface-variant text-text-muted'}`}
-              onClick={handleStartSimulation}
-              disabled={simulation.isRunning && !simulation.isPaused}
-            >
-              {simulation.isPaused ? 'Resume' : 'Start'}
-            </button>
-            <button 
-              className={`px-2 py-0.5 rounded text-xs ${simulation.isRunning && !simulation.isPaused ? 'bg-warning text-text-primary' : 'bg-surface-variant text-text-muted'}`}
-              onClick={handlePauseSimulation}
-              disabled={!simulation.isRunning || simulation.isPaused}
-            >
-              Pause
-            </button>
-            <button 
-              className="px-2 py-0.5 bg-danger text-white rounded text-xs"
-              onClick={handleResetSimulation}
-            >
-              Reset
-            </button>
-          </div>
-          
           <div className="cursor-pointer" onClick={toggleAudio}>
             {audioEnabled ? (
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-accent">
@@ -479,31 +446,59 @@ const Dashboard: React.FC = () => {
               </svg>
             )}
           </div>
+          
+          {/* Debug toggle button - only visible in development */}
+          {process.env.NODE_ENV !== 'production' && (
+            <button 
+              onClick={toggleDebugInfo}
+              className="text-xs bg-surface-variant text-text-muted px-2 py-0.5 rounded"
+            >
+              {showDebugInfo ? 'Hide Debug' : 'Debug'}
+            </button>
+          )}
         </div>
       </div>
       
-      {/* Main dashboard - using CSS grid instead of tailwind grid */}
+      {/* Main dashboard - using CSS grid */}
       <div style={{ 
         display: 'grid', 
-        gridTemplateColumns: '4fr 8fr', 
-        gridTemplateRows: '1fr 1fr',
+        gridTemplateColumns: '3fr 9fr', 
+        gridTemplateRows: '1fr 1fr 1fr', 
         gap: '8px',
         height: 'calc(100vh - 60px)',
         overflow: 'hidden'
       }}>
-        {/* Order Book - Top Left */}
+        {/* Simulation Controls - Left Top */}
         <div style={{ gridColumn: '1 / 2', gridRow: '1 / 2', overflow: 'hidden' }}>
+          <SimulationControls 
+            isRunning={safeData.isRunning}
+            isPaused={safeData.isPaused}
+            onStart={handleStartSimulation}
+            onPause={handlePauseSimulation}
+            onReset={handleResetSimulation}
+            parameters={safeData.parameters}
+            onSpeedChange={handleSpeedChange}
+          />
+        </div>
+        
+        {/* Order Book - Left Middle */}
+        <div style={{ gridColumn: '1 / 2', gridRow: '2 / 3', overflow: 'hidden' }}>
           <OrderBookComponent orderBook={safeData.orderBook} />
         </div>
         
-        {/* Price Chart - Top Right with timer */}
-        <div style={{ gridColumn: '2 / 3', gridRow: '1 / 2', position: 'relative', overflow: 'hidden' }} className="bg-[#131722] rounded-lg shadow-lg">
+        {/* Recent Trades - Left Bottom */}
+        <div style={{ gridColumn: '1 / 2', gridRow: '3 / 4', overflow: 'hidden' }}>
+          <RecentTrades trades={safeData.recentTrades} />
+        </div>
+        
+        {/* Price Chart - Right Top and Middle */}
+        <div style={{ gridColumn: '2 / 3', gridRow: '1 / 3', position: 'relative', overflow: 'hidden' }} className="bg-[#131722] rounded-lg shadow-lg">
           {/* Simulation timer in top right */}
           <div className="absolute top-2 right-2 z-10 bg-[#1E2230] text-[#D9D9D9] rounded px-2 py-1 text-xs font-mono">
             {elapsedTime}
           </div>
           
-          {/* Simple Price Chart - Only 5m candles without extras */}
+          {/* Price Chart - 15min timeframe */}
           <div className="h-full">
             <PriceChart 
               priceHistory={safeData.priceHistory} 
@@ -513,13 +508,8 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
         
-        {/* Recent Trades - Bottom Left */}
-        <div style={{ gridColumn: '1 / 2', gridRow: '2 / 3', overflow: 'hidden' }}>
-          <RecentTrades trades={safeData.recentTrades} />
-        </div>
-        
-        {/* Participants/Leaderboard - Bottom Right */}
-        <div style={{ gridColumn: '2 / 3', gridRow: '2 / 3', overflow: 'hidden' }}>
+        {/* Participants/Leaderboard - Right Bottom */}
+        <div style={{ gridColumn: '2 / 3', gridRow: '3 / 4', overflow: 'hidden' }}>
           <ParticipantsOverview 
             traders={safeData.traderRankings} 
             activePositions={safeData.activePositions} 
@@ -527,8 +517,8 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
       
-      {/* Debug log - Optional, can be removed in production */}
-      {debugInfo.length > 0 && (
+      {/* Debug log - Only shown when enabled and not in production */}
+      {showDebugInfo && process.env.NODE_ENV !== 'production' && (
         <div className="absolute bottom-2 right-2 z-20 bg-black bg-opacity-70 text-white p-2 rounded text-xs max-w-md max-h-32 overflow-auto">
           <div className="font-mono whitespace-pre">
             {debugInfo.map((log, i) => (
