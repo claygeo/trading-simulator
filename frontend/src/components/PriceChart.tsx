@@ -1,4 +1,4 @@
-// frontend/src/components/PriceChart.tsx - More Candles & Smoother
+// frontend/src/components/PriceChart.tsx - With 300 Candles and 15min Timeframe
 import React, { useRef, useEffect, useState } from 'react';
 import { PricePoint, Trade } from '../types';
 
@@ -17,7 +17,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ priceHistory, currentPrice, tra
   
   // Create synthetic data if we have too few candles
   const getSyntheticPriceHistory = (realPriceHistory: PricePoint[]): PricePoint[] => {
-    if (realPriceHistory.length >= 30) {
+    if (realPriceHistory.length >= 300) {
       return realPriceHistory; // Use real data if we have enough
     }
     
@@ -28,8 +28,8 @@ const PriceChart: React.FC<PriceChartProps> = ({ priceHistory, currentPrice, tra
       return []; // Can't generate synthetic data with no seed
     }
     
-    // How many candles to generate
-    const targetCount = 50;
+    // How many candles to generate - increased to 300
+    const targetCount = 300;
     const additionalCount = targetCount - realPriceHistory.length;
     
     if (additionalCount <= 0) {
@@ -40,10 +40,8 @@ const PriceChart: React.FC<PriceChartProps> = ({ priceHistory, currentPrice, tra
     const firstPoint = realPriceHistory[0];
     const lastPoint = realPriceHistory[realPriceHistory.length - 1];
     
-    // Average candle time interval
-    const avgInterval = realPriceHistory.length > 1 
-      ? (lastPoint.timestamp - firstPoint.timestamp) / (realPriceHistory.length - 1)
-      : 60000; // Default to 1 minute
+    // Average candle time interval - 15 minutes (900000 ms)
+    const timeInterval = 15 * 60 * 1000; // 15 minutes in milliseconds
     
     // Calculate volatility from real data
     let avgVolatility = 0.003; // Default ~0.3% volatility
@@ -63,7 +61,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ priceHistory, currentPrice, tra
     let lastPrice = firstPoint.close;
     
     for (let i = 0; i < additionalCount; i++) {
-      lastTimestamp -= avgInterval;
+      lastTimestamp -= timeInterval; // Use 15 min interval
       
       // Random price movement based on calculated volatility
       const changePercent = (Math.random() * 2 - 1) * avgVolatility;
@@ -121,7 +119,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ priceHistory, currentPrice, tra
         return;
       }
       
-      setStatus(`Drawing chart with ${chartData.length} candles...`);
+      setStatus(`Drawing chart with ${chartData.length} candles (15min timeframe)...`);
       
       // Chart colors
       const backgroundColor = '#131722';
@@ -215,6 +213,7 @@ const PriceChart: React.FC<PriceChartProps> = ({ priceHistory, currentPrice, tra
       for (let t = minTime; t <= maxTime; t += timeStepSize) {
         const x = timeToX(t);
         const date = new Date(t);
+        // Format as HH:MM
         const timeLabel = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
         
         timeLabels.push({ x, label: timeLabel });
@@ -233,10 +232,10 @@ const PriceChart: React.FC<PriceChartProps> = ({ priceHistory, currentPrice, tra
         ctx.fillText(label, x, canvas.height - margin.bottom + 15);
       });
       
-      // Calculate candle width based on data density
-      const candleSpacing = 2; // Space between candles
+      // Calculate candle width based on data density, even smaller since we have more candles
+      const candleSpacing = 1; // Reduced space between candles
       const theoreticalMaxWidth = chartWidth / chartData.length;
-      const candleWidth = Math.min(theoreticalMaxWidth - candleSpacing, 8); // Max 8px wide, with spacing
+      const candleWidth = Math.min(theoreticalMaxWidth - candleSpacing, 3); // Reduced from 6px to 3px for more candles
       
       // Draw candlesticks
       chartData.forEach((point) => {
@@ -323,6 +322,12 @@ const PriceChart: React.FC<PriceChartProps> = ({ priceHistory, currentPrice, tra
           ctx.fill();
         });
       }
+      
+      // Add timeframe label (15min)
+      ctx.fillStyle = textColor;
+      ctx.font = 'bold 12px Arial';
+      ctx.textAlign = 'left';
+      ctx.fillText('15m', margin.left, margin.top - 10);
       
       setStatus(`Chart rendered with ${chartData.length} candles`);
     };
