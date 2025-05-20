@@ -1,9 +1,9 @@
  
-# Pump.fun Trader Simulation Platform
+# Trader Simulation Platform
 
 ## Overview
 
-Pump.fun is a professional trading simulation dashboard that recreates the experience of cryptocurrency trading platforms like Binance, Kucoin, and Bybit. It features realistic market dynamics, order book visualization, trade execution, and trader performance tracking in a polished, interactive interface.
+This is a  trading simulation dashboard that recreates the experience of cryptocurrency trading platforms like Binance, Kucoin, and Bybit. It features realistic market dynamics, order book visualization, trade execution, and trader performance tracking in a polished, interactive interface.
 
 This platform is designed for educational purposes, allowing users to observe and understand trader behavior in volatile markets without real financial risk.
 
