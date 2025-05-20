@@ -1,5 +1,5 @@
  
-# Trader Simulation Platform
+# Trading Simulation Platform
 
 ## Overview
 
