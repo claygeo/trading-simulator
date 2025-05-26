@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-// Import everything from lightweight-charts
-import * as LightweightCharts from 'lightweight-charts';
+import { createChart, ColorType, IChartApi, ISeriesApi, Time } from 'lightweight-charts';
 // Import the types from your project
 import { PricePoint, Trade } from '../types';
 
@@ -22,8 +21,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
   trades = []
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<any>(null);
-  const candlestickSeriesRef = useRef<any>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [currentPrice, setCurrentPrice] = useState<number | null>(propCurrentPrice || null);
   const [priceChange, setPriceChange] = useState<number>(0);
@@ -50,7 +49,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       const volume = Math.random() * 1000000 + 500000;
       
       data.push({
-        timestamp: Math.floor(timestamp / 1000), // Convert to seconds
+        timestamp: Math.floor(timestamp / 1000),
         open: parseFloat(open.toFixed(2)),
         high: parseFloat(high.toFixed(2)),
         low: parseFloat(low.toFixed(2)),
@@ -112,25 +111,17 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return filled;
   };
 
-  // Convert data to TradingView format
-  const convertToTradingViewFormat = (data: PricePoint[]): any[] => {
-    return data.map(candle => ({
-      time: candle.timestamp,
-      open: candle.open,
-      high: candle.high,
-      low: candle.low,
-      close: candle.close
-    }));
-  };
-
   // Initialize chart
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
     try {
-      const chart = LightweightCharts.createChart(chartContainerRef.current, {
+      // Create the chart
+      const chart = createChart(chartContainerRef.current, {
+        width: chartContainerRef.current.clientWidth,
+        height: chartContainerRef.current.clientHeight,
         layout: {
-          background: { type: LightweightCharts.ColorType.Solid, color: '#131722' },
+          background: { type: ColorType.Solid, color: '#131722' },
           textColor: '#d1d4dc',
         },
         grid: {
@@ -142,7 +133,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
           },
         },
         crosshair: {
-          mode: LightweightCharts.CrosshairMode.Normal,
+          mode: 0,
         },
         rightPriceScale: {
           borderVisible: false,
@@ -156,19 +147,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
           timeVisible: true,
           secondsVisible: false,
         },
-        handleScroll: {
-          mouseWheel: true,
-          pressedMouseMove: true,
-          horzTouchDrag: true,
-          vertTouchDrag: false,
-        },
-        handleScale: {
-          axisPressedMouseMove: true,
-          mouseWheel: true,
-          pinch: true,
-        },
       });
 
+      // Create candlestick series
       const candlestickSeries = chart.addCandlestickSeries({
         upColor: '#26a69a',
         downColor: '#ef5350',
@@ -180,13 +161,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
       chartRef.current = chart;
       candlestickSeriesRef.current = candlestickSeries;
 
-      // Determine which data to use
+      // Prepare data
       let data: PricePoint[] = [];
       
       if (priceHistory && priceHistory.length > 0) {
         // Fill any gaps in the data
         const intervalMinutes = parseInt(interval.replace(/\D/g, '')) || 15;
-        data = fillMissingCandles(priceHistory, intervalMinutes);
+        data = fillMissingCandles([...priceHistory], intervalMinutes);
       } else {
         // Generate sample data as fallback
         data = generateSampleData();
@@ -195,8 +176,17 @@ const PriceChart: React.FC<PriceChartProps> = ({
       // Ensure data is sorted by timestamp
       data.sort((a, b) => a.timestamp - b.timestamp);
 
-      const formattedData = convertToTradingViewFormat(data);
-      candlestickSeries.setData(formattedData);
+      // Convert to lightweight-charts format
+      const candleData = data.map(d => ({
+        time: d.timestamp as Time,
+        open: d.open,
+        high: d.high,
+        low: d.low,
+        close: d.close,
+      }));
+
+      // Set the data
+      candlestickSeries.setData(candleData);
 
       // Calculate price changes
       if (data.length > 1) {
@@ -208,7 +198,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         setPriceChangePercent((change / firstCandle.open) * 100);
       }
 
-      // Fit content
+      // Fit content to show all data
       chart.timeScale().fitContent();
       setIsLoading(false);
 
@@ -224,6 +214,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
       window.addEventListener('resize', handleResize);
 
+      // Cleanup
       return () => {
         window.removeEventListener('resize', handleResize);
         chart.remove();
@@ -241,26 +232,24 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }
   }, [propCurrentPrice]);
 
-  // Real-time updates when websocket URL is provided
+  // Real-time updates
   useEffect(() => {
-    if (!candlestickSeriesRef.current || !websocketUrl || !currentPrice) return;
+    if (!candlestickSeriesRef.current || !currentPrice) return;
 
     const updateInterval = setInterval(() => {
-      if (!candlestickSeriesRef.current) return;
-
       try {
-        // Simulate real-time price update
-        const lastPrice = currentPrice;
-        const change = (Math.random() - 0.5) * lastPrice * 0.001;
-        const newPrice = lastPrice + change;
-        
         const now = Math.floor(Date.now() / 1000);
         const intervalMs = getIntervalMs(interval);
         const currentCandleTime = Math.floor(now / (intervalMs / 1000)) * (intervalMs / 1000);
 
+        // Simulate price movement
+        const lastPrice = currentPrice;
+        const change = (Math.random() - 0.5) * lastPrice * 0.001;
+        const newPrice = lastPrice + change;
+
         // Update the current candle
-        candlestickSeriesRef.current.update({
-          time: currentCandleTime,
+        candlestickSeriesRef.current?.update({
+          time: currentCandleTime as Time,
           open: lastPrice,
           high: Math.max(lastPrice, newPrice),
           low: Math.min(lastPrice, newPrice),
@@ -268,29 +257,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
         });
 
         setCurrentPrice(newPrice);
-        setPriceChange(newPrice - lastPrice);
-        setPriceChangePercent((change / lastPrice) * 100);
       } catch (error) {
         console.error('Error updating chart:', error);
       }
     }, 1000);
 
     return () => clearInterval(updateInterval);
-  }, [currentPrice, interval, websocketUrl]);
-
-  // If lightweight-charts is not available, show error message
-  if (!LightweightCharts || !LightweightCharts.createChart) {
-    return (
-      <div className="flex flex-col h-full bg-gray-900 rounded-lg overflow-hidden p-4">
-        <div className="text-red-500">
-          Error: lightweight-charts library not found. Please install it:
-          <pre className="mt-2 p-2 bg-gray-800 rounded text-sm">
-            npm install lightweight-charts
-          </pre>
-        </div>
-      </div>
-    );
-  }
+  }, [currentPrice, interval]);
 
   return (
     <div className="flex flex-col h-full bg-gray-900 rounded-lg overflow-hidden">
@@ -326,7 +299,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       {/* Chart Container */}
       <div className="flex-1 relative">
         {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-900 z-10">
             <div className="text-white">Loading chart data...</div>
           </div>
         )}
