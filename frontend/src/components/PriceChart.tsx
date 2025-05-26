@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType, IChartApi, CandlestickData, UTCTimestamp } from 'lightweight-charts';
+// Import everything from lightweight-charts
+import * as LightweightCharts from 'lightweight-charts';
 // Import the types from your project
 import { PricePoint, Trade } from '../types';
 
@@ -21,7 +22,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
   trades = []
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
+  const chartRef = useRef<any>(null);
   const candlestickSeriesRef = useRef<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [currentPrice, setCurrentPrice] = useState<number | null>(propCurrentPrice || null);
@@ -112,9 +113,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
   };
 
   // Convert data to TradingView format
-  const convertToTradingViewFormat = (data: PricePoint[]): CandlestickData[] => {
+  const convertToTradingViewFormat = (data: PricePoint[]): any[] => {
     return data.map(candle => ({
-      time: candle.timestamp as UTCTimestamp,
+      time: candle.timestamp,
       open: candle.open,
       high: candle.high,
       low: candle.low,
@@ -126,106 +127,111 @@ const PriceChart: React.FC<PriceChartProps> = ({
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    const chart = createChart(chartContainerRef.current, {
-      layout: {
-        background: { type: ColorType.Solid, color: '#131722' },
-        textColor: '#d1d4dc',
-      },
-      grid: {
-        vertLines: {
-          color: 'rgba(42, 46, 57, 0.5)',
+    try {
+      const chart = LightweightCharts.createChart(chartContainerRef.current, {
+        layout: {
+          background: { type: LightweightCharts.ColorType.Solid, color: '#131722' },
+          textColor: '#d1d4dc',
         },
-        horzLines: {
-          color: 'rgba(42, 46, 57, 0.3)',
+        grid: {
+          vertLines: {
+            color: 'rgba(42, 46, 57, 0.5)',
+          },
+          horzLines: {
+            color: 'rgba(42, 46, 57, 0.3)',
+          },
         },
-      },
-      crosshair: {
-        mode: 0,
-      },
-      rightPriceScale: {
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+        },
+        rightPriceScale: {
+          borderVisible: false,
+          scaleMargins: {
+            top: 0.1,
+            bottom: 0.2,
+          },
+        },
+        timeScale: {
+          borderVisible: false,
+          timeVisible: true,
+          secondsVisible: false,
+        },
+        handleScroll: {
+          mouseWheel: true,
+          pressedMouseMove: true,
+          horzTouchDrag: true,
+          vertTouchDrag: false,
+        },
+        handleScale: {
+          axisPressedMouseMove: true,
+          mouseWheel: true,
+          pinch: true,
+        },
+      });
+
+      const candlestickSeries = chart.addCandlestickSeries({
+        upColor: '#26a69a',
+        downColor: '#ef5350',
         borderVisible: false,
-        scaleMargins: {
-          top: 0.1,
-          bottom: 0.2,
-        },
-      },
-      timeScale: {
-        borderVisible: false,
-        timeVisible: true,
-        secondsVisible: false,
-      },
-      handleScroll: {
-        mouseWheel: true,
-        pressedMouseMove: true,
-        horzTouchDrag: true,
-        vertTouchDrag: false,
-      },
-      handleScale: {
-        axisPressedMouseMove: true,
-        mouseWheel: true,
-        pinch: true,
-      },
-    });
+        wickUpColor: '#26a69a',
+        wickDownColor: '#ef5350',
+      });
 
-    const candlestickSeries = chart.addCandlestickSeries({
-      upColor: '#26a69a',
-      downColor: '#ef5350',
-      borderVisible: false,
-      wickUpColor: '#26a69a',
-      wickDownColor: '#ef5350',
-    });
+      chartRef.current = chart;
+      candlestickSeriesRef.current = candlestickSeries;
 
-    chartRef.current = chart;
-    candlestickSeriesRef.current = candlestickSeries;
-
-    // Determine which data to use
-    let data: PricePoint[] = [];
-    
-    if (priceHistory && priceHistory.length > 0) {
-      // Fill any gaps in the data
-      const intervalMinutes = parseInt(interval.replace(/\D/g, '')) || 15;
-      data = fillMissingCandles(priceHistory, intervalMinutes);
-    } else {
-      // Generate sample data as fallback
-      data = generateSampleData();
-    }
-
-    // Ensure data is sorted by timestamp
-    data.sort((a, b) => a.timestamp - b.timestamp);
-
-    const formattedData = convertToTradingViewFormat(data);
-    candlestickSeries.setData(formattedData);
-
-    // Calculate price changes
-    if (data.length > 1) {
-      const firstCandle = data[0];
-      const lastCandle = data[data.length - 1];
-      setCurrentPrice(lastCandle.close);
-      const change = lastCandle.close - firstCandle.open;
-      setPriceChange(change);
-      setPriceChangePercent((change / firstCandle.open) * 100);
-    }
-
-    // Fit content
-    chart.timeScale().fitContent();
-    setIsLoading(false);
-
-    // Handle resize
-    const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ 
-          width: chartContainerRef.current.clientWidth,
-          height: chartContainerRef.current.clientHeight
-        });
+      // Determine which data to use
+      let data: PricePoint[] = [];
+      
+      if (priceHistory && priceHistory.length > 0) {
+        // Fill any gaps in the data
+        const intervalMinutes = parseInt(interval.replace(/\D/g, '')) || 15;
+        data = fillMissingCandles(priceHistory, intervalMinutes);
+      } else {
+        // Generate sample data as fallback
+        data = generateSampleData();
       }
-    };
 
-    window.addEventListener('resize', handleResize);
+      // Ensure data is sorted by timestamp
+      data.sort((a, b) => a.timestamp - b.timestamp);
 
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      chart.remove();
-    };
+      const formattedData = convertToTradingViewFormat(data);
+      candlestickSeries.setData(formattedData);
+
+      // Calculate price changes
+      if (data.length > 1) {
+        const firstCandle = data[0];
+        const lastCandle = data[data.length - 1];
+        setCurrentPrice(lastCandle.close);
+        const change = lastCandle.close - firstCandle.open;
+        setPriceChange(change);
+        setPriceChangePercent((change / firstCandle.open) * 100);
+      }
+
+      // Fit content
+      chart.timeScale().fitContent();
+      setIsLoading(false);
+
+      // Handle resize
+      const handleResize = () => {
+        if (chartContainerRef.current && chart) {
+          chart.applyOptions({ 
+            width: chartContainerRef.current.clientWidth,
+            height: chartContainerRef.current.clientHeight
+          });
+        }
+      };
+
+      window.addEventListener('resize', handleResize);
+
+      return () => {
+        window.removeEventListener('resize', handleResize);
+        chart.remove();
+      };
+    } catch (error) {
+      console.error('Error initializing chart:', error);
+      setIsLoading(false);
+    }
   }, [priceHistory, interval]);
 
   // Update current price when prop changes
@@ -242,31 +248,49 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const updateInterval = setInterval(() => {
       if (!candlestickSeriesRef.current) return;
 
-      // Simulate real-time price update
-      const lastPrice = currentPrice;
-      const change = (Math.random() - 0.5) * lastPrice * 0.001;
-      const newPrice = lastPrice + change;
-      
-      const now = Math.floor(Date.now() / 1000);
-      const intervalMs = getIntervalMs(interval);
-      const currentCandleTime = Math.floor(now / (intervalMs / 1000)) * (intervalMs / 1000);
+      try {
+        // Simulate real-time price update
+        const lastPrice = currentPrice;
+        const change = (Math.random() - 0.5) * lastPrice * 0.001;
+        const newPrice = lastPrice + change;
+        
+        const now = Math.floor(Date.now() / 1000);
+        const intervalMs = getIntervalMs(interval);
+        const currentCandleTime = Math.floor(now / (intervalMs / 1000)) * (intervalMs / 1000);
 
-      // Update the current candle
-      candlestickSeriesRef.current.update({
-        time: currentCandleTime as UTCTimestamp,
-        open: lastPrice,
-        high: Math.max(lastPrice, newPrice),
-        low: Math.min(lastPrice, newPrice),
-        close: newPrice
-      });
+        // Update the current candle
+        candlestickSeriesRef.current.update({
+          time: currentCandleTime,
+          open: lastPrice,
+          high: Math.max(lastPrice, newPrice),
+          low: Math.min(lastPrice, newPrice),
+          close: newPrice
+        });
 
-      setCurrentPrice(newPrice);
-      setPriceChange(newPrice - lastPrice);
-      setPriceChangePercent((change / lastPrice) * 100);
+        setCurrentPrice(newPrice);
+        setPriceChange(newPrice - lastPrice);
+        setPriceChangePercent((change / lastPrice) * 100);
+      } catch (error) {
+        console.error('Error updating chart:', error);
+      }
     }, 1000);
 
     return () => clearInterval(updateInterval);
   }, [currentPrice, interval, websocketUrl]);
+
+  // If lightweight-charts is not available, show error message
+  if (!LightweightCharts || !LightweightCharts.createChart) {
+    return (
+      <div className="flex flex-col h-full bg-gray-900 rounded-lg overflow-hidden p-4">
+        <div className="text-red-500">
+          Error: lightweight-charts library not found. Please install it:
+          <pre className="mt-2 p-2 bg-gray-800 rounded text-sm">
+            npm install lightweight-charts
+          </pre>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full bg-gray-900 rounded-lg overflow-hidden">
