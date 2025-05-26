@@ -164,11 +164,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
       rightPriceScale: {
         borderVisible: false,
         scaleMargins: {
-          top: 0.1,
-          bottom: 0.1,
+          top: 0.2,    // 20% padding at top
+          bottom: 0.2, // 20% padding at bottom
         },
         mode: 0, // Normal mode
-        autoScale: false, // Disable auto scale to control range manually
+        autoScale: true, // Let it auto scale but with good margins
       },
       timeScale: {
         borderVisible: false,
@@ -214,46 +214,35 @@ const PriceChart: React.FC<PriceChartProps> = ({
     candlestickSeries.setData(candleData);
     
     // Set price scale to show a reasonable range around the current price
-    const priceRange = 10; // Show ±$10 range for better visualization
     const minPrice = Math.min(...data.map(d => d.low));
     const maxPrice = Math.max(...data.map(d => d.high));
     const currentPrice = data[data.length - 1].close;
     
-    // Set a reasonable visible range - either based on data or a fixed range
-    if (maxPrice - minPrice < priceRange) {
-      // If natural range is small, use a fixed range around current price
+    // Calculate a reasonable buffer around prices
+    const priceRange = maxPrice - minPrice;
+    const buffer = Math.max(currentPrice * 0.02, 5); // 2% or $5 minimum
+    
+    // Set price scale margins to prevent auto-scaling from making small moves look huge
+    if (priceRange < buffer * 2) {
+      // If the natural range is small, add padding
+      candlestickSeries.applyOptions({
+        priceScaleId: 'right',
+      });
+      
+      // Set the visible range manually
       chart.priceScale('right').applyOptions({
-        scaleMargins: {
-          top: 0.1,
-          bottom: 0.1,
-        },
         autoScale: false,
-      });
-      
-      // Set visible range to ±2% of current price or ±$5, whichever is larger
-      const buffer = Math.max(currentPrice * 0.02, 5);
-      chart.timeScale().fitContent();
-      
-      // Use setTimeout to ensure the chart has rendered before setting range
-      setTimeout(() => {
-        const visibleRange = candlestickSeriesRef.current.priceScale().getVisiblePriceRange();
-        if (visibleRange) {
-          const center = currentPrice;
-          candlestickSeriesRef.current.priceScale().setVisiblePriceRange({
-            from: center - buffer,
-            to: center + buffer,
-          });
-        }
-      }, 0);
-    } else {
-      // If natural range is large enough, use auto scale
-      chart.priceScale('right').applyOptions({
         scaleMargins: {
-          top: 0.1,
-          bottom: 0.1,
+          top: 0.2,
+          bottom: 0.2,
         },
-        autoScale: true,
       });
+      
+      // Use the series' built-in coordinate methods for v4
+      const priceToCoordinate = candlestickSeries.priceToCoordinate(currentPrice);
+      if (priceToCoordinate !== null) {
+        chart.timeScale().scrollToPosition(0, false);
+      }
     }
     
     // Store the current candle for updates
@@ -293,7 +282,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
   // Update chart when current price changes
   useEffect(() => {
-    if (!candlestickSeriesRef.current || !propCurrentPrice) return;
+    if (!candlestickSeriesRef.current || !propCurrentPrice || !chartRef.current) return;
     
     setCurrentPrice(propCurrentPrice);
     
@@ -328,24 +317,32 @@ const PriceChart: React.FC<PriceChartProps> = ({
       currentCandleRef.current = newCandle;
     }
     
-    // Adjust visible price range if price moves outside current view
-    try {
-      const visibleRange = candlestickSeriesRef.current.priceScale().getVisiblePriceRange();
-      if (visibleRange) {
-        const buffer = Math.max(propCurrentPrice * 0.02, 5); // 2% or $5
-        const padding = buffer * 0.5;
-        
-        // Check if price is getting close to edges
-        if (propCurrentPrice > visibleRange.to - padding || propCurrentPrice < visibleRange.from + padding) {
-          // Re-center the view around current price
-          candlestickSeriesRef.current.priceScale().setVisiblePriceRange({
-            from: propCurrentPrice - buffer,
-            to: propCurrentPrice + buffer,
-          });
-        }
+    // For v4, we'll control scale through the scale margins instead
+    // This prevents small price movements from looking huge
+    if (chartRef.current) {
+      const priceScale = chartRef.current.priceScale('right');
+      
+      // Calculate dynamic scale margins based on price movement
+      const percentMove = Math.abs((propCurrentPrice - (priceHistory[0]?.close || propCurrentPrice)) / propCurrentPrice);
+      
+      // Adjust margins based on volatility
+      let topMargin = 0.2;
+      let bottomMargin = 0.2;
+      
+      if (percentMove < 0.02) { // Less than 2% move
+        topMargin = 0.3;
+        bottomMargin = 0.3;
+      } else if (percentMove > 0.05) { // More than 5% move
+        topMargin = 0.1;
+        bottomMargin = 0.1;
       }
-    } catch (e) {
-      // Ignore errors if price scale is not ready
+      
+      priceScale.applyOptions({
+        scaleMargins: {
+          top: topMargin,
+          bottom: bottomMargin,
+        },
+      });
     }
     
     // Update price change
