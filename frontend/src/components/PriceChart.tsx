@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, ColorType, IChartApi, ISeriesApi, Time } from 'lightweight-charts';
+// Import all from lightweight-charts to ensure we get everything
+import * as LightweightCharts from 'lightweight-charts';
 // Import the types from your project
 import { PricePoint, Trade } from '../types';
 
@@ -21,8 +22,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
   trades = []
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const chartRef = useRef<any>(null);
+  const candlestickSeriesRef = useRef<any>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [currentPrice, setCurrentPrice] = useState<number | null>(propCurrentPrice || null);
   const [priceChange, setPriceChange] = useState<number>(0);
@@ -115,13 +116,22 @@ const PriceChart: React.FC<PriceChartProps> = ({
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
+    let chart: any;
+    let series: any;
+
     try {
-      // Create the chart
-      const chart = createChart(chartContainerRef.current, {
+      console.log('LightweightCharts object:', LightweightCharts);
+      console.log('createChart function:', LightweightCharts.createChart);
+      
+      // Create the chart using the namespace
+      chart = LightweightCharts.createChart(chartContainerRef.current, {
         width: chartContainerRef.current.clientWidth,
         height: chartContainerRef.current.clientHeight,
         layout: {
-          background: { type: ColorType.Solid, color: '#131722' },
+          background: { 
+            type: LightweightCharts.ColorType ? LightweightCharts.ColorType.Solid : 'solid' as any, 
+            color: '#131722' 
+          },
           textColor: '#d1d4dc',
         },
         grid: {
@@ -149,8 +159,12 @@ const PriceChart: React.FC<PriceChartProps> = ({
         },
       });
 
-      // Create candlestick series
-      const candlestickSeries = chart.addCandlestickSeries({
+      console.log('Chart created:', chart);
+      console.log('Chart methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(chart)));
+
+      // In v5, use addSeries with type
+      console.log('Creating candlestick series using addSeries...');
+      series = chart.addSeries('Candlestick', {
         upColor: '#26a69a',
         downColor: '#ef5350',
         borderVisible: false,
@@ -159,34 +173,31 @@ const PriceChart: React.FC<PriceChartProps> = ({
       });
 
       chartRef.current = chart;
-      candlestickSeriesRef.current = candlestickSeries;
+      candlestickSeriesRef.current = series;
 
       // Prepare data
       let data: PricePoint[] = [];
       
       if (priceHistory && priceHistory.length > 0) {
-        // Fill any gaps in the data
         const intervalMinutes = parseInt(interval.replace(/\D/g, '')) || 15;
         data = fillMissingCandles([...priceHistory], intervalMinutes);
       } else {
-        // Generate sample data as fallback
         data = generateSampleData();
       }
 
       // Ensure data is sorted by timestamp
       data.sort((a, b) => a.timestamp - b.timestamp);
 
-      // Convert to lightweight-charts format
+      // Set data - v5 uses the same format for all series types
       const candleData = data.map(d => ({
-        time: d.timestamp as Time,
+        time: d.timestamp,
         open: d.open,
         high: d.high,
         low: d.low,
         close: d.close,
       }));
-
-      // Set the data
-      candlestickSeries.setData(candleData);
+      console.log('Setting candlestick data, first 3 items:', candleData.slice(0, 3));
+      series.setData(candleData);
 
       // Calculate price changes
       if (data.length > 1) {
@@ -217,10 +228,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
       // Cleanup
       return () => {
         window.removeEventListener('resize', handleResize);
-        chart.remove();
+        if (chart) {
+          chart.remove();
+        }
       };
     } catch (error) {
       console.error('Error initializing chart:', error);
+      console.error('Error details:', error);
       setIsLoading(false);
     }
   }, [priceHistory, interval]);
@@ -234,7 +248,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
   // Real-time updates
   useEffect(() => {
-    if (!candlestickSeriesRef.current || !currentPrice) return;
+    if (!candlestickSeriesRef.current || !currentPrice || !chartRef.current) return;
 
     const updateInterval = setInterval(() => {
       try {
@@ -247,9 +261,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
         const change = (Math.random() - 0.5) * lastPrice * 0.001;
         const newPrice = lastPrice + change;
 
-        // Update the current candle
+        // Update candlestick data
         candlestickSeriesRef.current?.update({
-          time: currentCandleTime as Time,
+          time: currentCandleTime,
           open: lastPrice,
           high: Math.max(lastPrice, newPrice),
           low: Math.min(lastPrice, newPrice),
