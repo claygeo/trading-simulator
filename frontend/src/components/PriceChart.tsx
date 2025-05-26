@@ -1,375 +1,276 @@
-// frontend/src/components/PriceChart.tsx - With 300 Candles and 15min Timeframe
-import React, { useRef, useEffect, useState } from 'react';
-import { PricePoint, Trade } from '../types';
+import React, { useEffect, useRef, useState } from 'react';
+import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickData, UTCTimestamp } from 'lightweight-charts';
 
-interface PriceChartProps {
-  priceHistory: PricePoint[];
-  currentPrice: number;
-  trades: Trade[];
+interface PriceData {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
 }
 
-const PriceChart: React.FC<PriceChartProps> = ({ priceHistory, currentPrice, trades }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [status, setStatus] = useState<string>('Initializing chart...');
-  
-  // Format prices for display
-  const formatPrice = (price: number) => `$${price.toFixed(2)}`;
-  
-  // Create synthetic data if we have too few candles
-  const getSyntheticPriceHistory = (realPriceHistory: PricePoint[]): PricePoint[] => {
-    if (realPriceHistory.length >= 300) {
-      return realPriceHistory; // Use real data if we have enough
-    }
+interface PriceChartProps {
+  symbol?: string;
+  interval?: '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+  websocketUrl?: string;
+  initialData?: PriceData[];
+}
+
+const PriceChart: React.FC<PriceChartProps> = ({ 
+  symbol = 'BTC/USDT',
+  interval = '15m',
+  websocketUrl,
+  initialData = []
+}) => {
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [currentPrice, setCurrentPrice] = useState<number | null>(null);
+  const [priceChange, setPriceChange] = useState<number>(0);
+  const [priceChangePercent, setPriceChangePercent] = useState<number>(0);
+
+  // Generate realistic sample data if no initial data provided
+  const generateSampleData = (): PriceData[] => {
+    const data: PriceData[] = [];
+    const now = Date.now();
+    const intervalMs = getIntervalMs(interval);
+    const candleCount = 300; // Generate 300 candles
     
-    // Clone the existing price data
-    const extendedData = [...realPriceHistory];
+    let basePrice = 45000 + Math.random() * 5000; // BTC price range
     
-    if (realPriceHistory.length === 0) {
-      return []; // Can't generate synthetic data with no seed
-    }
-    
-    // How many candles to generate - increased to 300
-    const targetCount = 300;
-    const additionalCount = targetCount - realPriceHistory.length;
-    
-    if (additionalCount <= 0) {
-      return extendedData;
-    }
-    
-    // Get stats from real data to make synthetic data realistic
-    const firstPoint = realPriceHistory[0];
-    const lastPoint = realPriceHistory[realPriceHistory.length - 1];
-    
-    // Average candle time interval - 15 minutes (900000 ms)
-    const timeInterval = 15 * 60 * 1000; // 15 minutes in milliseconds
-    
-    // Calculate volatility from real data
-    let avgVolatility = 0.003; // Default ~0.3% volatility
-    if (realPriceHistory.length > 1) {
-      let totalChange = 0;
-      for (let i = 1; i < realPriceHistory.length; i++) {
-        const prevClose = realPriceHistory[i-1].close;
-        const currClose = realPriceHistory[i].close;
-        totalChange += Math.abs((currClose - prevClose) / prevClose);
-      }
-      avgVolatility = totalChange / (realPriceHistory.length - 1);
-    }
-    
-    // Generate past candles (before our real data)
-    const pastCandles: PricePoint[] = [];
-    let lastTimestamp = firstPoint.timestamp;
-    let lastPrice = firstPoint.close;
-    
-    for (let i = 0; i < additionalCount; i++) {
-      lastTimestamp -= timeInterval; // Use 15 min interval
+    for (let i = candleCount - 1; i >= 0; i--) {
+      const time = now - (i * intervalMs);
+      const volatility = 0.002 + Math.random() * 0.003; // 0.2% to 0.5% volatility
       
-      // Random price movement based on calculated volatility
-      const changePercent = (Math.random() * 2 - 1) * avgVolatility;
-      const newPrice = lastPrice * (1 + changePercent);
+      // Generate realistic OHLC data
+      const open = basePrice;
+      const change = (Math.random() - 0.5) * basePrice * volatility;
+      const close = open + change;
+      const high = Math.max(open, close) + Math.random() * Math.abs(change) * 0.5;
+      const low = Math.min(open, close) - Math.random() * Math.abs(change) * 0.5;
+      const volume = Math.random() * 1000000 + 500000;
       
-      // Create a realistic candle
-      const open = lastPrice;
-      const close = newPrice;
-      const high = Math.max(open, close) * (1 + Math.random() * 0.002); // Small wick
-      const low = Math.min(open, close) * (1 - Math.random() * 0.002);
-      const volume = Math.random() * 100 + 50; // Random volume
-      
-      pastCandles.unshift({
-        timestamp: lastTimestamp,
-        open,
-        high,
-        low,
-        close,
+      data.push({
+        time: Math.floor(time / 1000),
+        open: parseFloat(open.toFixed(2)),
+        high: parseFloat(high.toFixed(2)),
+        low: parseFloat(low.toFixed(2)),
+        close: parseFloat(close.toFixed(2)),
         volume
       });
       
-      lastPrice = newPrice;
+      basePrice = close;
     }
     
-    // Combine past synthetic candles with real data
-    return [...pastCandles, ...extendedData];
+    return data;
   };
-  
-  // Draw the chart using canvas
+
+  const getIntervalMs = (interval: string): number => {
+    const intervals: { [key: string]: number } = {
+      '1m': 60 * 1000,
+      '5m': 5 * 60 * 1000,
+      '15m': 15 * 60 * 1000,
+      '1h': 60 * 60 * 1000,
+      '4h': 4 * 60 * 60 * 1000,
+      '1d': 24 * 60 * 60 * 1000
+    };
+    return intervals[interval] || intervals['15m'];
+  };
+
+  // Convert data to TradingView format
+  const convertToTradingViewFormat = (data: PriceData[]): CandlestickData[] => {
+    return data.map(candle => ({
+      time: candle.time as UTCTimestamp,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close
+    }));
+  };
+
+  // Initialize chart
   useEffect(() => {
-    const drawChart = () => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      
-      // Set canvas size to match container
-      const container = canvas.parentElement;
-      if (container) {
-        canvas.width = container.clientWidth;
-        canvas.height = container.clientHeight;
-      }
-      
-      // Process real price history or create synthetic data if needed
-      const chartData = getSyntheticPriceHistory(priceHistory);
-      
-      // Check if we have price data
-      if (!chartData || chartData.length === 0) {
-        setStatus('No price data available');
-        ctx.fillStyle = '#787B86';
-        ctx.font = '14px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('No price data available', canvas.width / 2, canvas.height / 2);
-        return;
-      }
-      
-      setStatus(`Drawing chart with ${chartData.length} candles (15min timeframe)...`);
-      
-      // Chart colors
-      const backgroundColor = '#131722';
-      const gridColor = '#1E2230';
-      const textColor = '#D9D9D9';
-      const upColor = '#089981';
-      const downColor = '#F23645';
-      
-      // Clear canvas
-      ctx.fillStyle = backgroundColor;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      
-      // Define margins
-      const margin = {
-        top: 30,
-        right: 60,
-        bottom: 30,
-        left: 40
-      };
-      
-      // Calculate chart area
-      const chartWidth = canvas.width - margin.left - margin.right;
-      const chartHeight = canvas.height - margin.top - margin.bottom;
-      
-      // Find min and max values
-      let minPrice = Math.min(...chartData.map(p => p.low || p.close));
-      let maxPrice = Math.max(...chartData.map(p => p.high || p.close));
-      
-      // Include current price in range
-      minPrice = Math.min(minPrice, currentPrice);
-      maxPrice = Math.max(maxPrice, currentPrice);
-      
-      // Add padding to price range (more narrow range for better visualization)
-      const pricePadding = (maxPrice - minPrice) * 0.05;
-      minPrice -= pricePadding;
-      maxPrice += pricePadding;
-      
-      // Price scale function
-      const priceToY = (price: number) => {
-        return margin.top + chartHeight - ((price - minPrice) / (maxPrice - minPrice)) * chartHeight;
-      };
-      
-      // Calculate visible data range - make it look like a typical trading chart
-      // by extending the x-axis range beyond the visible data
-      const extendRatio = 0.1; // Extend the visible range by 10% to add blank space for future candles
-      
-      // Calculate the min and max of the actual data for time
-      const minTime = Math.min(...chartData.map(p => p.timestamp));
-      const maxTime = Math.max(...chartData.map(p => p.timestamp));
-      const timeRange = maxTime - minTime;
-      
-      // Add extensions for a typical chart look
-      const extendedMinTime = minTime;
-      const extendedMaxTime = maxTime + timeRange * extendRatio;
-      
-      // Time scale function with the extended range
-      const timeToX = (timestamp: number) => {
-        return margin.left + ((timestamp - extendedMinTime) / (extendedMaxTime - extendedMinTime)) * chartWidth;
-      };
-      
-      // Draw grid
-      ctx.strokeStyle = gridColor;
-      ctx.lineWidth = 1;
-      
-      // Draw horizontal grid lines
-      const priceStep = (maxPrice - minPrice) / 5;
-      for (let i = 0; i <= 5; i++) {
-        const price = minPrice + i * priceStep;
-        const y = priceToY(price);
-        
-        ctx.beginPath();
-        ctx.moveTo(margin.left, y);
-        ctx.lineTo(canvas.width - margin.right, y);
-        ctx.stroke();
-        
-        // Draw price labels
-        ctx.fillStyle = textColor;
-        ctx.font = '10px Arial';
-        ctx.textAlign = 'right';
-        ctx.fillText(formatPrice(price), canvas.width - margin.right + 5, y + 4);
-      }
-      
-      // Draw vertical grid lines (time)
-      const timeLabels: { x: number; label: string }[] = [];
-      
-      // Determine ideal number of time labels based on available width
-      const idealTimeLabelCount = Math.floor(chartWidth / 100); // Aim for a label about every 100px
-      const timeStepSize = timeRange / idealTimeLabelCount;
-      
-      // Generate evenly spaced time labels
-      for (let t = minTime; t <= maxTime; t += timeStepSize) {
-        const x = timeToX(t);
-        const date = new Date(t);
-        // Format as HH:MM
-        const timeLabel = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-        
-        timeLabels.push({ x, label: timeLabel });
-        
-        ctx.beginPath();
-        ctx.moveTo(x, margin.top);
-        ctx.lineTo(x, canvas.height - margin.bottom);
-        ctx.stroke();
-      }
-      
-      // Draw time labels
-      timeLabels.forEach(({ x, label }) => {
-        ctx.fillStyle = textColor;
-        ctx.font = '10px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText(label, x, canvas.height - margin.bottom + 15);
-      });
-      
-      // Calculate candle width based on data density, even smaller since we have more candles
-      const candleSpacing = 1; // Reduced space between candles
-      const theoreticalMaxWidth = chartWidth / chartData.length;
-      const candleWidth = Math.min(theoreticalMaxWidth - candleSpacing, 3); // Reduced from 6px to 3px for more candles
-      
-      // Draw candlesticks
-      chartData.forEach((point) => {
-        const x = timeToX(point.timestamp);
-        const open = point.open || point.close;
-        const close = point.close;
-        const high = point.high || Math.max(open, close);
-        const low = point.low || Math.min(open, close);
-        
-        // Determine if candle is up or down
-        const isUp = close >= open;
-        ctx.fillStyle = isUp ? upColor : downColor;
-        ctx.strokeStyle = isUp ? upColor : downColor;
-        
-        // Draw wick (high to low line)
-        ctx.beginPath();
-        ctx.moveTo(x, priceToY(high));
-        ctx.lineTo(x, priceToY(low));
-        ctx.stroke();
-        
-        // Draw candle body
-        const yOpen = priceToY(open);
-        const yClose = priceToY(close);
-        const candleHeight = Math.abs(yClose - yOpen);
-        
-        ctx.fillRect(
-          x - candleWidth / 2,
-          Math.min(yOpen, yClose),
-          candleWidth,
-          Math.max(1, candleHeight) // Ensure height is at least 1px
-        );
-      });
-      
-      // Draw current price line
-      ctx.strokeStyle = currentPrice > chartData[chartData.length - 1].close ? upColor : downColor;
-      ctx.lineWidth = 2;
-      ctx.setLineDash([5, 3]);
-      
-      const currentPriceY = priceToY(currentPrice);
-      ctx.beginPath();
-      ctx.moveTo(margin.left, currentPriceY);
-      ctx.lineTo(canvas.width - margin.right, currentPriceY);
-      ctx.stroke();
-      
-      // Reset line dash
-      ctx.setLineDash([]);
-      
-      // Draw current price label
-      ctx.fillStyle = ctx.strokeStyle;
-      ctx.font = 'bold 10px Arial';
-      ctx.textAlign = 'left';
-      ctx.fillText(formatPrice(currentPrice), margin.left, currentPriceY - 5);
-      
-      // Draw recent trades markers
-      if (trades && trades.length > 0) {
-        // Only show last few significant trades
-        const significantTrades = trades
-          .slice(0, 10)
-          .filter(trade => trade.value > 100); // Only show trades with significant value
-        
-        significantTrades.forEach(trade => {
-          const x = timeToX(trade.timestamp);
-          const y = trade.action === 'buy' 
-            ? priceToY(trade.price) + 10 // Below price for buys
-            : priceToY(trade.price) - 10; // Above price for sells
-          
-          // Draw trade marker
-          ctx.fillStyle = trade.action === 'buy' ? upColor : downColor;
-          
-          // Draw triangle
-          ctx.beginPath();
-          if (trade.action === 'buy') {
-            // Upward-pointing triangle
-            ctx.moveTo(x, y);
-            ctx.lineTo(x - 4, y + 4);
-            ctx.lineTo(x + 4, y + 4);
-          } else {
-            // Downward-pointing triangle
-            ctx.moveTo(x, y);
-            ctx.lineTo(x - 4, y - 4);
-            ctx.lineTo(x + 4, y - 4);
-          }
-          ctx.closePath();
-          ctx.fill();
+    if (!chartContainerRef.current) return;
+
+    const chart = createChart(chartContainerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: '#131722' },
+        textColor: '#d1d4dc',
+      },
+      grid: {
+        vertLines: {
+          color: 'rgba(42, 46, 57, 0.5)',
+        },
+        horzLines: {
+          color: 'rgba(42, 46, 57, 0.3)',
+        },
+      },
+      crosshair: {
+        mode: 0,
+      },
+      rightPriceScale: {
+        borderVisible: false,
+        scaleMargins: {
+          top: 0.1,
+          bottom: 0.2,
+        },
+      },
+      timeScale: {
+        borderVisible: false,
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      watermark: {
+        visible: false,
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false,
+      },
+      handleScale: {
+        axisPressedMouseMove: true,
+        mouseWheel: true,
+        pinch: true,
+      },
+    });
+
+    const candlestickSeries = chart.addCandlestickSeries({
+      upColor: '#26a69a',
+      downColor: '#ef5350',
+      borderVisible: false,
+      wickUpColor: '#26a69a',
+      wickDownColor: '#ef5350',
+    });
+
+    chartRef.current = chart;
+    candlestickSeriesRef.current = candlestickSeries;
+
+    // Load initial data
+    const data = initialData.length > 0 ? initialData : generateSampleData();
+    const formattedData = convertToTradingViewFormat(data);
+    candlestickSeries.setData(formattedData);
+
+    // Calculate price changes
+    if (data.length > 1) {
+      const firstCandle = data[0];
+      const lastCandle = data[data.length - 1];
+      setCurrentPrice(lastCandle.close);
+      const change = lastCandle.close - firstCandle.open;
+      setPriceChange(change);
+      setPriceChangePercent((change / firstCandle.open) * 100);
+    }
+
+    // Fit content
+    chart.timeScale().fitContent();
+    setIsLoading(false);
+
+    // Handle resize
+    const handleResize = () => {
+      if (chartContainerRef.current) {
+        chart.applyOptions({ 
+          width: chartContainerRef.current.clientWidth,
+          height: chartContainerRef.current.clientHeight
         });
       }
-      
-      // Add timeframe label (15min)
-      ctx.fillStyle = textColor;
-      ctx.font = 'bold 12px Arial';
-      ctx.textAlign = 'left';
-      ctx.fillText('15m', margin.left, margin.top - 10);
-      
-      setStatus(`Chart rendered with ${chartData.length} candles`);
     };
-    
-    // Draw chart initially and on window resize
-    drawChart();
-    
-    const handleResize = () => {
-      drawChart();
-    };
-    
+
     window.addEventListener('resize', handleResize);
-    
+
     return () => {
       window.removeEventListener('resize', handleResize);
+      chart.remove();
     };
-  }, [priceHistory, currentPrice, formatPrice, trades]);
-  
-  return (
-    <div className="h-full relative bg-[#131722] rounded-lg shadow-lg">
-      {/* Current price label in top left */}
-      <div className="absolute top-2 left-2 z-10 bg-[#1E2230] rounded px-2 py-1 text-xs">
-        <span className="text-[#787B86] mr-1">Price:</span>
-        <span className={currentPrice > (priceHistory[0]?.close || 0) ? 'text-[#089981]' : 'text-[#F23645]'}>
-          {formatPrice(currentPrice)}
-        </span>
-      </div>
+  }, []);
+
+  // Simulate real-time updates
+  useEffect(() => {
+    if (!candlestickSeriesRef.current || !websocketUrl) return;
+
+    const updateInterval = setInterval(() => {
+      if (!candlestickSeriesRef.current) return;
+
+      // Simulate real-time price update
+      const lastPrice = currentPrice || 45000;
+      const change = (Math.random() - 0.5) * lastPrice * 0.001; // 0.1% max change
+      const newPrice = lastPrice + change;
       
-      {/* Canvas for chart */}
-      <div className="h-full w-full">
-        <canvas 
-          ref={canvasRef}
+      const now = Math.floor(Date.now() / 1000);
+      const intervalMs = getIntervalMs(interval);
+      const currentCandleTime = Math.floor(now / (intervalMs / 1000)) * (intervalMs / 1000);
+
+      // Update the current candle
+      candlestickSeriesRef.current.update({
+        time: currentCandleTime as UTCTimestamp,
+        open: lastPrice,
+        high: Math.max(lastPrice, newPrice),
+        low: Math.min(lastPrice, newPrice),
+        close: newPrice
+      });
+
+      setCurrentPrice(newPrice);
+      setPriceChange(newPrice - lastPrice);
+      setPriceChangePercent((change / lastPrice) * 100);
+    }, 1000); // Update every second
+
+    return () => clearInterval(updateInterval);
+  }, [currentPrice, interval, websocketUrl]);
+
+  return (
+    <div className="flex flex-col h-full bg-gray-900 rounded-lg overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between p-4 border-b border-gray-800">
+        <div className="flex items-center space-x-4">
+          <h2 className="text-xl font-bold text-white">{symbol}</h2>
+          <div className="flex items-center space-x-2">
+            <span className="text-2xl font-bold text-white">
+              ${currentPrice?.toFixed(2) || '0.00'}
+            </span>
+            <span className={`text-sm font-medium ${priceChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+              {priceChange >= 0 ? '+' : ''}{priceChange.toFixed(2)} ({priceChangePercent.toFixed(2)}%)
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center space-x-2">
+          {['1m', '5m', '15m', '1h', '4h', '1d'].map((int) => (
+            <button
+              key={int}
+              className={`px-3 py-1 text-sm rounded ${
+                interval === int
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+              }`}
+            >
+              {int}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Chart Container */}
+      <div className="flex-1 relative">
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
+            <div className="text-white">Loading chart data...</div>
+          </div>
+        )}
+        <div 
+          ref={chartContainerRef} 
           className="w-full h-full"
+          style={{ minHeight: '400px' }}
         />
       </div>
-      
-      {/* Status indicator */}
-      {status && (
-        <div className="absolute bottom-2 left-2 z-10 bg-[#1E2230] rounded px-2 py-1 text-xs text-[#D9D9D9] opacity-70">
-          {status}
+
+      {/* Volume Bar (Optional) */}
+      <div className="h-20 border-t border-gray-800 bg-gray-850">
+        <div className="px-4 py-2">
+          <div className="text-xs text-gray-500">Volume 24h</div>
+          <div className="text-sm text-white font-medium">$2.34B</div>
         </div>
-      )}
+      </div>
     </div>
   );
 };
