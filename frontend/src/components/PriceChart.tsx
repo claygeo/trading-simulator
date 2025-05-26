@@ -10,26 +10,74 @@ interface PriceData {
   volume?: number;
 }
 
+interface PricePoint {
+  time: number;
+  price: number;
+}
+
+interface Trade {
+  price: number;
+  amount: number;
+  type: 'buy' | 'sell';
+  time: number;
+}
+
 interface PriceChartProps {
   symbol?: string;
   interval?: '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
   websocketUrl?: string;
   initialData?: PriceData[];
+  priceHistory?: PricePoint[];
+  currentPrice?: number;
+  trades?: Trade[];
 }
 
 const PriceChart: React.FC<PriceChartProps> = ({ 
   symbol = 'BTC/USDT',
   interval = '15m',
   websocketUrl,
-  initialData = []
+  initialData = [],
+  priceHistory = [],
+  currentPrice: propCurrentPrice,
+  trades = []
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const candlestickSeriesRef = useRef<any>(null); // Using 'any' to avoid complex generic typing
   const [isLoading, setIsLoading] = useState(true);
-  const [currentPrice, setCurrentPrice] = useState<number | null>(null);
+  const [currentPrice, setCurrentPrice] = useState<number | null>(propCurrentPrice || null);
   const [priceChange, setPriceChange] = useState<number>(0);
   const [priceChangePercent, setPriceChangePercent] = useState<number>(0);
+
+  // Convert price history to candle data if provided
+  const convertPriceHistoryToCandles = (priceHistory: PricePoint[], intervalMinutes: number): PriceData[] => {
+    if (priceHistory.length === 0) return [];
+    
+    const intervalMs = intervalMinutes * 60 * 1000;
+    const candles = new Map<number, PriceData>();
+    
+    priceHistory.forEach((point) => {
+      const candleTime = Math.floor(point.time / intervalMs) * intervalMs;
+      
+      if (!candles.has(candleTime)) {
+        candles.set(candleTime, {
+          time: candleTime / 1000,
+          open: point.price,
+          high: point.price,
+          low: point.price,
+          close: point.price,
+          volume: 0
+        });
+      } else {
+        const candle = candles.get(candleTime)!;
+        candle.high = Math.max(candle.high, point.price);
+        candle.low = Math.min(candle.low, point.price);
+        candle.close = point.price;
+      }
+    });
+    
+    return Array.from(candles.values()).sort((a, b) => a.time - b.time);
+  };
 
   // Generate realistic sample data if no initial data provided
   const generateSampleData = (): PriceData[] => {
@@ -122,9 +170,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
         timeVisible: true,
         secondsVisible: false,
       },
-      watermark: {
-        visible: false,
-      },
       handleScroll: {
         mouseWheel: true,
         pressedMouseMove: true,
@@ -149,8 +194,20 @@ const PriceChart: React.FC<PriceChartProps> = ({
     chartRef.current = chart;
     candlestickSeriesRef.current = candlestickSeries;
 
-    // Load initial data
-    const data = initialData.length > 0 ? initialData : generateSampleData();
+    // Determine which data to use
+    let data: PriceData[] = [];
+    
+    if (initialData.length > 0) {
+      data = initialData;
+    } else if (priceHistory.length > 0) {
+      // Convert price history to candle data
+      const intervalMinutes = parseInt(interval.replace(/\D/g, '')) || 15;
+      data = convertPriceHistoryToCandles(priceHistory, intervalMinutes);
+    } else {
+      // Generate sample data as fallback
+      data = generateSampleData();
+    }
+
     const formattedData = convertToTradingViewFormat(data);
     candlestickSeries.setData(formattedData);
 
@@ -184,7 +241,14 @@ const PriceChart: React.FC<PriceChartProps> = ({
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, []);
+  }, [priceHistory, initialData, interval]);
+
+  // Update current price when prop changes
+  useEffect(() => {
+    if (propCurrentPrice !== undefined && propCurrentPrice !== null) {
+      setCurrentPrice(propCurrentPrice);
+    }
+  }, [propCurrentPrice]);
 
   // Simulate real-time updates
   useEffect(() => {
@@ -218,6 +282,14 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
     return () => clearInterval(updateInterval);
   }, [currentPrice, interval, websocketUrl]);
+
+  // Add trade markers if trades are provided
+  useEffect(() => {
+    if (!candlestickSeriesRef.current || trades.length === 0) return;
+
+    // You can add markers for significant trades here
+    // This is optional and depends on your requirements
+  }, [trades]);
 
   return (
     <div className="flex flex-col h-full bg-gray-900 rounded-lg overflow-hidden">
