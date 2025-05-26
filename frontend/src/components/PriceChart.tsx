@@ -165,8 +165,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
         borderVisible: false,
         scaleMargins: {
           top: 0.1,
-          bottom: 0.2,
+          bottom: 0.1,
         },
+        mode: 0, // Normal mode
+        autoScale: false, // Disable auto scale to control range manually
       },
       timeScale: {
         borderVisible: false,
@@ -210,6 +212,49 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }));
 
     candlestickSeries.setData(candleData);
+    
+    // Set price scale to show a reasonable range around the current price
+    const priceRange = 10; // Show ±$10 range for better visualization
+    const minPrice = Math.min(...data.map(d => d.low));
+    const maxPrice = Math.max(...data.map(d => d.high));
+    const currentPrice = data[data.length - 1].close;
+    
+    // Set a reasonable visible range - either based on data or a fixed range
+    if (maxPrice - minPrice < priceRange) {
+      // If natural range is small, use a fixed range around current price
+      chart.priceScale('right').applyOptions({
+        scaleMargins: {
+          top: 0.1,
+          bottom: 0.1,
+        },
+        autoScale: false,
+      });
+      
+      // Set visible range to ±2% of current price or ±$5, whichever is larger
+      const buffer = Math.max(currentPrice * 0.02, 5);
+      chart.timeScale().fitContent();
+      
+      // Use setTimeout to ensure the chart has rendered before setting range
+      setTimeout(() => {
+        const visibleRange = candlestickSeriesRef.current.priceScale().getVisiblePriceRange();
+        if (visibleRange) {
+          const center = currentPrice;
+          candlestickSeriesRef.current.priceScale().setVisiblePriceRange({
+            from: center - buffer,
+            to: center + buffer,
+          });
+        }
+      }, 0);
+    } else {
+      // If natural range is large enough, use auto scale
+      chart.priceScale('right').applyOptions({
+        scaleMargins: {
+          top: 0.1,
+          bottom: 0.1,
+        },
+        autoScale: true,
+      });
+    }
     
     // Store the current candle for updates
     if (data.length > 0) {
@@ -281,6 +326,26 @@ const PriceChart: React.FC<PriceChartProps> = ({
       
       candlestickSeriesRef.current.update(newCandle);
       currentCandleRef.current = newCandle;
+    }
+    
+    // Adjust visible price range if price moves outside current view
+    try {
+      const visibleRange = candlestickSeriesRef.current.priceScale().getVisiblePriceRange();
+      if (visibleRange) {
+        const buffer = Math.max(propCurrentPrice * 0.02, 5); // 2% or $5
+        const padding = buffer * 0.5;
+        
+        // Check if price is getting close to edges
+        if (propCurrentPrice > visibleRange.to - padding || propCurrentPrice < visibleRange.from + padding) {
+          // Re-center the view around current price
+          candlestickSeriesRef.current.priceScale().setVisiblePriceRange({
+            from: propCurrentPrice - buffer,
+            to: propCurrentPrice + buffer,
+          });
+        }
+      }
+    } catch (e) {
+      // Ignore errors if price scale is not ready
     }
     
     // Update price change
