@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickData, UTCTimestamp } from 'lightweight-charts';
+// Import the types from your project
+import { PricePoint, Trade } from '../types';
 
 interface PriceData {
   time: number;
@@ -8,18 +10,6 @@ interface PriceData {
   low: number;
   close: number;
   volume?: number;
-}
-
-interface PricePoint {
-  time: number;
-  price: number;
-}
-
-interface Trade {
-  price: number;
-  amount: number;
-  type: 'buy' | 'sell';
-  time: number;
 }
 
 interface PriceChartProps {
@@ -57,22 +47,26 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const candles = new Map<number, PriceData>();
     
     priceHistory.forEach((point) => {
-      const candleTime = Math.floor(point.time / intervalMs) * intervalMs;
+      // PricePoint has 'timestamp' property based on your types
+      const timestamp = point.timestamp || point.time || Date.now();
+      const price = point.close || point.price || 0;
+      const candleTime = Math.floor(timestamp / intervalMs) * intervalMs;
       
       if (!candles.has(candleTime)) {
         candles.set(candleTime, {
           time: candleTime / 1000,
-          open: point.price,
-          high: point.price,
-          low: point.price,
-          close: point.price,
-          volume: 0
+          open: price,
+          high: price,
+          low: price,
+          close: price,
+          volume: point.volume || 0
         });
       } else {
         const candle = candles.get(candleTime)!;
-        candle.high = Math.max(candle.high, point.price);
-        candle.low = Math.min(candle.low, point.price);
-        candle.close = point.price;
+        candle.high = Math.max(candle.high, price);
+        candle.low = Math.min(candle.low, price);
+        candle.close = price;
+        candle.volume = (candle.volume || 0) + (point.volume || 0);
       }
     });
     
@@ -250,7 +244,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }
   }, [propCurrentPrice]);
 
-  // Simulate real-time updates
+  // Simulate real-time updates if websocket URL provided
   useEffect(() => {
     if (!candlestickSeriesRef.current || !websocketUrl) return;
 
@@ -283,12 +277,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return () => clearInterval(updateInterval);
   }, [currentPrice, interval, websocketUrl]);
 
-  // Add trade markers if trades are provided
+  // Process trades for display if needed
   useEffect(() => {
     if (!candlestickSeriesRef.current || trades.length === 0) return;
 
-    // You can add markers for significant trades here
-    // This is optional and depends on your requirements
+    // You can add trade markers or volume calculations here
+    // For now, just log that we received trades
+    console.log(`Received ${trades.length} trades for chart display`);
   }, [trades]);
 
   return (
@@ -340,7 +335,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
       <div className="h-20 border-t border-gray-800 bg-gray-850">
         <div className="px-4 py-2">
           <div className="text-xs text-gray-500">Volume 24h</div>
-          <div className="text-sm text-white font-medium">$2.34B</div>
+          <div className="text-sm text-white font-medium">
+            {trades.length > 0 ? `${trades.length} trades` : 'No recent trades'}
+          </div>
         </div>
       </div>
     </div>
