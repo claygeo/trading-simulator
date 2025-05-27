@@ -598,19 +598,20 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
         
-{/* Participants/Leaderboard - Right Bottom */}
-<div style={{ gridColumn: '2 / 3', gridRow: '2 / 3', overflow: 'hidden' }}>
-  <ErrorBoundary
-    fallback={<ErrorFallback componentName="Participants Overview" />}
-    onError={(error) => handleComponentError("Participants Overview", error)}
-  >
-    <ParticipantsOverview 
-      traders={safeData.traderRankings} 
-      activePositions={safeData.activePositions}
-      currentPrice={safeData.currentPrice}  // Add this line
-    />
-  </ErrorBoundary>
-</div>
+        {/* Participants/Leaderboard - Right Bottom */}
+        <div style={{ gridColumn: '2 / 3', gridRow: '2 / 3', overflow: 'hidden' }}>
+          <ErrorBoundary
+            fallback={<ErrorFallback componentName="Participants Overview" />}
+            onError={(error) => handleComponentError("Participants Overview", error)}
+          >
+            <ParticipantsOverview 
+              traders={safeData.traderRankings} 
+              activePositions={safeData.activePositions}
+              currentPrice={safeData.currentPrice}
+            />
+          </ErrorBoundary>
+        </div>
+      </div>
       
       {/* Debug log - Only shown when enabled and not in production */}
       {showDebugInfo && process.env.NODE_ENV !== 'production' && (
@@ -646,7 +647,7 @@ class ErrorBoundary extends React.Component<{
   children: React.ReactNode;
   fallback: React.ReactNode;
   onError?: (error: Error) => void;
-}> {
+}, { hasError: boolean; error: Error | null }> {
   state = { hasError: false, error: null };
   
   static getDerivedStateFromError(error: Error) {
