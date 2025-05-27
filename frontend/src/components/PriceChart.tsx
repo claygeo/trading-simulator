@@ -31,7 +31,7 @@ interface PriceChartProps {
 }
 
 const PriceChart: React.FC<PriceChartProps> = ({ 
-  symbol = 'XBT/USD',
+  symbol = 'BTC/USDT',
   interval = '1h',
   priceHistory = [],
   currentPrice: propCurrentPrice,
@@ -42,7 +42,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<any>(null);
   const candlesRef = useRef<any[]>([]);
-  const isInitializedRef = useRef<boolean>(false);
   
   const [isLoading, setIsLoading] = useState(true);
   const [displayPrice, setDisplayPrice] = useState<number>(50000);
@@ -50,13 +49,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const [priceChangePercent, setPriceChangePercent] = useState<number>(0);
   const [scenarioActive, setScenarioActive] = useState<boolean>(true);
   
-  // Price generation state - simple and clean
+  // Price interpolation state
   const priceStateRef = useRef({
     currentPrice: 50000,
-    trend: 0, // -1 to 1
-    volatility: 0.001, // 0.1% base volatility - reduced for smoother movement
-    momentum: 0,
-    lastUpdateTime: Date.now()
+    targetPrice: 50000,
+    lastUpdateTime: Date.now(),
+    interpolationStartPrice: 50000,
+    interpolationStartTime: Date.now()
   });
 
   // Get interval in milliseconds
@@ -72,64 +71,20 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return map[interval] || 3600000;
   }, []);
 
-  // Generate realistic price movement
-  const generateNextPrice = useCallback((currentPrice: number): number => {
-    const state = priceStateRef.current;
+  // Smooth interpolation function
+  const interpolatePrice = useCallback((startPrice: number, targetPrice: number, progress: number): number => {
+    // Use easing function for smooth movement
+    const easeInOutQuad = (t: number): number => {
+      return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+    };
     
-    // Smaller, more realistic movements
-    const randomWalk = (Math.random() - 0.5) * 2;
-    
-    // Trend component with strong mean reversion for stability
-    state.trend = state.trend * 0.95 + randomWalk * 0.05;
-    
-    // Momentum (smooths price movement even more)
-    state.momentum = state.momentum * 0.98 + state.trend * 0.02;
-    
-    // Calculate price change - smaller base volatility
-    let priceChangePercent = state.momentum * state.volatility * 0.5; // Reduced by 50%
-    
-    // Apply scenario influence if active (also reduced)
-    if (scenarioActive && scenarioData && scenarioData.phase) {
-      const phase = scenarioData.phase;
-      const scenarioInfluence = phase.priceAction.intensity * 0.0005; // Reduced from 0.001
-      
-      switch (phase.priceAction.type) {
-        case 'trend':
-          priceChangePercent += scenarioInfluence * (phase.priceAction.direction === 'up' ? 1 : -1);
-          break;
-        case 'breakout':
-          priceChangePercent += scenarioInfluence * 1.2 * (phase.priceAction.direction === 'up' ? 1 : -1);
-          state.volatility = Math.min(0.003, state.volatility * 1.1); // Reduced max volatility
-          break;
-        case 'crash':
-          priceChangePercent -= scenarioInfluence * 1.5;
-          state.volatility = Math.min(0.004, state.volatility * 1.2);
-          break;
-        case 'pump':
-          priceChangePercent += scenarioInfluence * 1.3;
-          state.volatility = Math.min(0.0035, state.volatility * 1.15);
-          break;
-        case 'consolidation':
-          state.volatility = Math.max(0.0005, state.volatility * 0.95); // Lower minimum
-          break;
-      }
-    }
-    
-    // Natural volatility decay
-    state.volatility = Math.max(0.001, state.volatility * 0.998); // Slower decay, lower minimum
-    
-    // Apply price change
-    const newPrice = currentPrice * (1 + priceChangePercent);
-    state.currentPrice = newPrice;
-    
-    return newPrice;
-  }, [scenarioActive, scenarioData]);
+    const easedProgress = easeInOutQuad(Math.min(progress, 1));
+    return startPrice + (targetPrice - startPrice) * easedProgress;
+  }, []);
 
-  // Initialize chart only once
+  // Initialize chart
   useEffect(() => {
-    if (!chartContainerRef.current || isInitializedRef.current) return;
-    
-    isInitializedRef.current = true;
+    if (!chartContainerRef.current) return;
 
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
@@ -188,29 +143,30 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const now = Date.now();
     const candleCount = 100;
     
-    // Initialize price
+    // Initialize with prop price or default
     let currentPrice = propCurrentPrice || 50000;
-    priceStateRef.current.currentPrice = currentPrice;
+    priceStateRef.current = {
+      currentPrice,
+      targetPrice: currentPrice,
+      lastUpdateTime: now,
+      interpolationStartPrice: currentPrice,
+      interpolationStartTime: now
+    };
     setDisplayPrice(currentPrice);
     
-    // Generate historical candles
+    // Generate historical candles with realistic movement
     const candles = [];
     for (let i = 0; i < candleCount; i++) {
       const time = Math.floor((now - (candleCount - i) * intervalMs) / 1000);
       
-      // Generate OHLC for this candle
+      // Generate OHLC for this candle with small random movements
       const open = currentPrice;
       
-      // Generate intra-candle price movements
-      const intraCandlePrices = [open];
-      for (let j = 0; j < 20; j++) {
-        const nextPrice = generateNextPrice(intraCandlePrices[intraCandlePrices.length - 1]);
-        intraCandlePrices.push(nextPrice);
-      }
-      
-      const close = intraCandlePrices[intraCandlePrices.length - 1];
-      const high = Math.max(...intraCandlePrices);
-      const low = Math.min(...intraCandlePrices);
+      // Random price movement within candle (0.1% to 0.5% range)
+      const candleVolatility = 0.001 + Math.random() * 0.004;
+      const high = open * (1 + Math.random() * candleVolatility);
+      const low = open * (1 - Math.random() * candleVolatility);
+      const close = low + Math.random() * (high - low);
       
       candles.push({
         time: time as Time,
@@ -250,55 +206,66 @@ const PriceChart: React.FC<PriceChartProps> = ({
     
     return () => {
       window.removeEventListener('resize', handleResize);
-      if (chart && chartRef.current) {
-        chart.remove();
-        chartRef.current = null;
-        seriesRef.current = null;
-      }
-      isInitializedRef.current = false;
+      chart.remove();
     };
-  }, []); // Empty dependencies - only run once
+  }, [getIntervalMs, interval]);
 
-  // Real-time price updates
+  // Handle price updates from props
+  useEffect(() => {
+    if (propCurrentPrice && propCurrentPrice !== priceStateRef.current.targetPrice) {
+      // Set new target price and reset interpolation
+      priceStateRef.current = {
+        ...priceStateRef.current,
+        targetPrice: propCurrentPrice,
+        interpolationStartPrice: priceStateRef.current.currentPrice,
+        interpolationStartTime: Date.now()
+      };
+    }
+  }, [propCurrentPrice]);
+
+  // Real-time price updates with smooth interpolation
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current || isLoading) return;
 
     const intervalMs = getIntervalMs(interval);
-    
-    // Track last candle time to detect new candle creation
     let lastCandleTime = candlesRef.current[candlesRef.current.length - 1]?.time || 0;
-    let lastPropPrice = propCurrentPrice || 0;
 
-    // Price update loop - smooth updates
-    const priceUpdateInterval = setInterval(() => {
+    // Update loop - runs frequently for smooth price movement
+    const updateInterval = setInterval(() => {
       const now = Date.now();
       const currentCandleTime = Math.floor(now / intervalMs) * intervalMs / 1000;
       
-      // Get the current candle (always the last one in our array)
+      // Interpolate price smoothly
+      const timeSinceUpdate = now - priceStateRef.current.interpolationStartTime;
+      const interpolationDuration = 3000; // 3 seconds to reach target
+      const progress = timeSinceUpdate / interpolationDuration;
+      
+      const interpolatedPrice = interpolatePrice(
+        priceStateRef.current.interpolationStartPrice,
+        priceStateRef.current.targetPrice,
+        progress
+      );
+      
+      priceStateRef.current.currentPrice = interpolatedPrice;
+      
+      // Add small random movements for realism (±0.01%)
+      const microMovement = interpolatedPrice * (0.0001 * (Math.random() - 0.5));
+      const currentPrice = interpolatedPrice + microMovement;
+      
+      // Get current candle
       const currentCandleIndex = candlesRef.current.length - 1;
       const currentCandle = candlesRef.current[currentCandleIndex];
       
       if (!currentCandle) return;
       
-      // Generate price based on internal state, not prop
-      const newPrice = generateNextPrice(priceStateRef.current.currentPrice);
-      
-      // Only use prop price if it's significantly different (WebSocket update)
-      if (propCurrentPrice && Math.abs(propCurrentPrice - lastPropPrice) > 0.01) {
-        // Blend the WebSocket price with our generated price for smoothness
-        const blendedPrice = newPrice * 0.7 + propCurrentPrice * 0.3;
-        priceStateRef.current.currentPrice = blendedPrice;
-        lastPropPrice = propCurrentPrice;
-      }
-      
       if (currentCandleTime > lastCandleTime) {
-        // Time for a new candle
+        // Create new candle
         const newCandle = {
           time: currentCandleTime as Time,
           open: parseFloat(currentCandle.close.toFixed(2)),
-          high: parseFloat(priceStateRef.current.currentPrice.toFixed(2)),
-          low: parseFloat(priceStateRef.current.currentPrice.toFixed(2)),
-          close: parseFloat(priceStateRef.current.currentPrice.toFixed(2))
+          high: parseFloat(currentPrice.toFixed(2)),
+          low: parseFloat(currentPrice.toFixed(2)),
+          close: parseFloat(currentPrice.toFixed(2))
         };
         
         candlesRef.current.push(newCandle);
@@ -308,43 +275,38 @@ const PriceChart: React.FC<PriceChartProps> = ({
           candlesRef.current.shift();
         }
         
-        // Use setData only when adding new candle
         seriesRef.current.setData(candlesRef.current);
         lastCandleTime = currentCandleTime;
         
-        // Scroll to latest
         if (chartRef.current) {
           chartRef.current.timeScale().scrollToRealTime();
         }
       } else {
-        // Update only the current candle - no setData!
+        // Update current candle smoothly
         const updatedCandle = {
           ...currentCandle,
-          close: parseFloat(priceStateRef.current.currentPrice.toFixed(2)),
-          high: parseFloat(Math.max(currentCandle.high, priceStateRef.current.currentPrice).toFixed(2)),
-          low: parseFloat(Math.min(currentCandle.low, priceStateRef.current.currentPrice).toFixed(2))
+          close: parseFloat(currentPrice.toFixed(2)),
+          high: parseFloat(Math.max(currentCandle.high, currentPrice).toFixed(2)),
+          low: parseFloat(Math.min(currentCandle.low, currentPrice).toFixed(2))
         };
         
-        // Update our reference
         candlesRef.current[currentCandleIndex] = updatedCandle;
-        
-        // Use update() method for smooth updates
         seriesRef.current.update(updatedCandle);
       }
       
-      // Update display values smoothly
-      setDisplayPrice(priceStateRef.current.currentPrice);
+      // Update display
+      setDisplayPrice(currentPrice);
       
       const firstCandle = candlesRef.current[0];
       if (firstCandle) {
-        const change = priceStateRef.current.currentPrice - firstCandle.open;
+        const change = currentPrice - firstCandle.open;
         setPriceChange(change);
         setPriceChangePercent((change / firstCandle.open) * 100);
       }
-    }, 1000); // Update every second for smooth movement
+    }, 100); // Update every 100ms for smooth movement
 
-    return () => clearInterval(priceUpdateInterval);
-  }, [generateNextPrice, getIntervalMs, interval, isLoading]); // Removed propCurrentPrice from dependencies
+    return () => clearInterval(updateInterval);
+  }, [getIntervalMs, interval, isLoading, interpolatePrice]);
 
   return (
     <div className="flex flex-col h-full bg-gray-900 rounded-lg overflow-hidden">
