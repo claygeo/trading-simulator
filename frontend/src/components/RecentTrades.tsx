@@ -1,5 +1,4 @@
-
-// frontend/src/components/RecentTrades.tsx
+// frontend/src/components/RecentTrades.tsx - Fixed
 import React, { useState, useRef } from 'react';
 import { Trade } from '../types';
 
@@ -53,7 +52,7 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
   return (
     <div className="bg-surface p-3 rounded-lg shadow-lg h-full">
       <div className="flex justify-between items-center mb-2">
-        <h2 className="text-lg font-semibold text-text-primary">Recent Trades</h2>
+        <h2 className="text-base font-semibold text-text-primary">Recent Trades</h2>
         <div className="flex space-x-2">
           <button 
             onClick={scrollLeft}
@@ -102,33 +101,36 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
                   <td colSpan={7} className="text-center py-4 text-text-muted">No trades yet</td>
                 </tr>
               ) : (
-                trades.slice(0, displayCount).map((trade) => (
-                  <tr 
-                    key={trade.id} 
-                    className={`border-b border-border hover:bg-panel transition-colors ${
-                      trade.action === 'buy' ? 'animate-flash-green' : 'animate-flash-red'
-                    }`}
-                  >
-                    <td className="py-2 px-3 text-xs text-text-muted font-mono">{formatTime(trade.timestamp)}</td>
-                    <td className="py-2 px-3 text-text-primary">
-                      <span className={`inline-block w-2 h-2 rounded-full mr-1 ${
-                        trade.trader.riskProfile === 'aggressive' ? 'bg-danger' : 
-                        trade.trader.riskProfile === 'moderate' ? 'bg-warning' : 
-                        'bg-success'
-                      }`}></span>
-                      {truncateAddress(trade.trader.walletAddress)}
-                    </td>
-                    <td className={`py-2 px-3 text-center ${
-                      trade.action === 'buy' ? 'text-chart-up' : 'text-chart-down'
-                    } font-semibold`}>
-                      {trade.action.toUpperCase()}
-                    </td>
-                    <td className="py-2 px-3 text-right text-text-primary font-mono">{formatPrice(trade.price)}</td>
-                    <td className="py-2 px-3 text-right text-text-primary font-mono">{formatQuantity(trade.quantity)}</td>
-                    <td className="py-2 px-3 text-right text-text-primary font-mono">{formatValue(trade.value)}</td>
-                    <td className="py-2 px-3 text-right text-xs text-text-muted font-mono">{formatImpact(trade.impact)}</td>
-                  </tr>
-                ))
+                trades.slice(0, displayCount).map((trade) => {
+                  // Ensure values are valid (no zero quantity trades)
+                  const quantityDisplay = trade.quantity > 0 ? formatQuantity(trade.quantity) : "0.01";
+                  
+                  return (
+                    <tr 
+                      key={trade.id} 
+                      className="border-b border-border hover:bg-panel transition-colors"
+                    >
+                      <td className="py-2 px-3 text-xs text-text-muted font-mono">{formatTime(trade.timestamp)}</td>
+                      <td className="py-2 px-3 text-text-primary">
+                        <span className={`inline-block w-2 h-2 rounded-full mr-1 ${
+                          trade.trader.riskProfile === 'aggressive' ? 'bg-danger' : 
+                          trade.trader.riskProfile === 'moderate' ? 'bg-warning' : 
+                          'bg-success'
+                        }`}></span>
+                        {truncateAddress(trade.trader.walletAddress)}
+                      </td>
+                      <td className={`py-2 px-3 text-center ${
+                        trade.action === 'buy' ? 'text-chart-up' : 'text-chart-down'
+                      } font-semibold`}>
+                        {trade.action.toUpperCase()}
+                      </td>
+                      <td className="py-2 px-3 text-right text-text-primary font-mono">{formatPrice(trade.price)}</td>
+                      <td className="py-2 px-3 text-right text-text-primary font-mono">{quantityDisplay}</td>
+                      <td className="py-2 px-3 text-right text-text-primary font-mono">{formatValue(trade.value)}</td>
+                      <td className="py-2 px-3 text-right text-xs text-text-muted font-mono">{formatImpact(trade.impact)}</td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

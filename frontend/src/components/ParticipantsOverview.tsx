@@ -4,7 +4,8 @@ import { Trader, TraderPosition } from '../types';
 interface ParticipantsOverviewProps {
   traders: Trader[];
   activePositions: TraderPosition[];
-  currentPrice?: number; // Add current price to calculate real-time PnL
+  currentPrice?: number;
+  scenarioModifiers?: any[]; // Behavior modifiers from active scenario
 }
 
 interface TraderData extends Trader {
@@ -18,12 +19,15 @@ interface TraderData extends Trader {
   margin?: number;
   marginLevel?: number; // percentage
   isNearLiquidation?: boolean;
+  scenarioAffected?: boolean; // Whether trader is affected by current scenario
+  behaviorModification?: string; // Description of behavior change
 }
 
 const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ 
   traders, 
   activePositions,
-  currentPrice = 0 
+  currentPrice = 0,
+  scenarioModifiers = []
 }) => {
   const [isExpandedView, setIsExpandedView] = useState<boolean>(false);
   
@@ -49,6 +53,70 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
   const truncateAddress = (address: string) => {
     if (address.length <= 8) return address;
     return `${address.slice(0, 4)}...${address.slice(-4)}`;
+  };
+
+  // Determine trader type based on characteristics
+  const getTraderType = (trader: Trader): 'whale' | 'retail' | 'bot' => {
+    // Simple heuristic - could be enhanced with more sophisticated classification
+    if (trader.totalVolume > 100000) return 'whale';
+    if (trader.riskProfile === 'aggressive' && trader.winRate > 0.7) return 'bot';
+    return 'retail';
+  };
+
+  // Apply scenario behavior modifiers
+  const applyScenarioModifiers = (trader: Trader): { affected: boolean; description: string } => {
+    if (!scenarioModifiers || scenarioModifiers.length === 0) {
+      return { affected: false, description: '' };
+    }
+
+    const traderType = getTraderType(trader);
+    const applicableModifier = scenarioModifiers.find(
+      mod => mod.traderType === traderType || mod.traderType === 'all'
+    );
+
+    if (!applicableModifier) {
+      return { affected: false, description: '' };
+    }
+
+    const { behaviorChange } = applicableModifier;
+    const descriptions: string[] = [];
+
+    if (behaviorChange.aggression) {
+      if (behaviorChange.aggression > 0) {
+        descriptions.push('↑ More Aggressive');
+      } else {
+        descriptions.push('↓ Less Aggressive');
+      }
+    }
+
+    if (behaviorChange.riskTolerance) {
+      if (behaviorChange.riskTolerance > 0) {
+        descriptions.push('↑ Higher Risk');
+      } else {
+        descriptions.push('↓ Lower Risk');
+      }
+    }
+
+    if (behaviorChange.followTrend) {
+      if (behaviorChange.followTrend > 0) {
+        descriptions.push('↑ More Trend Following');
+      } else {
+        descriptions.push('↓ Less Trend Following');
+      }
+    }
+
+    if (behaviorChange.liquidityProviding) {
+      if (behaviorChange.liquidityProviding > 0) {
+        descriptions.push('↑ More Liquidity Providing');
+      } else {
+        descriptions.push('↓ Less Liquidity Providing');
+      }
+    }
+
+    return {
+      affected: descriptions.length > 0,
+      description: descriptions.join(', ')
+    };
   };
   
   // Calculate liquidation price with proper leverage model
@@ -90,17 +158,22 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
     return margin > 0 ? (equity / margin) * 100 : 0;
   };
   
-  // Enrich traders with real-time calculations
+  // Enrich traders with real-time calculations and scenario effects
   const enrichedTraders = useMemo(() => {
     return traders.map(trader => {
       const activePosition = activePositions.find(
         pos => pos.trader.walletAddress === trader.walletAddress
       );
+
+      // Apply scenario modifiers
+      const scenarioEffect = applyScenarioModifiers(trader);
       
       let enrichedData: TraderData = {
         ...trader,
         realizedPnl: trader.netPnl || 0,
-        totalBalance: trader.netPnl || 0
+        totalBalance: trader.netPnl || 0,
+        scenarioAffected: scenarioEffect.affected,
+        behaviorModification: scenarioEffect.description
       };
       
       if (activePosition && currentPrice > 0) {
@@ -128,7 +201,7 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
       
       return enrichedData;
     });
-  }, [traders, activePositions, currentPrice]);
+  }, [traders, activePositions, currentPrice, scenarioModifiers]);
   
   // Sort by total balance
   const sortedTraders = [...enrichedTraders].sort((a, b) => {
@@ -137,20 +210,22 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
     return bBalance - aBalance;
   });
   
-  // Calculate aggregate statistics
+  // Calculate aggregate statistics with scenario awareness
   const stats = useMemo(() => {
     const totalVolume = traders.reduce((sum, t) => sum + t.totalVolume, 0);
     const avgWinRate = traders.reduce((sum, t) => sum + t.winRate, 0) / (traders.length || 1);
     const totalUnrealizedPnl = enrichedTraders.reduce((sum, t) => sum + (t.unrealizedPnl || 0), 0);
     const totalRealizedPnl = enrichedTraders.reduce((sum, t) => sum + (t.realizedPnl || 0), 0);
     const tradersAtRisk = enrichedTraders.filter(t => t.isNearLiquidation).length;
+    const tradersAffectedByScenario = enrichedTraders.filter(t => t.scenarioAffected).length;
     
     return {
       totalVolume,
       avgWinRate,
       totalUnrealizedPnl,
       totalRealizedPnl,
-      tradersAtRisk
+      tradersAtRisk,
+      tradersAffectedByScenario
     };
   }, [traders, enrichedTraders]);
   
@@ -177,6 +252,11 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
         <div className="flex items-center">
           <span className="text-text-secondary text-xs mr-2">
             {traders.length} traders | {activePositions.length} active
+            {stats.tradersAffectedByScenario > 0 && (
+              <span className="ml-1 text-purple-400">
+                | {stats.tradersAffectedByScenario} affected
+              </span>
+            )}
           </span>
           <button 
             onClick={() => setIsExpandedView(!isExpandedView)}
@@ -186,6 +266,18 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
           </button>
         </div>
       </div>
+      
+      {/* Scenario Impact Banner */}
+      {stats.tradersAffectedByScenario > 0 && (
+        <div className="mb-2 p-2 bg-purple-900 bg-opacity-30 border border-purple-600 rounded text-xs">
+          <div className="flex items-center space-x-2">
+            <div className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></div>
+            <span className="text-purple-300 font-medium">
+              Market Scenario Impact: {stats.tradersAffectedByScenario} traders affected
+            </span>
+          </div>
+        </div>
+      )}
       
       {/* Main Participants Table */}
       <div className="overflow-y-auto h-[calc(100%-32px)] scrollbar-thin">
@@ -209,6 +301,7 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
               const positionSize = isActive ? 
                 Math.abs(trader.activePosition!.quantity).toFixed(2) : '-';
               const positionDirection = isActive && trader.activePosition!.quantity > 0 ? 'LONG' : 'SHORT';
+              const traderType = getTraderType(trader);
               
               const isTopTrader = index < 3;
               const rankIndicator = isTopTrader ? 
@@ -226,6 +319,8 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
                     isTopTrader ? 'bg-panel-hover bg-opacity-25' : ''
                   } ${
                     trader.isNearLiquidation ? 'bg-danger bg-opacity-10' : ''
+                  } ${
+                    trader.scenarioAffected ? 'bg-purple-500 bg-opacity-10' : ''
                   }`}
                 >
                   <td className="py-1 px-2 text-center">
@@ -239,6 +334,17 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
                         'bg-success'
                       }`}></span>
                       <span className="text-text-primary">{truncateAddress(trader.walletAddress)}</span>
+                      
+                      {/* Trader type indicator */}
+                      <span className={`ml-1 text-[8px] px-1 rounded ${
+                        traderType === 'whale' ? 'bg-blue-600 text-white' :
+                        traderType === 'bot' ? 'bg-gray-600 text-white' :
+                        'bg-green-600 text-white'
+                      }`}>
+                        {traderType.charAt(0).toUpperCase()}
+                      </span>
+                      
+                      {/* Position direction */}
                       {isActive && (
                         <span className={`ml-1 text-[9px] px-1 rounded ${
                           positionDirection === 'LONG' ? 'bg-chart-up text-white' : 'bg-chart-down text-white'
@@ -246,9 +352,21 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
                           {positionDirection}
                         </span>
                       )}
+                      
+                      {/* Liquidation warning */}
                       {trader.isNearLiquidation && (
                         <span className="ml-1 text-[9px] px-1 rounded bg-danger text-white animate-pulse">
                           ⚠️
+                        </span>
+                      )}
+                      
+                      {/* Scenario effect indicator */}
+                      {trader.scenarioAffected && (
+                        <span 
+                          className="ml-1 text-[9px] px-1 rounded bg-purple-600 text-white animate-pulse cursor-help"
+                          title={trader.behaviorModification}
+                        >
+                          📈
                         </span>
                       )}
                     </div>
@@ -296,9 +414,10 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
         </table>
       </div>
       
+      {/* Enhanced Stats with Scenario Information */}
       {isExpandedView && (
         <div className="mt-2 p-2 border border-border rounded bg-panel">
-          <div className="grid grid-cols-5 gap-3 text-xs">
+          <div className="grid grid-cols-6 gap-3 text-xs">
             <div>
               <div className="text-text-secondary">Total Volume</div>
               <div className="font-semibold text-text-primary">
@@ -335,7 +454,30 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
                 {stats.tradersAtRisk} traders
               </div>
             </div>
+            <div>
+              <div className="text-text-secondary">Scenario Affected</div>
+              <div className={`font-semibold ${
+                stats.tradersAffectedByScenario > 0 ? 'text-purple-400' : 'text-text-primary'
+              }`}>
+                {stats.tradersAffectedByScenario} traders
+              </div>
+            </div>
           </div>
+          
+          {/* Scenario Behavior Details */}
+          {stats.tradersAffectedByScenario > 0 && (
+            <div className="mt-2 p-2 bg-purple-900 bg-opacity-20 rounded">
+              <div className="text-[10px] text-purple-300 mb-1">Active Scenario Effects:</div>
+              <div className="text-[10px] text-gray-300">
+                {enrichedTraders
+                  .filter(t => t.scenarioAffected)
+                  .slice(0, 3) // Show first 3 affected traders
+                  .map(t => `${truncateAddress(t.walletAddress)}: ${t.behaviorModification}`)
+                  .join(' • ')}
+                {enrichedTraders.filter(t => t.scenarioAffected).length > 3 && ' • ...'}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
