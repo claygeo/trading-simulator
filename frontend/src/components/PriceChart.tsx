@@ -760,7 +760,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
         }
         
         seriesRef.current.setData(dataRef.current);
-        chartRef.current.timeScale().scrollToRealTime();
+        if (chartRef.current) {
+          chartRef.current.timeScale().scrollToRealTime();
+        }
       } else {
         // UPDATE CURRENT CANDLE - Don't change pattern, just update price
         const { high, low } = generateCryptoCandle(lastCandle.open, newPrice, marketStateRef.current.pattern);
