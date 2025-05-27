@@ -43,7 +43,6 @@ const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({
   const lastFrameTimeRef = useRef(performance.now());
   const wsMessageCountRef = useRef(0);
   const lastWsCountRef = useRef(0);
-  const renderStartTimeRef = useRef(0);
   const componentUpdateCountRef = useRef(0);
   const animationFrameRef = useRef<number | null>(null);
 
@@ -88,7 +87,7 @@ const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({
           fps,
           memoryUsage,
           wsMessagesPerSec: wsPerSec,
-          renderTime: 0, // Will be updated separately by render effect
+          renderTime: prev[prev.length - 1]?.renderTime || 0,
           totalTrades: tradeCount,
           activeConnections: 1,
           latency: Math.round(latency),
@@ -119,18 +118,35 @@ const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({
     };
   }, [isVisible, calculateFPS]);
 
-  // Track render performance
+  // Track render performance - Fixed to avoid infinite loop
   useEffect(() => {
-    renderStartTimeRef.current = performance.now();
-    trackComponentUpdate();
+    if (!isVisible) return;
     
-    return () => {
-      const renderTime = performance.now() - renderStartTimeRef.current;
-      setMetrics(prev => ({
-        ...prev,
-        renderTime: Math.round(renderTime * 100) / 100
-      }));
+    // Measure render time periodically, not on every render
+    const measureRenderTime = () => {
+      const start = performance.now();
+      requestAnimationFrame(() => {
+        const end = performance.now();
+        const renderTime = Math.round((end - start) * 100) / 100;
+        setMetrics(prev => ({
+          ...prev,
+          renderTime
+        }));
+      });
     };
+
+    // Measure once immediately
+    measureRenderTime();
+    
+    // Then measure every 2 seconds
+    const interval = setInterval(measureRenderTime, 2000);
+    
+    return () => clearInterval(interval);
+  }, [isVisible]);
+
+  // Track component updates separately
+  useEffect(() => {
+    trackComponentUpdate();
   });
 
   // Performance status
