@@ -1,4 +1,4 @@
-// frontend/src/types/index.ts
+// frontend/src/types/index.ts - Updated
 export interface Trader {
   position: number;
   walletAddress: string;
@@ -35,7 +35,7 @@ export interface PricePoint {
   high: number;
   low: number;
   close: number;
-  volume: number;
+  volume?: number; // Make volume optional to avoid TypeScript errors
 }
 
 export interface OrderBookLevel {
@@ -80,6 +80,12 @@ export interface SimulationParameters {
   scenarioType: 'standard' | 'volatility_challenge' | 'black_swan' | 'volume_drought' | 'trend_reversal';
 }
 
+export interface MarketConditions {
+  volatility: number;
+  trend: 'bullish' | 'bearish' | 'sideways';
+  volume: number;
+}
+
 export interface Simulation {
   id: string;
   startTime: number;
@@ -88,6 +94,7 @@ export interface Simulation {
   isRunning: boolean;
   isPaused: boolean;
   parameters: SimulationParameters;
+  marketConditions?: MarketConditions; // Add to match backend
   currentPrice: number;
   priceHistory: PricePoint[];
   orderBook: OrderBook;

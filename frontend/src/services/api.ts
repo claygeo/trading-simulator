@@ -1,4 +1,4 @@
-// frontend/src/services/api.ts
+// frontend/src/services/api.ts - Fixed API endpoints
 import axios from 'axios';
 
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001/api';
@@ -47,7 +47,7 @@ export const SimulationApi = {
   // Make parameters optional with a default empty object
   createSimulation: async (parameters: any = {}) => {
     try {
-      const response = await api.post('/simulations', parameters);
+      const response = await api.post('/simulation', parameters);
       return { data: response.data };
     } catch (error) {
       console.error('Error creating simulation:', error);
@@ -73,7 +73,7 @@ export const SimulationApi = {
   
   getSimulation: async (id: string) => {
     try {
-      const response = await api.get(`/simulations/${id}`);
+      const response = await api.get(`/simulation/${id}`);
       return { data: response.data };
     } catch (error) {
       console.error(`Error fetching simulation ${id}:`, error);
@@ -86,7 +86,7 @@ export const SimulationApi = {
   
   startSimulation: async (id: string) => {
     try {
-      const response = await api.post(`/simulations/${id}/start`);
+      const response = await api.post(`/simulation/${id}/start`);
       return { data: response.data };
     } catch (error) {
       console.error(`Error starting simulation ${id}:`, error);
@@ -99,7 +99,7 @@ export const SimulationApi = {
   
   pauseSimulation: async (id: string) => {
     try {
-      const response = await api.post(`/simulations/${id}/pause`);
+      const response = await api.post(`/simulation/${id}/pause`);
       return { data: response.data };
     } catch (error) {
       console.error(`Error pausing simulation ${id}:`, error);
@@ -112,7 +112,7 @@ export const SimulationApi = {
   
   resetSimulation: async (id: string) => {
     try {
-      const response = await api.post(`/simulations/${id}/reset`);
+      const response = await api.post(`/simulation/${id}/reset`);
       return { data: response.data };
     } catch (error) {
       console.error(`Error resetting simulation ${id}:`, error);
@@ -121,5 +121,29 @@ export const SimulationApi = {
         error: error instanceof Error ? error.message : 'Unknown error' 
       };
     }
+  },
+  
+  // Add new method for setting simulation speed
+  setSimulationSpeed: async (id: string, speed: number) => {
+    try {
+      const response = await api.post(`/simulation/${id}/speed`, { speed });
+      return { 
+        data: response.data,
+        success: true,
+        error: null 
+      };
+    } catch (error) {
+      console.error(`Error setting simulation speed for ${id}:`, error);
+      return { 
+        data: null,
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      };
+    }
   }
+};
+
+export default {
+  TraderApi,
+  SimulationApi
 };
