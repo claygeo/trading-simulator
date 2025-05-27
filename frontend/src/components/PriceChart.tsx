@@ -87,83 +87,83 @@ const PriceChart: React.FC<PriceChartProps> = ({
     accumulatedChange: 0
   });
 
-  // Pattern configurations for crypto-like movements
+  // Pattern configurations for crypto-like movements (duration in number of candles)
   const patternConfigs = {
     parabolic_rise: {
       volatility: 0.03,
       trendBias: 0.008,
       momentumGain: 0.02,
-      duration: 20,
+      duration: 30, // 30 candles
       description: 'Parabolic Rise'
     },
     steady_uptrend: {
       volatility: 0.015,
       trendBias: 0.003,
       momentumGain: 0.005,
-      duration: 40,
+      duration: 60, // 60 candles
       description: 'Steady Uptrend'
     },
     volatile_uptrend: {
       volatility: 0.04,
       trendBias: 0.004,
       momentumGain: 0.008,
-      duration: 30,
+      duration: 45, // 45 candles
       description: 'Volatile Rally'
     },
     accumulation: {
       volatility: 0.008,
       trendBias: 0.0005,
       momentumGain: 0,
-      duration: 50,
+      duration: 80, // 80 candles
       description: 'Accumulation'
     },
     distribution: {
       volatility: 0.012,
       trendBias: -0.0005,
       momentumGain: -0.002,
-      duration: 40,
+      duration: 60, // 60 candles
       description: 'Distribution'
     },
     ranging: {
       volatility: 0.01,
       trendBias: 0,
       momentumGain: 0,
-      duration: 60,
+      duration: 90, // 90 candles
       description: 'Sideways'
     },
     breakdown: {
       volatility: 0.025,
       trendBias: -0.006,
       momentumGain: -0.015,
-      duration: 15,
+      duration: 20, // 20 candles
       description: 'Breakdown'
     },
     steady_downtrend: {
       volatility: 0.018,
       trendBias: -0.003,
       momentumGain: -0.005,
-      duration: 35,
+      duration: 50, // 50 candles
       description: 'Downtrend'
     },
     capitulation: {
       volatility: 0.05,
       trendBias: -0.012,
       momentumGain: -0.025,
-      duration: 10,
+      duration: 15, // 15 candles
       description: 'Capitulation'
     },
     recovery: {
       volatility: 0.02,
       trendBias: 0.005,
       momentumGain: 0.01,
-      duration: 25,
+      duration: 35, // 35 candles
       description: 'Recovery'
     },
     pump_and_dump: {
       volatility: 0.06,
       trendBias: 0.015,
       momentumGain: 0.03,
-      duration: 8,
+      duration: 12, // 12 candles
       description: 'Pump & Dump'
     }
   };
@@ -715,71 +715,78 @@ const PriceChart: React.FC<PriceChartProps> = ({
     };
   }, [generateCryptoPrice, generateCryptoCandle, updateSupportResistance, interval, propCurrentPrice]);
 
-  // Update prices in real-time
+  // Update prices in real-time with proper candle flow
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current) return;
     
-    const intervalSec = getIntervalSeconds(interval);
-    const now = Math.floor(Date.now() / 1000);
-    const currentCandleTime = Math.floor(now / intervalSec) * intervalSec;
-    
-    const lastCandle = dataRef.current[dataRef.current.length - 1];
-    if (!lastCandle) return;
-    
-    // Update support/resistance periodically
-    if (dataRef.current.length % 10 === 0) {
-      const prices = dataRef.current.slice(-100).map(c => c.close);
-      updateSupportResistance(prices);
-    }
-    
-    // Generate new price
-    const newPrice = propCurrentPrice || generateCryptoPrice(displayPrice);
-    
-    if (currentCandleTime > lastCandle.time) {
-      // Create new candle
-      const { high, low } = generateCryptoCandle(lastCandle.close, newPrice, marketStateRef.current.pattern);
+    // Update every second for smoother price updates within candles
+    const updateInterval = setInterval(() => {
+      const intervalSec = getIntervalSeconds(interval);
+      const now = Math.floor(Date.now() / 1000);
+      const currentCandleTime = Math.floor(now / intervalSec) * intervalSec;
       
-      const newCandle = {
-        time: currentCandleTime as Time,
-        open: parseFloat(lastCandle.close.toFixed(2)),
-        high: parseFloat(high.toFixed(2)),
-        low: parseFloat(low.toFixed(2)),
-        close: parseFloat(newPrice.toFixed(2))
-      };
+      const lastCandle = dataRef.current[dataRef.current.length - 1];
+      if (!lastCandle) return;
       
-      dataRef.current.push(newCandle);
+      // Generate new price
+      const newPrice = propCurrentPrice || generateCryptoPrice(displayPrice);
       
-      // Keep reasonable number of candles
-      if (dataRef.current.length > 200) {
-        dataRef.current = dataRef.current.slice(-150);
+      if (currentCandleTime > lastCandle.time) {
+        // NEW CANDLE - This is when we increment pattern progress
+        marketStateRef.current.patternProgress += 1;
+        
+        // Update support/resistance every 10 candles
+        if (dataRef.current.length % 10 === 0) {
+          const prices = dataRef.current.slice(-100).map(c => c.close);
+          updateSupportResistance(prices);
+        }
+        
+        // Create new candle
+        const { high, low } = generateCryptoCandle(lastCandle.close, newPrice, marketStateRef.current.pattern);
+        
+        const newCandle = {
+          time: currentCandleTime as Time,
+          open: parseFloat(lastCandle.close.toFixed(2)),
+          high: parseFloat(high.toFixed(2)),
+          low: parseFloat(low.toFixed(2)),
+          close: parseFloat(newPrice.toFixed(2))
+        };
+        
+        dataRef.current.push(newCandle);
+        
+        // Keep reasonable number of candles
+        if (dataRef.current.length > 200) {
+          dataRef.current = dataRef.current.slice(-150);
+        }
+        
+        seriesRef.current.setData(dataRef.current);
+        chartRef.current.timeScale().scrollToRealTime();
+      } else {
+        // UPDATE CURRENT CANDLE - Don't change pattern, just update price
+        const { high, low } = generateCryptoCandle(lastCandle.open, newPrice, marketStateRef.current.pattern);
+        
+        const updatedCandle = {
+          ...lastCandle,
+          high: parseFloat(Math.max(lastCandle.high, high, newPrice).toFixed(2)),
+          low: parseFloat(Math.min(lastCandle.low, low, newPrice).toFixed(2)),
+          close: parseFloat(newPrice.toFixed(2))
+        };
+        
+        dataRef.current[dataRef.current.length - 1] = updatedCandle;
+        seriesRef.current.update(updatedCandle);
       }
       
-      seriesRef.current.setData(dataRef.current);
-      chartRef.current.timeScale().scrollToRealTime();
-    } else {
-      // Update current candle
-      const { high, low } = generateCryptoCandle(lastCandle.open, newPrice, marketStateRef.current.pattern);
+      setDisplayPrice(newPrice);
       
-      const updatedCandle = {
-        ...lastCandle,
-        high: parseFloat(Math.max(lastCandle.high, high).toFixed(2)),
-        low: parseFloat(Math.min(lastCandle.low, low).toFixed(2)),
-        close: parseFloat(newPrice.toFixed(2))
-      };
-      
-      dataRef.current[dataRef.current.length - 1] = updatedCandle;
-      seriesRef.current.update(updatedCandle);
-    }
+      if (dataRef.current.length > 0) {
+        const firstPrice = dataRef.current[0].open;
+        const change = newPrice - firstPrice;
+        setPriceChange(change);
+        setPriceChangePercent((change / firstPrice) * 100);
+      }
+    }, 1000); // Update every second for smooth price movement
     
-    setDisplayPrice(newPrice);
-    
-    if (dataRef.current.length > 0) {
-      const firstPrice = dataRef.current[0].open;
-      const change = newPrice - firstPrice;
-      setPriceChange(change);
-      setPriceChangePercent((change / firstPrice) * 100);
-    }
-    
+    return () => clearInterval(updateInterval);
   }, [propCurrentPrice, interval, displayPrice, generateCryptoPrice, generateCryptoCandle, updateSupportResistance]);
 
   return (
@@ -854,7 +861,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         <div className="absolute top-4 right-4 bg-gray-800 bg-opacity-90 p-2 rounded text-xs text-white">
           <div className="text-gray-300 mb-1">Market Structure</div>
           <div className="text-gray-400">
-            Progress: {(marketStateRef.current.patternProgress * 100).toFixed(0)}%
+            Progress: {Math.round((marketStateRef.current.patternProgress / patternConfigs[marketStateRef.current.pattern].duration) * 100)}%
           </div>
           {marketStateRef.current.supportLevels.length > 0 && (
             <div className="text-green-300">
