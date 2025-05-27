@@ -1,5 +1,4 @@
-// frontend/src/components/OrderBook.tsx - With Consistent Scrollbar
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { OrderBook } from '../types';
 
 interface OrderBookProps {
@@ -9,6 +8,7 @@ interface OrderBookProps {
 const OrderBookComponent: React.FC<OrderBookProps> = ({ orderBook }) => {
   const { bids, asks } = orderBook;
   const previousOrderBookRef = useRef<OrderBook | null>(null);
+  const [maxDepth, setMaxDepth] = useState<number>(0);
   
   // Format price and quantity
   const formatPrice = (price: number) => `$${price.toFixed(2)}`;
@@ -21,32 +21,55 @@ const OrderBookComponent: React.FC<OrderBookProps> = ({ orderBook }) => {
       cumulative += level.quantity;
       return {
         ...level,
-        depth: cumulative
+        depth: cumulative,
+        individualPercent: 0 // Will be calculated based on max
       };
     });
   };
   
   // Limit to exactly 10 sell and 10 buy orders
-  const limitedAsks = asks.slice(0, 10);
+  const limitedAsks = asks.slice(0, 10).reverse(); // Reverse asks to show best price at bottom
   const limitedBids = bids.slice(0, 10);
   
   const bidsWithDepth = calculateDepth(limitedBids);
   const asksWithDepth = calculateDepth(limitedAsks);
   
-  // Calculate max depth for visualization
-  const maxDepth = Math.max(
-    bidsWithDepth.length > 0 ? bidsWithDepth[bidsWithDepth.length - 1].depth : 0,
-    asksWithDepth.length > 0 ? asksWithDepth[asksWithDepth.length - 1].depth : 0
-  );
+  // Update max depth dynamically
+  useEffect(() => {
+    const currentMaxBidDepth = bidsWithDepth.length > 0 ? Math.max(...bidsWithDepth.map(b => b.quantity)) : 0;
+    const currentMaxAskDepth = asksWithDepth.length > 0 ? Math.max(...asksWithDepth.map(a => a.quantity)) : 0;
+    const newMaxDepth = Math.max(currentMaxBidDepth, currentMaxAskDepth);
+    
+    // Smooth transition for max depth changes
+    if (newMaxDepth > 0) {
+      setMaxDepth(prevMax => {
+        // If no previous max or significant change, update immediately
+        if (prevMax === 0 || Math.abs(newMaxDepth - prevMax) / prevMax > 0.5) {
+          return newMaxDepth;
+        }
+        // Otherwise, smooth the transition
+        return prevMax * 0.9 + newMaxDepth * 0.1;
+      });
+    }
+  }, [bidsWithDepth, asksWithDepth]);
   
   // Calculate the spread
   const spread = asks.length > 0 && bids.length > 0
     ? asks[0].price - bids[0].price
     : 0;
   
-  const spreadPercentage = asks.length > 0 && bids[0].price > 0
+  const spreadPercentage = asks.length > 0 && bids.length > 0 && bids[0].price > 0
     ? (spread / bids[0].price) * 100
     : 0;
+  
+  // Check if a price level has changed
+  const hasChanged = (
+    current: { price: number; quantity: number },
+    previous: { price: number; quantity: number } | undefined
+  ): boolean => {
+    if (!previous) return true;
+    return current.quantity !== previous.quantity;
+  };
   
   // Store previous orderbook for comparison
   useEffect(() => {
@@ -71,58 +94,83 @@ const OrderBookComponent: React.FC<OrderBookProps> = ({ orderBook }) => {
         <div className="text-right">Total</div>
       </div>
       
-      {/* Sell orders (asks) - Now with consistent scrollbar */}
+      {/* Sell orders (asks) - Best price at bottom */}
       <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-300 hover:scrollbar-thumb-gray-500">
-        {asksWithDepth.map((ask, index) => {
-          return (
-            <div 
-              key={`ask-${index}`} 
-              className="flex justify-between text-[10px] py-0.5"
-            >
-              <div className="w-1/3 text-left text-chart-down font-mono">
-                {formatPrice(ask.price)}
-              </div>
-              <div className="w-1/3 text-right text-text-primary font-mono">
-                {formatQuantity(ask.quantity)}
-              </div>
-              <div className="w-1/3 text-right relative">
+        <div className="flex flex-col-reverse">
+          {asksWithDepth.map((ask, index) => {
+            const depthPercent = maxDepth > 0 ? (ask.quantity / maxDepth) * 100 : 0;
+            const prevAsk = previousOrderBookRef.current?.asks[asks.length - 1 - index];
+            const changed = hasChanged(ask, prevAsk);
+            
+            return (
+              <div 
+                key={`ask-${index}`} 
+                className={`flex justify-between text-[10px] py-0.5 relative transition-all duration-300 ${
+                  changed ? 'bg-chart-down bg-opacity-5' : ''
+                }`}
+              >
+                {/* Depth visualization bar */}
                 <div 
-                  className="absolute top-0 right-0 h-full bg-chart-down bg-opacity-10"
-                  style={{ width: `${(ask.depth / maxDepth) * 100}%` }}
-                ></div>
-                <span className="relative z-10 text-text-primary font-mono">
+                  className="absolute inset-0 bg-gradient-to-l from-chart-down to-transparent opacity-20 transition-all duration-500"
+                  style={{ 
+                    width: `${depthPercent}%`,
+                    maxWidth: '100%'
+                  }}
+                />
+                
+                <div className="w-1/3 text-left text-chart-down font-mono relative z-10">
+                  {formatPrice(ask.price)}
+                </div>
+                <div className="w-1/3 text-right text-text-primary font-mono relative z-10">
+                  {formatQuantity(ask.quantity)}
+                </div>
+                <div className="w-1/3 text-right text-text-primary font-mono relative z-10">
                   {formatQuantity(ask.depth)}
-                </span>
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
       </div>
       
-      <div className="h-px bg-border my-0.5"></div>
+      {/* Current Price / Mid Market */}
+      <div className="flex items-center justify-center py-1 border-y border-border bg-panel">
+        <span className="text-xs font-bold text-text-primary">
+          ${((asks[0]?.price || 0) + (bids[0]?.price || 0)) / 2 || 0}
+        </span>
+      </div>
       
-      {/* Buy orders (bids) - Now with consistent scrollbar */}
+      {/* Buy orders (bids) */}
       <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-300 hover:scrollbar-thumb-gray-500">
         {bidsWithDepth.map((bid, index) => {
+          const depthPercent = maxDepth > 0 ? (bid.quantity / maxDepth) * 100 : 0;
+          const prevBid = previousOrderBookRef.current?.bids[index];
+          const changed = hasChanged(bid, prevBid);
+          
           return (
             <div 
               key={`bid-${index}`} 
-              className="flex justify-between text-[10px] py-0.5"
+              className={`flex justify-between text-[10px] py-0.5 relative transition-all duration-300 ${
+                changed ? 'bg-chart-up bg-opacity-5' : ''
+              }`}
             >
-              <div className="w-1/3 text-left text-chart-up font-mono">
+              {/* Depth visualization bar */}
+              <div 
+                className="absolute inset-0 bg-gradient-to-l from-chart-up to-transparent opacity-20 transition-all duration-500"
+                style={{ 
+                  width: `${depthPercent}%`,
+                  maxWidth: '100%'
+                }}
+              />
+              
+              <div className="w-1/3 text-left text-chart-up font-mono relative z-10">
                 {formatPrice(bid.price)}
               </div>
-              <div className="w-1/3 text-right text-text-primary font-mono">
+              <div className="w-1/3 text-right text-text-primary font-mono relative z-10">
                 {formatQuantity(bid.quantity)}
               </div>
-              <div className="w-1/3 text-right relative">
-                <div 
-                  className="absolute top-0 right-0 h-full bg-chart-up bg-opacity-10"
-                  style={{ width: `${(bid.depth / maxDepth) * 100}%` }}
-                ></div>
-                <span className="relative z-10 text-text-primary font-mono">
-                  {formatQuantity(bid.depth)}
-                </span>
+              <div className="w-1/3 text-right text-text-primary font-mono relative z-10">
+                {formatQuantity(bid.depth)}
               </div>
             </div>
           );

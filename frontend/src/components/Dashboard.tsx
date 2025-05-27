@@ -1,5 +1,5 @@
-// frontend/src/components/Dashboard.tsx - Relocated Controls to Header
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+// Updated Dashboard.tsx with properly implemented speed controls
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
 import { Simulation } from '../types';
@@ -15,7 +15,7 @@ const Dashboard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [audioEnabled, setAudioEnabled] = useState<boolean>(false);
   const [marketCondition, setMarketCondition] = useState<'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash'>('calm');
-  const [simulationSpeed, setSimulationSpeed] = useState<number>(1); // Default to slow (1x)
+  const [simulationSpeed, setSimulationSpeed] = useState<number>(1); // Default to 1x (base speed)
   const [simulationStartTime, setSimulationStartTime] = useState<number | null>(null);
   const [elapsedTime, setElapsedTime] = useState<string>("00:00:00");
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
@@ -61,7 +61,7 @@ const Dashboard: React.FC = () => {
             const data = simulationResponse.data;
             if (data) {
               addDebugLog(`Price history: ${data.priceHistory?.length || 0} points`);
-              addDebugLog(`Current price: $${data.currentPrice?.toFixed(6) || 'N/A'}`);
+              addDebugLog(`Current price: $${data.currentPrice?.toFixed(2) || 'N/A'}`);
               addDebugLog(`Order book: ${data.orderBook ? 'Available' : 'Not available'}`);
             }
           }
@@ -167,6 +167,31 @@ const Dashboard: React.FC = () => {
     };
   }, [simulation?.isRunning, simulation?.isPaused, simulationStartTime]);
   
+  // Create a consistent normalized data object that all components use
+  const safeData = useMemo(() => {
+    if (!simulation) return {
+      orderBook: { bids: [], asks: [], lastUpdateTime: Date.now() },
+      recentTrades: [],
+      traderRankings: [],
+      activePositions: [],
+      priceHistory: [],
+      currentPrice: 0,
+    };
+    
+    return {
+      ...simulation,
+      orderBook: simulation.orderBook || {
+        bids: [],
+        asks: [],
+        lastUpdateTime: Date.now()
+      },
+      recentTrades: simulation.recentTrades || [],
+      traderRankings: simulation.traderRankings || [],
+      activePositions: simulation.activePositions || [],
+      priceHistory: simulation.priceHistory || [],
+    };
+  }, [simulation]);
+  
   // Update the simulation state based on WebSocket messages
   useEffect(() => {
     if (!lastMessage || !simulation) return;
@@ -187,75 +212,99 @@ const Dashboard: React.FC = () => {
     
     const { type, data } = event;
     
-    switch (type) {
-      case 'price_update':
-        addDebugLog(`Price update: $${data.price.toFixed(6)}`);
-        setSimulation(prev => {
-          if (!prev) return prev;
-          
-          const updatedSim = {
-            ...prev,
+    // Create a single atomic update to ensure all components get updated simultaneously
+    setSimulation(prev => {
+      if (!prev) return prev;
+      
+      // Start with the current simulation state
+      let updatedSim = { ...prev };
+      
+      // Apply specific updates based on event type
+      switch (type) {
+        case 'price_update':
+          addDebugLog(`Price update: $${data.price.toFixed(2)}`);
+          updatedSim = {
+            ...updatedSim,
             currentPrice: data.price,
             orderBook: data.orderBook
           };
+          break;
           
-          // Determine market condition
-          const newCondition = determineMarketCondition(updatedSim);
-          if (newCondition !== marketCondition) {
-            setMarketCondition(newCondition);
-          }
-          
-          return updatedSim;
-        });
-        break;
-        
-      case 'trade':
-        setSimulation(prev => {
-          if (!prev) return prev;
-          
+        case 'trade':
           // Create a new array with the new trade at the beginning
-          const updatedTrades = [data, ...prev.recentTrades.slice(0, 99)];
-          
-          return {
-            ...prev,
+          const updatedTrades = [data, ...updatedSim.recentTrades.slice(0, 99)];
+          updatedSim = {
+            ...updatedSim,
             recentTrades: updatedTrades
           };
-        });
-        break;
-        
-      case 'position_open':
-        setSimulation(prev => {
-          if (!prev) return prev;
+          break;
           
-          return {
-            ...prev,
-            activePositions: [...prev.activePositions, data]
+        case 'position_open':
+          updatedSim = {
+            ...updatedSim,
+            activePositions: [...updatedSim.activePositions, data]
           };
-        });
-        break;
-        
-      case 'position_close':
-        setSimulation(prev => {
-          if (!prev) return prev;
+          break;
           
-          const updatedActivePositions = prev.activePositions.filter(
+        case 'position_close':
+          const updatedActivePositions = updatedSim.activePositions.filter(
             pos => pos.trader.walletAddress !== data.trader.walletAddress
           );
           
-          return {
-            ...prev,
+          updatedSim = {
+            ...updatedSim,
             activePositions: updatedActivePositions,
-            closedPositions: [...prev.closedPositions, data]
+            closedPositions: [...updatedSim.closedPositions, data]
           };
-        });
-        break;
-        
-      default:
-        break;
+          break;
+          
+        default:
+          break;
+      }
+      
+      // Calculate any derived data for components that might depend on multiple fields
+      
+      // Return the fully updated simulation data
+      return updatedSim;
+    });
+    
+    // Determine market condition after all updates
+    if (simulation) {
+      const newCondition = determineMarketCondition(simulation);
+      if (newCondition !== marketCondition) {
+        setMarketCondition(newCondition);
+        addDebugLog(`Market condition changed to: ${newCondition}`);
+      }
     }
   }, [lastMessage, simulation, marketCondition, determineMarketCondition, addDebugLog]);
   
-  // Use useCallback to prevent unnecessary recreations of handler functions
+  // Updated handleSpeedChange function with proper speed values
+  const handleSpeedChange = useCallback(async (speedOption: 'slow' | 'medium' | 'fast') => {
+    // Map UI options to speed multipliers
+    // Base = 1x, Slow = 2x, Medium = 3x, Fast = 6x
+    const speedMap = {
+      'slow': 2,  // Slow increases by 1x from base (total 2x)
+      'medium': 3, // Medium increases by 2x from base (total 3x)
+      'fast': 6   // Fast increases by 5x from base (total 6x)
+    };
+    
+    const speedValue = speedMap[speedOption];
+    
+    setSimulationSpeed(speedValue);
+    addDebugLog(`Speed changed to ${speedOption} (${speedValue}x)`);
+    
+    // Update speed on the server
+    if (simulation) {
+      try {
+        await SimulationApi.setSimulationSpeed(simulation.id, speedValue);
+        addDebugLog(`Server speed updated to ${speedValue}x`);
+      } catch (error) {
+        console.error(`Failed to update simulation speed:`, error);
+        addDebugLog(`Failed to update simulation speed: ${JSON.stringify(error)}`);
+      }
+    }
+  }, [simulation, addDebugLog]);
+  
   const handleStartSimulation = useCallback(async () => {
     if (!simulation) return;
     
@@ -329,26 +378,6 @@ const Dashboard: React.FC = () => {
     }
   }, [simulation, addDebugLog]);
   
-  const handleSpeedChange = useCallback(async (newSpeed: number) => {
-    // Convert UI speed setting to actual speed multiplier
-    // Slow = 1x, Medium = 3x, Fast = 5x
-    const speedValue = newSpeed;
-    
-    setSimulationSpeed(speedValue);
-    addDebugLog(`Speed changed to ${speedValue}x`);
-    
-    // Update speed on the server
-    if (simulation) {
-      try {
-        await SimulationApi.setSimulationSpeed(simulation.id, speedValue);
-        addDebugLog(`Server speed updated to ${speedValue}x`);
-      } catch (error) {
-        console.error(`Failed to update simulation speed:`, error);
-        addDebugLog(`Failed to update simulation speed: ${JSON.stringify(error)}`);
-      }
-    }
-  }, [simulation, addDebugLog]);
-  
   const toggleAudio = useCallback(() => {
     setAudioEnabled(prev => !prev);
   }, []);
@@ -357,6 +386,13 @@ const Dashboard: React.FC = () => {
   const toggleDebugInfo = useCallback(() => {
     setShowDebugInfo(prev => !prev);
   }, []);
+  
+  // Error handling for component failures
+  const handleComponentError = useCallback((componentName: string, error: Error) => {
+    addDebugLog(`Error in ${componentName}: ${error.message}`);
+    console.error(`Error in ${componentName}:`, error);
+    // We could display a fallback UI for the component here if needed
+  }, [addDebugLog]);
   
   if (loading) {
     return (
@@ -395,23 +431,9 @@ const Dashboard: React.FC = () => {
     );
   }
 
-  // Ensure we have valid data for all components to prevent crashes
-  const safeData = {
-    ...simulation,
-    orderBook: simulation.orderBook || {
-      bids: [],
-      asks: [],
-      lastUpdateTime: Date.now()
-    },
-    recentTrades: simulation.recentTrades || [],
-    traderRankings: simulation.traderRankings || [],
-    activePositions: simulation.activePositions || [],
-    priceHistory: simulation.priceHistory || [],
-  };
-  
   return (
     <div className="h-screen w-full bg-background text-text-primary p-2 flex flex-col overflow-hidden">
-      {/* Audio player (hidden) */}
+      {/* Audio player */}
       <DynamicMusicPlayer 
         enabled={audioEnabled} 
         marketCondition={marketCondition}
@@ -426,7 +448,7 @@ const Dashboard: React.FC = () => {
             <h1 className="text-base font-bold mr-2">Pump.fun Simulation</h1>
             <div className="ml-2 text-xs bg-panel px-2 py-1 rounded">
               <span className="text-text-secondary mr-1">Price:</span>
-              <span className="text-text-primary font-medium">${safeData.currentPrice.toFixed(6)}</span>
+              <span className="text-text-primary font-medium">${safeData.currentPrice.toFixed(2)}</span>
             </div>
             <div className={`ml-2 w-2 h-2 rounded-full mr-1 ${isConnected ? 'bg-success' : 'bg-danger'}`}></div>
             <span className="text-xs text-text-secondary">{isConnected ? 'Connected' : 'Disconnected'}</span>
@@ -466,14 +488,14 @@ const Dashboard: React.FC = () => {
         
         {/* Controls bar below */}
         <div className="flex justify-between items-center h-10 p-2 border-t border-border">
-          {/* Speed Controls */}
+          {/* Speed Controls - Updated with new speed values */}
           <div className="flex items-center space-x-2">
             <span className="text-xs text-text-secondary">Speed:</span>
             <div className="flex space-x-1">
               <button
-                onClick={() => handleSpeedChange(1)}
+                onClick={() => handleSpeedChange('slow')}
                 className={`px-2 py-0.5 text-xs rounded transition ${
-                  simulationSpeed === 1 
+                  simulationSpeed === 2 
                     ? 'bg-accent text-white' 
                     : 'bg-surface-variant text-text-muted hover:bg-panel'
                 }`}
@@ -481,7 +503,7 @@ const Dashboard: React.FC = () => {
                 Slow
               </button>
               <button
-                onClick={() => handleSpeedChange(3)}
+                onClick={() => handleSpeedChange('medium')}
                 className={`px-2 py-0.5 text-xs rounded transition ${
                   simulationSpeed === 3 
                     ? 'bg-accent text-white' 
@@ -491,9 +513,9 @@ const Dashboard: React.FC = () => {
                 Medium
               </button>
               <button
-                onClick={() => handleSpeedChange(5)}
+                onClick={() => handleSpeedChange('fast')}
                 className={`px-2 py-0.5 text-xs rounded transition ${
-                  simulationSpeed === 5 
+                  simulationSpeed === 6 
                     ? 'bg-accent text-white' 
                     : 'bg-surface-variant text-text-muted hover:bg-panel'
                 }`}
@@ -542,33 +564,53 @@ const Dashboard: React.FC = () => {
       }}>
         {/* Order Book - Left Top */}
         <div style={{ gridColumn: '1 / 2', gridRow: '1 / 2', overflow: 'hidden' }}>
-          <OrderBookComponent orderBook={safeData.orderBook} />
+          <ErrorBoundary
+            fallback={<ErrorFallback componentName="Order Book" />}
+            onError={(error) => handleComponentError("Order Book", error)}
+          >
+            <OrderBookComponent orderBook={safeData.orderBook} />
+          </ErrorBoundary>
         </div>
         
         {/* Recent Trades - Left Bottom */}
         <div style={{ gridColumn: '1 / 2', gridRow: '2 / 3', overflow: 'hidden' }}>
-          <RecentTrades trades={safeData.recentTrades} />
+          <ErrorBoundary
+            fallback={<ErrorFallback componentName="Recent Trades" />}
+            onError={(error) => handleComponentError("Recent Trades", error)}
+          >
+            <RecentTrades trades={safeData.recentTrades} />
+          </ErrorBoundary>
         </div>
         
         {/* Price Chart - Right Top */}
         <div style={{ gridColumn: '2 / 3', gridRow: '1 / 2', position: 'relative', overflow: 'hidden' }} className="bg-[#131722] rounded-lg shadow-lg">
           <div className="h-full">
-            <PriceChart 
-              priceHistory={safeData.priceHistory} 
-              currentPrice={safeData.currentPrice} 
-              trades={safeData.recentTrades}
-            />
+            <ErrorBoundary
+              fallback={<ErrorFallback componentName="Price Chart" />}
+              onError={(error) => handleComponentError("Price Chart", error)}
+            >
+              <PriceChart 
+                priceHistory={safeData.priceHistory} 
+                currentPrice={safeData.currentPrice} 
+                trades={safeData.recentTrades}
+              />
+            </ErrorBoundary>
           </div>
         </div>
         
-        {/* Participants/Leaderboard - Right Bottom */}
-        <div style={{ gridColumn: '2 / 3', gridRow: '2 / 3', overflow: 'hidden' }}>
-          <ParticipantsOverview 
-            traders={safeData.traderRankings} 
-            activePositions={safeData.activePositions} 
-          />
-        </div>
-      </div>
+{/* Participants/Leaderboard - Right Bottom */}
+<div style={{ gridColumn: '2 / 3', gridRow: '2 / 3', overflow: 'hidden' }}>
+  <ErrorBoundary
+    fallback={<ErrorFallback componentName="Participants Overview" />}
+    onError={(error) => handleComponentError("Participants Overview", error)}
+  >
+    <ParticipantsOverview 
+      traders={safeData.traderRankings} 
+      activePositions={safeData.activePositions}
+      currentPrice={safeData.currentPrice}  // Add this line
+    />
+  </ErrorBoundary>
+</div>
       
       {/* Debug log - Only shown when enabled and not in production */}
       {showDebugInfo && process.env.NODE_ENV !== 'production' && (
@@ -583,5 +625,48 @@ const Dashboard: React.FC = () => {
     </div>
   );
 };
+
+// Error boundary fallback component
+const ErrorFallback: React.FC<{ componentName: string }> = ({ componentName }) => {
+  return (
+    <div className="flex items-center justify-center h-full w-full bg-surface rounded-lg p-4">
+      <div className="text-center">
+        <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-danger mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+        <p className="text-danger font-medium">{componentName} Error</p>
+        <p className="text-text-secondary text-xs mt-1">There was an error rendering this component</p>
+      </div>
+    </div>
+  );
+};
+
+// ErrorBoundary component
+class ErrorBoundary extends React.Component<{
+  children: React.ReactNode;
+  fallback: React.ReactNode;
+  onError?: (error: Error) => void;
+}> {
+  state = { hasError: false, error: null };
+  
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+  
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("Component error:", error, errorInfo);
+    if (this.props.onError) {
+      this.props.onError(error);
+    }
+  }
+  
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    
+    return this.props.children;
+  }
+}
 
 export default Dashboard;

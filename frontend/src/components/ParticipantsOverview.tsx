@@ -1,40 +1,48 @@
-// frontend/src/components/ParticipantsOverview.tsx - Without Leaderboard
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Trader, TraderPosition } from '../types';
 
 interface ParticipantsOverviewProps {
   traders: Trader[];
   activePositions: TraderPosition[];
+  currentPrice?: number; // Add current price to calculate real-time PnL
 }
 
 interface TraderData extends Trader {
   activePosition?: TraderPosition;
-  // Additional calculated fields for display
   entryPrice?: number;
   liquidationPrice?: number;
   unrealizedPnl?: number;
   realizedPnl?: number;
   totalBalance?: number;
+  positionValue?: number;
+  margin?: number;
+  marginLevel?: number; // percentage
+  isNearLiquidation?: boolean;
 }
 
-const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ traders, activePositions }) => {
+const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ 
+  traders, 
+  activePositions,
+  currentPrice = 0 
+}) => {
   const [isExpandedView, setIsExpandedView] = useState<boolean>(false);
-  const [enrichedTraders, setEnrichedTraders] = useState<TraderData[]>([]);
   
   // Format numbers for display
   const formatUSD = (value: number | undefined) => {
-    if (value === undefined) return '-';
-    return new Intl.NumberFormat('en-US', {
+    if (value === undefined || isNaN(value)) return '-';
+    const isNegative = value < 0;
+    const formatted = new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
       minimumFractionDigits: 0,
       maximumFractionDigits: 0
-    }).format(value);
+    }).format(Math.abs(value));
+    return isNegative ? `-${formatted}` : formatted;
   };
   
   const formatPercentage = (value: number | undefined) => {
-    if (value === undefined) return '-';
-    return `${(value * 100).toFixed(2)}%`;
+    if (value === undefined || isNaN(value)) return '-';
+    return `${value.toFixed(2)}%`;
   };
   
   // Truncate wallet address for display
@@ -43,57 +51,108 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ traders, ac
     return `${address.slice(0, 4)}...${address.slice(-4)}`;
   };
   
-  // Calculate liquidation price (simplified model)
-  const calculateLiquidationPrice = (position: TraderPosition) => {
-    // A simple model - in a real application, this would be more complex
-    // Assuming a 5x leverage and 20% maintenance margin
-    const direction = position.quantity > 0 ? 1 : -1;
-    const leverageMultiplier = 5;
-    const maintenanceMargin = 0.2;
+  // Calculate liquidation price with proper leverage model
+  const calculateLiquidationPrice = (position: TraderPosition, trader: Trader) => {
+    const leverage = 5; // 5x leverage
+    const maintenanceMarginRate = 0.05; // 5% maintenance margin
+    const direction = position.quantity > 0 ? 1 : -1; // 1 for long, -1 for short
     
-    // Simplified formula: entry price * (1 ± (1/leverage) * (1 - maintenance margin))
-    // + for shorts, - for longs
-    return position.entryPrice * (1 - direction * (1/leverageMultiplier) * (1 - maintenanceMargin));
+    // For longs: Liquidation = Entry * (1 - 1/leverage + maintenanceMargin)
+    // For shorts: Liquidation = Entry * (1 + 1/leverage - maintenanceMargin)
+    if (direction > 0) {
+      // Long position
+      return position.entryPrice * (1 - (1/leverage) + maintenanceMarginRate);
+    } else {
+      // Short position
+      return position.entryPrice * (1 + (1/leverage) - maintenanceMarginRate);
+    }
   };
   
-  // Enrich traders with additional data
-  useEffect(() => {
-    const enriched = traders.map(trader => {
-      const activePosition = activePositions.find(pos => pos.trader.walletAddress === trader.walletAddress);
+  // Calculate real-time unrealized PnL
+  const calculateUnrealizedPnL = (position: TraderPosition, currentPrice: number) => {
+    if (!currentPrice || currentPrice <= 0) return 0;
+    
+    const direction = position.quantity > 0 ? 1 : -1;
+    const priceChange = currentPrice - position.entryPrice;
+    const pnl = direction * priceChange * Math.abs(position.quantity);
+    
+    return pnl;
+  };
+  
+  // Calculate margin level
+  const calculateMarginLevel = (position: TraderPosition, trader: Trader, currentPrice: number) => {
+    const unrealizedPnl = calculateUnrealizedPnL(position, currentPrice);
+    const positionValue = Math.abs(position.quantity) * currentPrice;
+    const equity = (trader.netPnl || 0) + unrealizedPnl;
+    const margin = positionValue / 5; // 5x leverage means 20% margin
+    
+    // Margin level = (Equity / Used Margin) * 100
+    return margin > 0 ? (equity / margin) * 100 : 0;
+  };
+  
+  // Enrich traders with real-time calculations
+  const enrichedTraders = useMemo(() => {
+    return traders.map(trader => {
+      const activePosition = activePositions.find(
+        pos => pos.trader.walletAddress === trader.walletAddress
+      );
       
-      let entryPrice, liquidationPrice, unrealizedPnl, realizedPnl, totalBalance;
+      let enrichedData: TraderData = {
+        ...trader,
+        realizedPnl: trader.netPnl || 0,
+        totalBalance: trader.netPnl || 0
+      };
       
-      if (activePosition) {
-        entryPrice = activePosition.entryPrice;
-        liquidationPrice = calculateLiquidationPrice(activePosition);
-        unrealizedPnl = activePosition.currentPnl;
-        realizedPnl = trader.netPnl;
-        totalBalance = (trader.netPnl || 0) + (activePosition.currentPnl || 0);
-      } else {
-        realizedPnl = trader.netPnl;
-        totalBalance = trader.netPnl;
+      if (activePosition && currentPrice > 0) {
+        const unrealizedPnl = calculateUnrealizedPnL(activePosition, currentPrice);
+        const liquidationPrice = calculateLiquidationPrice(activePosition, trader);
+        const marginLevel = calculateMarginLevel(activePosition, trader, currentPrice);
+        const positionValue = Math.abs(activePosition.quantity) * currentPrice;
+        
+        // Check if near liquidation (margin level < 110%)
+        const isNearLiquidation = marginLevel < 110;
+        
+        enrichedData = {
+          ...enrichedData,
+          activePosition,
+          entryPrice: activePosition.entryPrice,
+          liquidationPrice,
+          unrealizedPnl,
+          totalBalance: (trader.netPnl || 0) + unrealizedPnl,
+          positionValue,
+          margin: positionValue / 5, // 5x leverage
+          marginLevel,
+          isNearLiquidation
+        };
       }
       
-      return {
-        ...trader,
-        activePosition,
-        entryPrice,
-        liquidationPrice,
-        unrealizedPnl,
-        realizedPnl,
-        totalBalance
-      };
+      return enrichedData;
     });
-    
-    setEnrichedTraders(enriched);
-  }, [traders, activePositions]);
+  }, [traders, activePositions, currentPrice]);
   
-  // Sort the traders by total balance
+  // Sort by total balance
   const sortedTraders = [...enrichedTraders].sort((a, b) => {
     const aBalance = a.totalBalance || 0;
     const bBalance = b.totalBalance || 0;
     return bBalance - aBalance;
   });
+  
+  // Calculate aggregate statistics
+  const stats = useMemo(() => {
+    const totalVolume = traders.reduce((sum, t) => sum + t.totalVolume, 0);
+    const avgWinRate = traders.reduce((sum, t) => sum + t.winRate, 0) / (traders.length || 1);
+    const totalUnrealizedPnl = enrichedTraders.reduce((sum, t) => sum + (t.unrealizedPnl || 0), 0);
+    const totalRealizedPnl = enrichedTraders.reduce((sum, t) => sum + (t.realizedPnl || 0), 0);
+    const tradersAtRisk = enrichedTraders.filter(t => t.isNearLiquidation).length;
+    
+    return {
+      totalVolume,
+      avgWinRate,
+      totalUnrealizedPnl,
+      totalRealizedPnl,
+      tradersAtRisk
+    };
+  }, [traders, enrichedTraders]);
   
   if (traders.length === 0) {
     return (
@@ -104,7 +163,6 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ traders, ac
             Waiting for trader data...
           </span>
         </div>
-        
         <div className="flex items-center justify-center h-32 text-text-muted">
           <p>No traders available yet. Please wait for data to load.</p>
         </div>
@@ -118,7 +176,7 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ traders, ac
         <h2 className="text-base font-semibold text-text-primary">Participants</h2>
         <div className="flex items-center">
           <span className="text-text-secondary text-xs mr-2">
-            {traders.length} traders
+            {traders.length} traders | {activePositions.length} active
           </span>
           <button 
             onClick={() => setIsExpandedView(!isExpandedView)}
@@ -129,7 +187,7 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ traders, ac
         </div>
       </div>
       
-      {/* Main Participants Table - taking full height now */}
+      {/* Main Participants Table */}
       <div className="overflow-y-auto h-[calc(100%-32px)] scrollbar-thin">
         <table className="min-w-full">
           <thead className="sticky top-0 bg-surface z-10">
@@ -138,10 +196,11 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ traders, ac
               <th className="py-1 px-2 text-left text-text-secondary font-medium">Trader</th>
               <th className="py-1 px-2 text-right text-text-secondary font-medium">Size</th>
               <th className="py-1 px-2 text-right text-text-secondary font-medium">Entry</th>
-              <th className="py-1 px-2 text-right text-text-secondary font-medium">Liquidation</th>
-              <th className="py-1 px-2 text-right text-text-secondary font-medium">Unrealized</th>
-              <th className="py-1 px-2 text-right text-text-secondary font-medium">Realized</th>
-              <th className="py-1 px-2 text-right text-text-secondary font-medium">Balance</th>
+              <th className="py-1 px-2 text-right text-text-secondary font-medium">Liq.</th>
+              <th className="py-1 px-2 text-right text-text-secondary font-medium">Margin</th>
+              <th className="py-1 px-2 text-right text-text-secondary font-medium">Unreal.</th>
+              <th className="py-1 px-2 text-right text-text-secondary font-medium">Real.</th>
+              <th className="py-1 px-2 text-right text-text-secondary font-medium">Total</th>
             </tr>
           </thead>
           <tbody>
@@ -151,18 +210,24 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ traders, ac
                 Math.abs(trader.activePosition!.quantity).toFixed(2) : '-';
               const positionDirection = isActive && trader.activePosition!.quantity > 0 ? 'LONG' : 'SHORT';
               
-              // Highlight the top 3 traders
               const isTopTrader = index < 3;
               const rankIndicator = isTopTrader ? 
                 <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full mr-1 text-white text-[10px] ${
                   index === 0 ? 'bg-yellow-500' : 
-                  index === 1 ? 'bg-gray-300' : 
+                  index === 1 ? 'bg-gray-400' : 
                   'bg-amber-700'
                 }`}>{index + 1}</span> : 
                 <span className="text-xs text-text-muted mr-1">{index + 1}</span>;
               
               return (
-                <tr key={trader.walletAddress} className={`text-xs border-b border-border hover:bg-panel-hover ${isTopTrader ? 'bg-panel-hover bg-opacity-25' : ''}`}>
+                <tr 
+                  key={trader.walletAddress} 
+                  className={`text-xs border-b border-border hover:bg-panel-hover transition-colors ${
+                    isTopTrader ? 'bg-panel-hover bg-opacity-25' : ''
+                  } ${
+                    trader.isNearLiquidation ? 'bg-danger bg-opacity-10' : ''
+                  }`}
+                >
                   <td className="py-1 px-2 text-center">
                     {rankIndicator}
                   </td>
@@ -181,6 +246,11 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ traders, ac
                           {positionDirection}
                         </span>
                       )}
+                      {trader.isNearLiquidation && (
+                        <span className="ml-1 text-[9px] px-1 rounded bg-danger text-white animate-pulse">
+                          ⚠️
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td className="py-1 px-2 text-right font-mono">
@@ -189,8 +259,20 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ traders, ac
                   <td className="py-1 px-2 text-right font-mono">
                     {trader.entryPrice ? `$${trader.entryPrice.toFixed(2)}` : '-'}
                   </td>
-                  <td className="py-1 px-2 text-right font-mono text-danger">
+                  <td className={`py-1 px-2 text-right font-mono ${
+                    trader.liquidationPrice && currentPrice > 0 && (
+                      (trader.activePosition?.quantity > 0 && currentPrice <= trader.liquidationPrice) ||
+                      (trader.activePosition?.quantity < 0 && currentPrice >= trader.liquidationPrice)
+                    ) ? 'text-danger font-bold animate-pulse' : 'text-danger'
+                  }`}>
                     {trader.liquidationPrice ? `$${trader.liquidationPrice.toFixed(2)}` : '-'}
+                  </td>
+                  <td className={`py-1 px-2 text-right font-mono text-xs ${
+                    trader.marginLevel && trader.marginLevel < 110 ? 'text-danger' : 
+                    trader.marginLevel && trader.marginLevel < 150 ? 'text-warning' : 
+                    'text-text-secondary'
+                  }`}>
+                    {trader.marginLevel ? formatPercentage(trader.marginLevel) : '-'}
                   </td>
                   <td className={`py-1 px-2 text-right font-mono ${
                     (trader.unrealizedPnl || 0) >= 0 ? 'text-chart-up' : 'text-chart-down'
@@ -202,7 +284,7 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ traders, ac
                   }`}>
                     {formatUSD(trader.realizedPnl)}
                   </td>
-                  <td className={`py-1 px-2 text-right font-mono ${
+                  <td className={`py-1 px-2 text-right font-mono font-bold ${
                     (trader.totalBalance || 0) >= 0 ? 'text-chart-up' : 'text-chart-down'
                   }`}>
                     {formatUSD(trader.totalBalance)}
@@ -216,25 +298,41 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({ traders, ac
       
       {isExpandedView && (
         <div className="mt-2 p-2 border border-border rounded bg-panel">
-          <div className="grid grid-cols-4 gap-3 text-xs">
-            <div>
-              <div className="text-text-secondary">Total Traders</div>
-              <div className="font-semibold text-text-primary">{traders.length}</div>
-            </div>
-            <div>
-              <div className="text-text-secondary">Active Positions</div>
-              <div className="font-semibold text-text-primary">{activePositions.length}</div>
-            </div>
-            <div>
-              <div className="text-text-secondary">Avg. Win Rate</div>
-              <div className="font-semibold text-text-primary">
-                {formatPercentage(traders.reduce((sum, t) => sum + t.winRate, 0) / traders.length)}
-              </div>
-            </div>
+          <div className="grid grid-cols-5 gap-3 text-xs">
             <div>
               <div className="text-text-secondary">Total Volume</div>
               <div className="font-semibold text-text-primary">
-                {formatUSD(traders.reduce((sum, t) => sum + t.totalVolume, 0))}
+                {formatUSD(stats.totalVolume)}
+              </div>
+            </div>
+            <div>
+              <div className="text-text-secondary">Avg Win Rate</div>
+              <div className="font-semibold text-text-primary">
+                {formatPercentage(stats.avgWinRate * 100)}
+              </div>
+            </div>
+            <div>
+              <div className="text-text-secondary">Total Unreal. PnL</div>
+              <div className={`font-semibold ${
+                stats.totalUnrealizedPnl >= 0 ? 'text-chart-up' : 'text-chart-down'
+              }`}>
+                {formatUSD(stats.totalUnrealizedPnl)}
+              </div>
+            </div>
+            <div>
+              <div className="text-text-secondary">Total Real. PnL</div>
+              <div className={`font-semibold ${
+                stats.totalRealizedPnl >= 0 ? 'text-chart-up' : 'text-chart-down'
+              }`}>
+                {formatUSD(stats.totalRealizedPnl)}
+              </div>
+            </div>
+            <div>
+              <div className="text-text-secondary">At Risk</div>
+              <div className={`font-semibold ${
+                stats.tradersAtRisk > 0 ? 'text-danger' : 'text-text-primary'
+              }`}>
+                {stats.tradersAtRisk} traders
               </div>
             </div>
           </div>
