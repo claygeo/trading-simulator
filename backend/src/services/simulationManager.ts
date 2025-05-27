@@ -1,7 +1,7 @@
-// backend/src/services/simulationManager.ts - Complete Fixed File
+// backend/src/services/simulationManager.ts - Complete Fixed File with Pause State Handling
 import { v4 as uuidv4 } from 'uuid';
-import { 
-  SimulationState, 
+import {
+  SimulationState,
   SimulationParameters,
   SimulationEvent,
   TradeAction,
@@ -9,9 +9,10 @@ import {
   TraderPosition,
   Trade,
   OrderBookLevel,
-  OrderBook
-} from '../types/simulation';
-import { Trader, TraderProfile } from '../types/traders';
+  OrderBook,
+  Trader,
+  TraderProfile
+} from '../types';
 import duneApi from '../api/duneApi';
 import traderService from './traderService';
 import { WebSocket } from 'ws';
@@ -34,6 +35,13 @@ class SimulationManager {
   }
   
   broadcastEvent(simulationId: string, event: SimulationEvent) {
+    const simulation = this.simulations.get(simulationId);
+    
+    // Don't broadcast price updates if simulation is paused
+    if (simulation?.isPaused && event.type === 'price_update') {
+      return;
+    }
+    
     const message = JSON.stringify({
       simulationId,
       event
@@ -387,10 +395,10 @@ class SimulationManager {
         // Add trades (with correct chronological ordering)
         if (simulation.recentTrades.length < 50) {
           // Find correct positions for insertion based on timestamp
-          let entryIndex = simulation.recentTrades.findIndex(t => t.timestamp < closedEntryTime);
+          let entryIndex = simulation.recentTrades.findIndex((t: Trade) => t.timestamp < closedEntryTime);
           entryIndex = entryIndex === -1 ? simulation.recentTrades.length : entryIndex;
           
-          let exitIndex = simulation.recentTrades.findIndex(t => t.timestamp < closedExitTime);
+          let exitIndex = simulation.recentTrades.findIndex((t: Trade) => t.timestamp < closedExitTime);
           exitIndex = exitIndex === -1 ? simulation.recentTrades.length : exitIndex;
           
           // Insert trades at correct positions
@@ -399,7 +407,7 @@ class SimulationManager {
         }
         
         // Update trader PnL
-        const traderIndex = traders.findIndex(t => t.trader.walletAddress === trader.trader.walletAddress);
+        const traderIndex = traders.findIndex((t: TraderProfile) => t.trader.walletAddress === trader.trader.walletAddress);
         if (traderIndex !== -1) {
           traders[traderIndex].trader.netPnl = (traders[traderIndex].trader.netPnl || 0) + closedPnl;
         }
@@ -522,6 +530,7 @@ class SimulationManager {
     const updateInterval = Math.floor(this.baseUpdateInterval / speed);
     
     console.log(`Starting simulation ${id} with speed ${speed}x (interval ${updateInterval}ms)`);
+    console.log(`Resuming from price: $${simulation.currentPrice.toFixed(2)}`);
     
     // Set up the simulation interval
     const interval = setInterval(() => {
@@ -537,7 +546,8 @@ class SimulationManager {
       data: {
         isRunning: true,
         isPaused: false,
-        speed: speed
+        speed: speed,
+        currentPrice: simulation.currentPrice
       }
     });
   }
@@ -552,6 +562,9 @@ class SimulationManager {
     if (!simulation.isRunning || simulation.isPaused) {
       throw new Error(`Simulation ${id} is not running or already paused`);
     }
+    
+    // Store the current price before pausing
+    const lastPrice = simulation.currentPrice;
     
     // Update simulation state
     simulation.isPaused = true;
@@ -571,11 +584,12 @@ class SimulationManager {
       data: {
         isRunning: simulation.isRunning,
         isPaused: true,
-        speed: this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor
+        speed: this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor,
+        lastPrice: lastPrice // Include the last price before pause
       }
     });
     
-    console.log(`Simulation ${id} paused`);
+    console.log(`Simulation ${id} paused at price: $${lastPrice.toFixed(2)}`);
   }
   
   resetSimulation(id: string): void {
@@ -676,7 +690,7 @@ class SimulationManager {
       return;
     }
     
-    // Update the price
+    // Update the price (but don't change it if paused)
     this.updatePrice(simulation);
     
     // Process trader actions
@@ -685,15 +699,17 @@ class SimulationManager {
     // Update the order book
     this.updateOrderBook(simulation);
     
-    // Broadcast the updates
-    this.broadcastEvent(id, {
-      type: 'price_update',
-      timestamp: simulation.currentTime,
-      data: {
-        price: simulation.currentPrice,
-        orderBook: simulation.orderBook
-      }
-    });
+    // Only broadcast price updates if not paused
+    if (!simulation.isPaused) {
+      this.broadcastEvent(id, {
+        type: 'price_update',
+        timestamp: simulation.currentTime,
+        data: {
+          price: simulation.currentPrice,
+          orderBook: simulation.orderBook
+        }
+      });
+    }
     
     // Save the updated simulation state
     this.simulations.set(id, simulation);
@@ -794,7 +810,7 @@ class SimulationManager {
   
   private processTraderActions(simulation: SimulationState): void {
     // For each trader, decide if they should take action
-    simulation.traders.forEach(trader => {
+    simulation.traders.forEach((trader: TraderProfile) => {
       const profile = trader;
       const { tradingFrequency } = profile;
       
@@ -826,7 +842,7 @@ class SimulationManager {
     const trader = traderProfile.trader;
     
     // Check if trader has active position
-    const activePosition = simulation.activePositions.find(p => p.trader.walletAddress === trader.walletAddress);
+    const activePosition = simulation.activePositions.find((p: TraderPosition) => p.trader.walletAddress === trader.walletAddress);
     
     if (activePosition) {
       // Decide whether to exit position
@@ -962,7 +978,7 @@ class SimulationManager {
   private closePosition(simulation: SimulationState, position: TraderPosition): void {
     // Remove from active positions
     simulation.activePositions = simulation.activePositions.filter(
-      p => p.trader.walletAddress !== position.trader.walletAddress
+      (p: TraderPosition) => p.trader.walletAddress !== position.trader.walletAddress
     );
     
     // Add to closed positions
@@ -1021,14 +1037,14 @@ class SimulationManager {
     const traderPnL = new Map<string, number>();
     
     // Add P&L from closed positions
-    simulation.closedPositions.forEach(position => {
+    simulation.closedPositions.forEach((position: TraderPosition & { exitPrice: number; exitTime: number }) => {
       const walletAddress = position.trader.walletAddress;
       const currentPnL = traderPnL.get(walletAddress) || 0;
       traderPnL.set(walletAddress, currentPnL + position.currentPnl);
     });
     
     // Add P&L from active positions
-    simulation.activePositions.forEach(position => {
+    simulation.activePositions.forEach((position: TraderPosition) => {
       const walletAddress = position.trader.walletAddress;
       const currentPnL = traderPnL.get(walletAddress) || 0;
       traderPnL.set(walletAddress, currentPnL + position.currentPnl);
@@ -1036,11 +1052,11 @@ class SimulationManager {
     
     // Update trader rankings
     simulation.traderRankings = simulation.traders
-      .map(profile => ({
+      .map((profile: TraderProfile) => ({
         ...profile.trader,
         simulationPnl: traderPnL.get(profile.trader.walletAddress) || 0
       }))
-      .sort((a, b) => (b.simulationPnl || 0) - (a.simulationPnl || 0));
+      .sort((a: Trader & { simulationPnl?: number }, b: Trader & { simulationPnl?: number }) => (b.simulationPnl || 0) - (a.simulationPnl || 0));
   }
   
   private updateOrderBook(simulation: SimulationState): void {
