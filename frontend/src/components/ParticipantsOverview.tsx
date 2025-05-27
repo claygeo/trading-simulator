@@ -260,12 +260,12 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
                     {trader.entryPrice ? `$${trader.entryPrice.toFixed(2)}` : '-'}
                   </td>
                   <td className={`py-1 px-2 text-right font-mono ${
-                    trader.liquidationPrice && currentPrice > 0 && (
-                      (trader.activePosition?.quantity > 0 && currentPrice <= trader.liquidationPrice) ||
-                      (trader.activePosition?.quantity < 0 && currentPrice >= trader.liquidationPrice)
+                    trader.liquidationPrice && currentPrice > 0 && trader.activePosition && (
+                      (trader.activePosition.quantity > 0 && currentPrice <= trader.liquidationPrice) ||
+                      (trader.activePosition.quantity < 0 && currentPrice >= trader.liquidationPrice)
                     ) ? 'text-danger font-bold animate-pulse' : 'text-danger'
                   }`}>
-                    {trader.liquidationPrice ? `$${trader.liquidationPrice.toFixed(2)}` : '-'}
+                    {trader.liquidationPrice ? `${trader.liquidationPrice.toFixed(2)}` : '-'}
                   </td>
                   <td className={`py-1 px-2 text-right font-mono text-xs ${
                     trader.marginLevel && trader.marginLevel < 110 ? 'text-danger' : 
