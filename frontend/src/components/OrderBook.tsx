@@ -136,7 +136,7 @@ const OrderBookComponent: React.FC<OrderBookProps> = ({ orderBook }) => {
       {/* Current Price / Mid Market */}
       <div className="flex items-center justify-center py-1 border-y border-border bg-panel">
         <span className="text-xs font-bold text-text-primary">
-          ${((asks[0]?.price || 0) + (bids[0]?.price || 0)) / 2 || 0}
+          ${(((asks[0]?.price || 0) + (bids[0]?.price || 0)) / 2).toFixed(2)}
         </span>
       </div>
       
