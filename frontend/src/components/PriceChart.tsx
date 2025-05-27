@@ -30,17 +30,24 @@ interface PriceChartProps {
   scenarioData?: any;
 }
 
-// Market microstructure state
+// Market patterns for crypto-like behavior
+type MarketPattern = 'parabolic_rise' | 'steady_uptrend' | 'volatile_uptrend' | 
+                    'accumulation' | 'distribution' | 'ranging' | 'breakdown' | 
+                    'steady_downtrend' | 'capitulation' | 'recovery' | 'pump_and_dump';
+
 interface MarketState {
+  pattern: MarketPattern;
+  patternStrength: number;
+  patternProgress: number;
+  baseVolatility: number;
+  trendBias: number;
+  momentum: number;
+  volumeProfile: 'low' | 'normal' | 'high' | 'extreme';
   supportLevels: number[];
   resistanceLevels: number[];
-  currentTrend: 'up' | 'down' | 'sideways';
-  trendStrength: number;
-  consolidationRange: { min: number; max: number } | null;
-  consolidationDuration: number;
-  volatilityRegime: 'low' | 'normal' | 'high';
-  lastSignificantMove: number;
-  priceMemory: number[]; // Recent prices for pattern detection
+  priceMemory: number[];
+  lastPatternChange: number;
+  accumulatedChange: number;
 }
 
 const PriceChart: React.FC<PriceChartProps> = ({ 
@@ -58,23 +65,108 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const lastTimeRef = useRef<number>(0);
   
   const [isLoading, setIsLoading] = useState(true);
-  const [displayPrice, setDisplayPrice] = useState<number>(propCurrentPrice || 125);
+  const [displayPrice, setDisplayPrice] = useState<number>(propCurrentPrice || 50000);
   const [priceChange, setPriceChange] = useState<number>(0);
   const [priceChangePercent, setPriceChangePercent] = useState<number>(0);
   const [scenarioActive, setScenarioActive] = useState<boolean>(true);
+  const [currentPattern, setCurrentPattern] = useState<MarketPattern>('ranging');
   
-  // Market state for realistic price generation
+  // Market state for realistic crypto price generation
   const marketStateRef = useRef<MarketState>({
+    pattern: 'ranging',
+    patternStrength: 0.5,
+    patternProgress: 0,
+    baseVolatility: 0.02,
+    trendBias: 0,
+    momentum: 0,
+    volumeProfile: 'normal',
     supportLevels: [],
     resistanceLevels: [],
-    currentTrend: 'sideways',
-    trendStrength: 0,
-    consolidationRange: null,
-    consolidationDuration: 0,
-    volatilityRegime: 'normal',
-    lastSignificantMove: 0,
-    priceMemory: []
+    priceMemory: [],
+    lastPatternChange: 0,
+    accumulatedChange: 0
   });
+
+  // Pattern configurations for crypto-like movements
+  const patternConfigs = {
+    parabolic_rise: {
+      volatility: 0.03,
+      trendBias: 0.008,
+      momentumGain: 0.02,
+      duration: 20,
+      description: 'Parabolic Rise'
+    },
+    steady_uptrend: {
+      volatility: 0.015,
+      trendBias: 0.003,
+      momentumGain: 0.005,
+      duration: 40,
+      description: 'Steady Uptrend'
+    },
+    volatile_uptrend: {
+      volatility: 0.04,
+      trendBias: 0.004,
+      momentumGain: 0.008,
+      duration: 30,
+      description: 'Volatile Rally'
+    },
+    accumulation: {
+      volatility: 0.008,
+      trendBias: 0.0005,
+      momentumGain: 0,
+      duration: 50,
+      description: 'Accumulation'
+    },
+    distribution: {
+      volatility: 0.012,
+      trendBias: -0.0005,
+      momentumGain: -0.002,
+      duration: 40,
+      description: 'Distribution'
+    },
+    ranging: {
+      volatility: 0.01,
+      trendBias: 0,
+      momentumGain: 0,
+      duration: 60,
+      description: 'Sideways'
+    },
+    breakdown: {
+      volatility: 0.025,
+      trendBias: -0.006,
+      momentumGain: -0.015,
+      duration: 15,
+      description: 'Breakdown'
+    },
+    steady_downtrend: {
+      volatility: 0.018,
+      trendBias: -0.003,
+      momentumGain: -0.005,
+      duration: 35,
+      description: 'Downtrend'
+    },
+    capitulation: {
+      volatility: 0.05,
+      trendBias: -0.012,
+      momentumGain: -0.025,
+      duration: 10,
+      description: 'Capitulation'
+    },
+    recovery: {
+      volatility: 0.02,
+      trendBias: 0.005,
+      momentumGain: 0.01,
+      duration: 25,
+      description: 'Recovery'
+    },
+    pump_and_dump: {
+      volatility: 0.06,
+      trendBias: 0.015,
+      momentumGain: 0.03,
+      duration: 8,
+      description: 'Pump & Dump'
+    }
+  };
 
   // Simple interval to seconds conversion
   const getIntervalSeconds = (interval: string): number => {
@@ -89,214 +181,282 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return map[interval] || 3600;
   };
 
-  // Detect support and resistance levels
-  const updateSupportResistance = useCallback((prices: number[]) => {
-    if (prices.length < 10) return;
+  // Select next pattern based on current market state
+  const selectNextPattern = useCallback((): MarketPattern => {
+    const currentPattern = marketStateRef.current.pattern;
+    const accumulated = marketStateRef.current.accumulatedChange;
     
-    const state = marketStateRef.current;
-    const recentPrices = prices.slice(-50);
-    
-    // Find local peaks and troughs
-    const levels: number[] = [];
-    for (let i = 2; i < recentPrices.length - 2; i++) {
-      const price = recentPrices[i];
-      const isPeak = price > recentPrices[i-1] && price > recentPrices[i-2] && 
-                     price > recentPrices[i+1] && price > recentPrices[i+2];
-      const isTrough = price < recentPrices[i-1] && price < recentPrices[i-2] && 
-                       price < recentPrices[i+1] && price < recentPrices[i+2];
-      
-      if (isPeak || isTrough) {
-        levels.push(price);
-      }
-    }
-    
-    // Cluster nearby levels
-    const clustered: number[] = [];
-    const sorted = levels.sort((a, b) => a - b);
-    
-    for (let i = 0; i < sorted.length; i++) {
-      if (clustered.length === 0 || 
-          Math.abs(sorted[i] - clustered[clustered.length - 1]) / clustered[clustered.length - 1] > 0.005) {
-        clustered.push(sorted[i]);
-      }
-    }
-    
-    const currentPrice = prices[prices.length - 1];
-    state.supportLevels = clustered.filter(level => level < currentPrice).slice(-3);
-    state.resistanceLevels = clustered.filter(level => level > currentPrice).slice(0, 3);
-  }, []);
-
-  // Detect market regime and patterns
-  const analyzeMarketState = useCallback((prices: number[]) => {
-    if (prices.length < 5) return;
-    
-    const state = marketStateRef.current;
-    const recentPrices = prices.slice(-20);
-    
-    // Calculate volatility
-    let volatility = 0;
-    for (let i = 1; i < recentPrices.length; i++) {
-      volatility += Math.abs((recentPrices[i] - recentPrices[i-1]) / recentPrices[i-1]);
-    }
-    volatility = volatility / (recentPrices.length - 1);
-    
-    // Update volatility regime
-    if (volatility < 0.001) state.volatilityRegime = 'low';
-    else if (volatility > 0.003) state.volatilityRegime = 'high';
-    else state.volatilityRegime = 'normal';
-    
-    // Detect trend
-    const shortMA = recentPrices.slice(-5).reduce((a, b) => a + b, 0) / 5;
-    const longMA = recentPrices.slice(-10).reduce((a, b) => a + b, 0) / Math.min(10, recentPrices.length);
-    const priceChange = (recentPrices[recentPrices.length - 1] - recentPrices[0]) / recentPrices[0];
-    
-    if (shortMA > longMA * 1.002 && priceChange > 0.01) {
-      state.currentTrend = 'up';
-      state.trendStrength = Math.min(priceChange * 100, 1);
-    } else if (shortMA < longMA * 0.998 && priceChange < -0.01) {
-      state.currentTrend = 'down';
-      state.trendStrength = Math.min(Math.abs(priceChange) * 100, 1);
-    } else {
-      state.currentTrend = 'sideways';
-      state.trendStrength = 0;
-    }
-    
-    // Detect consolidation
-    const range = Math.max(...recentPrices) - Math.min(...recentPrices);
-    const avgPrice = recentPrices.reduce((a, b) => a + b, 0) / recentPrices.length;
-    const rangePercent = range / avgPrice;
-    
-    if (rangePercent < 0.02 && state.currentTrend === 'sideways') {
-      if (!state.consolidationRange) {
-        state.consolidationRange = {
-          min: Math.min(...recentPrices.slice(-10)),
-          max: Math.max(...recentPrices.slice(-10))
-        };
-        state.consolidationDuration = 0;
-      }
-      state.consolidationDuration++;
-    } else {
-      state.consolidationRange = null;
-      state.consolidationDuration = 0;
-    }
-    
-    // Update price memory
-    state.priceMemory = recentPrices.slice(-10);
-  }, []);
-
-  // Generate realistic price movement
-  const generateRealisticPrice = useCallback((basePrice: number): number => {
-    const state = marketStateRef.current;
-    const random = Math.random();
-    let priceChange = 0;
-    
-    // Base probabilities for different market behaviors
-    let probabilities = {
-      noChange: 0.15,        // 15% chance of virtually no change (doji)
-      tinyChange: 0.55,      // 55% chance of tiny movement
-      smallChange: 0.20,     // 20% chance of small movement
-      mediumChange: 0.08,    // 8% chance of medium movement
-      largeChange: 0.02      // 2% chance of large movement
+    // Pattern transition probabilities
+    const transitions: { [key in MarketPattern]: { pattern: MarketPattern, weight: number }[] } = {
+      ranging: [
+        { pattern: 'steady_uptrend', weight: 20 },
+        { pattern: 'steady_downtrend', weight: 20 },
+        { pattern: 'accumulation', weight: 25 },
+        { pattern: 'distribution', weight: 15 },
+        { pattern: 'volatile_uptrend', weight: 10 },
+        { pattern: 'breakdown', weight: 5 },
+        { pattern: 'pump_and_dump', weight: 5 }
+      ],
+      accumulation: [
+        { pattern: 'steady_uptrend', weight: 35 },
+        { pattern: 'volatile_uptrend', weight: 25 },
+        { pattern: 'parabolic_rise', weight: 15 },
+        { pattern: 'ranging', weight: 20 },
+        { pattern: 'distribution', weight: 5 }
+      ],
+      distribution: [
+        { pattern: 'steady_downtrend', weight: 30 },
+        { pattern: 'breakdown', weight: 25 },
+        { pattern: 'ranging', weight: 25 },
+        { pattern: 'volatile_uptrend', weight: 10 },
+        { pattern: 'capitulation', weight: 10 }
+      ],
+      steady_uptrend: [
+        { pattern: 'parabolic_rise', weight: 20 },
+        { pattern: 'volatile_uptrend', weight: 20 },
+        { pattern: 'distribution', weight: 25 },
+        { pattern: 'ranging', weight: 25 },
+        { pattern: 'steady_uptrend', weight: 10 }
+      ],
+      volatile_uptrend: [
+        { pattern: 'parabolic_rise', weight: 15 },
+        { pattern: 'distribution', weight: 30 },
+        { pattern: 'breakdown', weight: 20 },
+        { pattern: 'ranging', weight: 25 },
+        { pattern: 'steady_uptrend', weight: 10 }
+      ],
+      parabolic_rise: [
+        { pattern: 'breakdown', weight: 40 },
+        { pattern: 'distribution', weight: 30 },
+        { pattern: 'capitulation', weight: 15 },
+        { pattern: 'volatile_uptrend', weight: 10 },
+        { pattern: 'ranging', weight: 5 }
+      ],
+      steady_downtrend: [
+        { pattern: 'capitulation', weight: 20 },
+        { pattern: 'ranging', weight: 30 },
+        { pattern: 'recovery', weight: 25 },
+        { pattern: 'accumulation', weight: 15 },
+        { pattern: 'steady_downtrend', weight: 10 }
+      ],
+      breakdown: [
+        { pattern: 'capitulation', weight: 30 },
+        { pattern: 'steady_downtrend', weight: 25 },
+        { pattern: 'recovery', weight: 20 },
+        { pattern: 'ranging', weight: 20 },
+        { pattern: 'volatile_uptrend', weight: 5 }
+      ],
+      capitulation: [
+        { pattern: 'recovery', weight: 50 },
+        { pattern: 'accumulation', weight: 25 },
+        { pattern: 'ranging', weight: 15 },
+        { pattern: 'steady_uptrend', weight: 10 }
+      ],
+      recovery: [
+        { pattern: 'steady_uptrend', weight: 30 },
+        { pattern: 'volatile_uptrend', weight: 25 },
+        { pattern: 'ranging', weight: 25 },
+        { pattern: 'accumulation', weight: 15 },
+        { pattern: 'distribution', weight: 5 }
+      ],
+      pump_and_dump: [
+        { pattern: 'capitulation', weight: 60 },
+        { pattern: 'breakdown', weight: 25 },
+        { pattern: 'ranging', weight: 10 },
+        { pattern: 'recovery', weight: 5 }
+      ]
     };
     
-    // Adjust probabilities based on market state
-    if (state.volatilityRegime === 'low') {
-      probabilities.noChange = 0.25;
-      probabilities.tinyChange = 0.60;
-      probabilities.smallChange = 0.12;
-      probabilities.mediumChange = 0.025;
-      probabilities.largeChange = 0.005;
-    } else if (state.volatilityRegime === 'high') {
-      probabilities.noChange = 0.05;
-      probabilities.tinyChange = 0.40;
-      probabilities.smallChange = 0.35;
-      probabilities.mediumChange = 0.15;
-      probabilities.largeChange = 0.05;
+    // Adjust weights based on accumulated change
+    const possibleTransitions = transitions[currentPattern] || transitions.ranging;
+    let adjustedTransitions = possibleTransitions.map(t => ({ ...t }));
+    
+    // If price has moved up significantly, increase downward pattern probability
+    if (accumulated > 0.2) {
+      adjustedTransitions = adjustedTransitions.map(t => ({
+        ...t,
+        weight: ['breakdown', 'steady_downtrend', 'capitulation', 'distribution'].includes(t.pattern) 
+          ? t.weight * 1.5 : t.weight * 0.8
+      }));
+    }
+    // If price has moved down significantly, increase upward pattern probability
+    else if (accumulated < -0.2) {
+      adjustedTransitions = adjustedTransitions.map(t => ({
+        ...t,
+        weight: ['steady_uptrend', 'volatile_uptrend', 'parabolic_rise', 'recovery'].includes(t.pattern)
+          ? t.weight * 1.5 : t.weight * 0.8
+      }));
+    }
+    
+    // Select based on weighted random
+    const totalWeight = adjustedTransitions.reduce((sum, t) => sum + t.weight, 0);
+    let random = Math.random() * totalWeight;
+    
+    for (const transition of adjustedTransitions) {
+      random -= transition.weight;
+      if (random <= 0) {
+        return transition.pattern;
+      }
+    }
+    
+    return 'ranging';
+  }, []);
+
+  // Update support and resistance levels
+  const updateSupportResistance = useCallback((prices: number[]) => {
+    if (prices.length < 20) return;
+    
+    const state = marketStateRef.current;
+    const recentPrices = prices.slice(-100);
+    
+    // Find significant levels using pivot points
+    const levels: number[] = [];
+    
+    for (let i = 10; i < recentPrices.length - 10; i += 5) {
+      const segment = recentPrices.slice(i - 10, i + 10);
+      const max = Math.max(...segment);
+      const min = Math.min(...segment);
+      const avg = segment.reduce((a, b) => a + b, 0) / segment.length;
+      
+      if (recentPrices[i] === max || recentPrices[i] === min) {
+        levels.push(recentPrices[i]);
+      }
+      
+      // Add psychological levels (round numbers)
+      const roundLevel = Math.round(avg / 1000) * 1000;
+      if (Math.abs(avg - roundLevel) / avg < 0.02) {
+        levels.push(roundLevel);
+      }
+    }
+    
+    // Cluster and filter levels
+    const currentPrice = prices[prices.length - 1];
+    const uniqueLevels = [...new Set(levels)].sort((a, b) => a - b);
+    
+    state.supportLevels = uniqueLevels
+      .filter(level => level < currentPrice * 0.98)
+      .slice(-3);
+    
+    state.resistanceLevels = uniqueLevels
+      .filter(level => level > currentPrice * 1.02)
+      .slice(0, 3);
+  }, []);
+
+  // Generate realistic crypto price movement
+  const generateCryptoPrice = useCallback((basePrice: number): number => {
+    const state = marketStateRef.current;
+    const config = patternConfigs[state.pattern];
+    
+    // Update pattern progress
+    state.patternProgress += 1 / config.duration;
+    
+    // Check if pattern should change
+    if (state.patternProgress >= 1 || Date.now() - state.lastPatternChange > 60000) {
+      const newPattern = selectNextPattern();
+      state.pattern = newPattern;
+      state.patternProgress = 0;
+      state.lastPatternChange = Date.now();
+      state.patternStrength = 0.5 + Math.random() * 0.5;
+      setCurrentPattern(newPattern);
+    }
+    
+    // Calculate base movement components
+    let volatilityComponent = (Math.random() - 0.5) * config.volatility * state.patternStrength;
+    let trendComponent = config.trendBias * state.patternStrength;
+    let momentumComponent = state.momentum * 0.3;
+    
+    // Add pattern-specific behaviors
+    switch (state.pattern) {
+      case 'parabolic_rise':
+        // Exponential growth with increasing volatility
+        trendComponent *= (1 + state.patternProgress * 2);
+        volatilityComponent *= (1 + state.patternProgress);
+        break;
+        
+      case 'pump_and_dump':
+        // Sharp rise then sharp fall
+        if (state.patternProgress < 0.6) {
+          trendComponent *= 2;
+          volatilityComponent *= 1.5;
+        } else {
+          trendComponent = -Math.abs(trendComponent) * 3;
+          volatilityComponent *= 2;
+        }
+        break;
+        
+      case 'capitulation':
+        // Accelerating decline
+        trendComponent *= (1 + state.patternProgress * 1.5);
+        volatilityComponent *= (1 + state.patternProgress * 0.5);
+        break;
+        
+      case 'ranging':
+        // Mean reversion within range
+        const rangeCenter = state.priceMemory.length > 0 
+          ? state.priceMemory.reduce((a, b) => a + b, 0) / state.priceMemory.length
+          : basePrice;
+        const deviation = (basePrice - rangeCenter) / rangeCenter;
+        trendComponent = -deviation * 0.01; // Pull back to center
+        break;
+        
+      case 'accumulation':
+        // Tight range with slight upward bias
+        volatilityComponent *= 0.5;
+        if (Math.random() < 0.3) {
+          trendComponent += 0.001; // Occasional small pumps
+        }
+        break;
+        
+      case 'distribution':
+        // Increased volatility with slight downward bias
+        volatilityComponent *= 1.2;
+        if (Math.random() < 0.3) {
+          trendComponent -= 0.002; // Occasional small dumps
+        }
+        break;
     }
     
     // Support and resistance influence
-    let supportResistanceInfluence = 0;
+    let srInfluence = 0;
     
-    // Check proximity to support levels
     for (const support of state.supportLevels) {
       const distance = (basePrice - support) / support;
-      if (distance > 0 && distance < 0.005) { // Within 0.5% of support
-        supportResistanceInfluence = 0.3 * (1 - distance / 0.005); // Stronger bounce closer to support
+      if (distance > 0 && distance < 0.02) {
+        srInfluence += 0.005 * (1 - distance / 0.02);
       }
     }
     
-    // Check proximity to resistance levels
     for (const resistance of state.resistanceLevels) {
       const distance = (resistance - basePrice) / resistance;
-      if (distance > 0 && distance < 0.005) { // Within 0.5% of resistance
-        supportResistanceInfluence = -0.3 * (1 - distance / 0.005); // Stronger rejection closer to resistance
+      if (distance > 0 && distance < 0.02) {
+        srInfluence -= 0.005 * (1 - distance / 0.02);
       }
     }
     
-    // Consolidation range enforcement
-    if (state.consolidationRange) {
-      const range = state.consolidationRange;
-      const rangePosition = (basePrice - range.min) / (range.max - range.min);
-      
-      // Mean reversion within consolidation
-      if (rangePosition > 0.8) {
-        supportResistanceInfluence -= 0.2; // Push down from top of range
-      } else if (rangePosition < 0.2) {
-        supportResistanceInfluence += 0.2; // Push up from bottom of range
-      }
-      
-      // Reduce volatility during consolidation
-      probabilities.noChange = 0.30;
-      probabilities.tinyChange = 0.60;
-      probabilities.smallChange = 0.08;
-      probabilities.mediumChange = 0.015;
-      probabilities.largeChange = 0.005;
-    }
-    
-    // Determine price change magnitude
-    let changePercent = 0;
-    const cumulativeRandom = random;
-    
-    if (cumulativeRandom < probabilities.noChange) {
-      // Doji - virtually no change
-      changePercent = (Math.random() - 0.5) * 0.00005; // ±0.005%
-    } else if (cumulativeRandom < probabilities.noChange + probabilities.tinyChange) {
-      // Tiny change - most common
-      changePercent = (Math.random() - 0.5) * 0.0003; // ±0.03%
-    } else if (cumulativeRandom < probabilities.noChange + probabilities.tinyChange + probabilities.smallChange) {
-      // Small change
-      changePercent = (Math.random() - 0.5) * 0.001; // ±0.1%
-    } else if (cumulativeRandom < probabilities.noChange + probabilities.tinyChange + probabilities.smallChange + probabilities.mediumChange) {
-      // Medium change
-      changePercent = (Math.random() - 0.5) * 0.003; // ±0.3%
-    } else {
-      // Large change - rare
-      changePercent = (Math.random() - 0.5) * 0.008; // ±0.8%
-    }
-    
-    // Apply trend bias
-    if (state.currentTrend === 'up') {
-      changePercent += 0.0001 * state.trendStrength;
-    } else if (state.currentTrend === 'down') {
-      changePercent -= 0.0001 * state.trendStrength;
-    }
-    
-    // Apply support/resistance influence
-    changePercent += supportResistanceInfluence * 0.001;
+    // Update momentum
+    state.momentum = state.momentum * 0.9 + (trendComponent + config.momentumGain) * 0.1;
     
     // Apply scenario influence if active
+    let scenarioInfluence = 0;
     if (scenarioActive && scenarioData && scenarioData.phase) {
-      const scenarioInfluence = calculateScenarioInfluence(scenarioData.phase, scenarioData.progress);
-      changePercent += scenarioInfluence * 0.0005;
+      scenarioInfluence = calculateScenarioInfluence(scenarioData.phase, scenarioData.progress);
     }
     
-    // Calculate final price
-    priceChange = basePrice * changePercent;
-    const newPrice = basePrice + priceChange;
+    // Calculate final price change
+    const totalChange = volatilityComponent + trendComponent + momentumComponent + srInfluence + scenarioInfluence;
+    const newPrice = basePrice * (1 + totalChange);
     
-    // Prevent negative prices
+    // Update price memory
+    state.priceMemory.push(newPrice);
+    if (state.priceMemory.length > 50) {
+      state.priceMemory.shift();
+    }
+    
+    // Track accumulated change
+    state.accumulatedChange += totalChange;
+    
     return Math.max(newPrice, 0.01);
-  }, [scenarioActive, scenarioData]);
+  }, [scenarioActive, scenarioData, selectNextPattern]);
 
   // Calculate scenario influence on price
   const calculateScenarioInfluence = (phase: any, progress: number): number => {
@@ -305,76 +465,102 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const { priceAction } = phase;
     let influence = 0;
     
-    // Scenario adds bias but doesn't control price completely
     switch (priceAction.type) {
       case 'trend':
-        influence = priceAction.intensity * (priceAction.direction === 'up' ? 1 : -1) * 0.5;
+        influence = priceAction.intensity * 0.005 * (priceAction.direction === 'up' ? 1 : -1);
         break;
       case 'breakout':
-        influence = priceAction.intensity * (priceAction.direction === 'up' ? 1 : -1) * 
-                   (progress < 0.3 ? 1.5 : 0.3); // Strong initially, then fades
+        influence = priceAction.intensity * 0.008 * (priceAction.direction === 'up' ? 1 : -1) * 
+                   (progress < 0.3 ? 2 : 0.5);
         break;
       case 'crash':
-        influence = -priceAction.intensity * (progress < 0.5 ? 1.2 : 0.5);
+        influence = -priceAction.intensity * 0.015 * (progress < 0.5 ? 1.5 : 0.8);
         break;
       case 'pump':
-        influence = priceAction.intensity * (progress < 0.4 ? 1.2 : 0.3);
+        influence = priceAction.intensity * 0.012 * (progress < 0.4 ? 1.5 : 0.3);
         break;
       case 'accumulation':
-        influence = 0.3 * (priceAction.direction === 'up' ? 1 : -1);
+        influence = 0.002 * (priceAction.direction === 'up' ? 1 : -1);
         break;
       case 'distribution':
-        influence = -0.3;
+        influence = -0.003;
         break;
       default:
         influence = 0;
     }
     
-    // Add volatility component
-    influence += (Math.random() - 0.5) * priceAction.volatility * 0.3;
+    // Add volatility from scenario
+    influence += (Math.random() - 0.5) * priceAction.volatility * 0.005;
     
     return influence;
   };
 
-  // Generate candle with realistic wicks
-  const generateRealisticCandle = useCallback((open: number, close: number, volatility: number = 1): { high: number; low: number } => {
+  // Generate realistic candle with crypto-style wicks
+  const generateCryptoCandle = useCallback((open: number, close: number, pattern: MarketPattern): { high: number; low: number } => {
     const bodySize = Math.abs(close - open);
-    const direction = close > open ? 1 : -1;
+    const priceLevel = (open + close) / 2;
+    const config = patternConfigs[pattern];
     
-    // Determine candle type
-    const candleRandom = Math.random();
+    // Base wick ratios depend on pattern
     let upperWickRatio: number;
     let lowerWickRatio: number;
     
-    if (bodySize / open < 0.0001) {
-      // Doji candle
-      upperWickRatio = 0.5 + Math.random() * 1.5;
-      lowerWickRatio = 0.5 + Math.random() * 1.5;
-    } else if (candleRandom < 0.1) {
-      // Spinning top (10% chance)
-      upperWickRatio = 1 + Math.random() * 2;
-      lowerWickRatio = 1 + Math.random() * 2;
-    } else if (candleRandom < 0.2 && direction > 0) {
-      // Hammer/Hanging man (10% chance on up moves)
-      upperWickRatio = 0.1 + Math.random() * 0.3;
-      lowerWickRatio = 2 + Math.random() * 2;
-    } else if (candleRandom < 0.2 && direction < 0) {
-      // Inverted hammer/Shooting star (10% chance on down moves)
-      upperWickRatio = 2 + Math.random() * 2;
-      lowerWickRatio = 0.1 + Math.random() * 0.3;
-    } else {
-      // Normal candle (70% chance)
-      upperWickRatio = 0.2 + Math.random() * 0.8;
-      lowerWickRatio = 0.2 + Math.random() * 0.8;
+    const candleRandom = Math.random();
+    
+    // Pattern-specific candle shapes
+    switch (pattern) {
+      case 'parabolic_rise':
+      case 'pump_and_dump':
+        // Long upper wicks on rises (profit taking)
+        upperWickRatio = 1.5 + Math.random() * 2;
+        lowerWickRatio = 0.3 + Math.random() * 0.5;
+        break;
+        
+      case 'capitulation':
+      case 'breakdown':
+        // Long lower wicks on falls (support seeking)
+        upperWickRatio = 0.3 + Math.random() * 0.5;
+        lowerWickRatio = 1.5 + Math.random() * 2;
+        break;
+        
+      case 'ranging':
+      case 'accumulation':
+        // Balanced wicks
+        upperWickRatio = 0.5 + Math.random();
+        lowerWickRatio = 0.5 + Math.random();
+        break;
+        
+      default:
+        // Normal distribution
+        upperWickRatio = 0.3 + Math.random() * 1.2;
+        lowerWickRatio = 0.3 + Math.random() * 1.2;
     }
     
-    // Apply volatility adjustment
-    upperWickRatio *= volatility;
-    lowerWickRatio *= volatility;
+    // Special candle patterns
+    if (candleRandom < 0.05) {
+      // Doji (5% chance)
+      const dojiWick = 2 + Math.random() * 2;
+      upperWickRatio = dojiWick;
+      lowerWickRatio = dojiWick;
+    } else if (candleRandom < 0.1 && close > open) {
+      // Hammer (5% chance on up moves)
+      upperWickRatio = 0.2;
+      lowerWickRatio = 3 + Math.random();
+    } else if (candleRandom < 0.1 && close < open) {
+      // Shooting star (5% chance on down moves)
+      upperWickRatio = 3 + Math.random();
+      lowerWickRatio = 0.2;
+    }
     
-    // Calculate wicks
-    const upperWick = Math.max(bodySize * upperWickRatio, open * 0.0001);
-    const lowerWick = Math.max(bodySize * lowerWickRatio, open * 0.0001);
+    // Scale wicks by volatility
+    const volatilityMultiplier = config.volatility * 50;
+    upperWickRatio *= volatilityMultiplier;
+    lowerWickRatio *= volatilityMultiplier;
+    
+    // Calculate actual wick sizes
+    const avgPrice = (open + close) / 2;
+    const upperWick = avgPrice * (upperWickRatio / 100);
+    const lowerWick = avgPrice * (lowerWickRatio / 100);
     
     const high = Math.max(open, close) + upperWick;
     const low = Math.max(Math.min(open, close) - lowerWick, 0.01);
@@ -439,49 +625,52 @@ const PriceChart: React.FC<PriceChartProps> = ({
     chartRef.current = chart;
     seriesRef.current = candlestickSeries;
 
-    // Generate initial realistic data
+    // Generate initial data with random starting pattern
     const intervalSec = getIntervalSeconds(interval);
     const now = Math.floor(Date.now() / 1000);
     const candleCount = 100;
     const startTime = now - (intervalSec * candleCount);
     
-    let currentPrice = propCurrentPrice || 125;
+    // Random starting conditions
+    const startingPatterns: MarketPattern[] = ['ranging', 'steady_uptrend', 'steady_downtrend', 'accumulation'];
+    const startPattern = startingPatterns[Math.floor(Math.random() * startingPatterns.length)];
+    
+    let currentPrice = propCurrentPrice || (40000 + Math.random() * 20000);
     const initialData = [];
     const priceHistory: number[] = [];
     
     // Initialize market state
     marketStateRef.current = {
-      supportLevels: [currentPrice * 0.98, currentPrice * 0.96],
-      resistanceLevels: [currentPrice * 1.02, currentPrice * 1.04],
-      currentTrend: 'sideways',
-      trendStrength: 0,
-      consolidationRange: null,
-      consolidationDuration: 0,
-      volatilityRegime: 'normal',
-      lastSignificantMove: 0,
-      priceMemory: []
+      pattern: startPattern,
+      patternStrength: 0.7,
+      patternProgress: 0,
+      baseVolatility: 0.02,
+      trendBias: 0,
+      momentum: 0,
+      volumeProfile: 'normal',
+      supportLevels: [currentPrice * 0.95, currentPrice * 0.90],
+      resistanceLevels: [currentPrice * 1.05, currentPrice * 1.10],
+      priceMemory: [],
+      lastPatternChange: Date.now(),
+      accumulatedChange: 0
     };
+    
+    setCurrentPattern(startPattern);
     
     // Generate historical data
     for (let i = 0; i < candleCount; i++) {
       const time = startTime + (i * intervalSec);
       
-      // Update market analysis every 5 candles
-      if (i % 5 === 0 && priceHistory.length > 10) {
-        analyzeMarketState(priceHistory);
+      // Update support/resistance periodically
+      if (i % 10 === 0 && priceHistory.length > 20) {
         updateSupportResistance(priceHistory);
       }
       
       const open = currentPrice;
-      const newPrice = generateRealisticPrice(currentPrice);
+      const newPrice = generateCryptoPrice(currentPrice);
       const close = newPrice;
       
-      // Generate realistic wicks based on market state
-      const volatilityMultiplier = 
-        marketStateRef.current.volatilityRegime === 'high' ? 1.5 :
-        marketStateRef.current.volatilityRegime === 'low' ? 0.5 : 1;
-      
-      const { high, low } = generateRealisticCandle(open, close, volatilityMultiplier);
+      const { high, low } = generateCryptoCandle(open, close, marketStateRef.current.pattern);
       
       initialData.push({
         time: time as Time,
@@ -524,9 +713,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [analyzeMarketState, updateSupportResistance, generateRealisticPrice, generateRealisticCandle, interval, propCurrentPrice]);
+  }, [generateCryptoPrice, generateCryptoCandle, updateSupportResistance, interval, propCurrentPrice]);
 
-  // Update prices with realistic movement
+  // Update prices in real-time
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current) return;
     
@@ -537,23 +726,18 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const lastCandle = dataRef.current[dataRef.current.length - 1];
     if (!lastCandle) return;
     
-    // Update market analysis periodically
-    if (dataRef.current.length % 5 === 0) {
-      const prices = dataRef.current.slice(-50).map(c => c.close);
-      analyzeMarketState(prices);
+    // Update support/resistance periodically
+    if (dataRef.current.length % 10 === 0) {
+      const prices = dataRef.current.slice(-100).map(c => c.close);
       updateSupportResistance(prices);
     }
     
     // Generate new price
-    const newPrice = propCurrentPrice || generateRealisticPrice(displayPrice);
+    const newPrice = propCurrentPrice || generateCryptoPrice(displayPrice);
     
     if (currentCandleTime > lastCandle.time) {
       // Create new candle
-      const volatilityMultiplier = 
-        marketStateRef.current.volatilityRegime === 'high' ? 1.5 :
-        marketStateRef.current.volatilityRegime === 'low' ? 0.5 : 1;
-      
-      const { high, low } = generateRealisticCandle(lastCandle.close, newPrice, volatilityMultiplier);
+      const { high, low } = generateCryptoCandle(lastCandle.close, newPrice, marketStateRef.current.pattern);
       
       const newCandle = {
         time: currentCandleTime as Time,
@@ -565,19 +749,16 @@ const PriceChart: React.FC<PriceChartProps> = ({
       
       dataRef.current.push(newCandle);
       
-      if (dataRef.current.length > 150) {
-        dataRef.current = dataRef.current.slice(-100);
+      // Keep reasonable number of candles
+      if (dataRef.current.length > 200) {
+        dataRef.current = dataRef.current.slice(-150);
       }
       
       seriesRef.current.setData(dataRef.current);
       chartRef.current.timeScale().scrollToRealTime();
     } else {
       // Update current candle
-      const volatilityMultiplier = 
-        marketStateRef.current.volatilityRegime === 'high' ? 1.2 :
-        marketStateRef.current.volatilityRegime === 'low' ? 0.8 : 1;
-      
-      const { high, low } = generateRealisticCandle(lastCandle.open, newPrice, volatilityMultiplier);
+      const { high, low } = generateCryptoCandle(lastCandle.open, newPrice, marketStateRef.current.pattern);
       
       const updatedCandle = {
         ...lastCandle,
@@ -599,7 +780,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       setPriceChangePercent((change / firstPrice) * 100);
     }
     
-  }, [propCurrentPrice, interval, displayPrice, generateRealisticPrice, generateRealisticCandle, analyzeMarketState, updateSupportResistance]);
+  }, [propCurrentPrice, interval, displayPrice, generateCryptoPrice, generateCryptoCandle, updateSupportResistance]);
 
   return (
     <div className="flex flex-col h-full bg-gray-900 rounded-lg overflow-hidden">
@@ -634,26 +815,18 @@ const PriceChart: React.FC<PriceChartProps> = ({
             </button>
           )}
           
-          {/* Market state indicators */}
+          {/* Pattern indicator */}
           <div className="flex items-center space-x-2 text-xs">
-            <span className="text-gray-400">Trend:</span>
-            <span className={`font-medium ${
-              marketStateRef.current.currentTrend === 'up' ? 'text-green-400' :
-              marketStateRef.current.currentTrend === 'down' ? 'text-red-400' :
-              'text-yellow-400'
+            <span className="text-gray-400">Pattern:</span>
+            <span className={`font-medium px-2 py-0.5 rounded ${
+              currentPattern.includes('rise') || currentPattern.includes('uptrend') ? 'bg-green-600 text-white' :
+              currentPattern.includes('down') || currentPattern.includes('capitulation') ? 'bg-red-600 text-white' :
+              currentPattern === 'pump_and_dump' ? 'bg-orange-600 text-white animate-pulse' :
+              currentPattern === 'accumulation' ? 'bg-blue-600 text-white' :
+              currentPattern === 'distribution' ? 'bg-yellow-600 text-white' :
+              'bg-gray-600 text-white'
             }`}>
-              {marketStateRef.current.currentTrend.toUpperCase()}
-            </span>
-          </div>
-          
-          <div className="flex items-center space-x-2 text-xs">
-            <span className="text-gray-400">Vol:</span>
-            <span className={`font-medium ${
-              marketStateRef.current.volatilityRegime === 'high' ? 'text-red-400' :
-              marketStateRef.current.volatilityRegime === 'low' ? 'text-green-400' :
-              'text-yellow-400'
-            }`}>
-              {marketStateRef.current.volatilityRegime.toUpperCase()}
+              {patternConfigs[currentPattern].description}
             </span>
           </div>
           
@@ -680,21 +853,22 @@ const PriceChart: React.FC<PriceChartProps> = ({
         {/* Market info overlay */}
         <div className="absolute top-4 right-4 bg-gray-800 bg-opacity-90 p-2 rounded text-xs text-white">
           <div className="text-gray-300 mb-1">Market Structure</div>
-          {marketStateRef.current.consolidationRange && (
-            <div className="text-yellow-300">
-              Consolidating: ${marketStateRef.current.consolidationRange.min.toFixed(2)} - ${marketStateRef.current.consolidationRange.max.toFixed(2)}
-            </div>
-          )}
+          <div className="text-gray-400">
+            Progress: {(marketStateRef.current.patternProgress * 100).toFixed(0)}%
+          </div>
           {marketStateRef.current.supportLevels.length > 0 && (
             <div className="text-green-300">
-              Support: ${marketStateRef.current.supportLevels[marketStateRef.current.supportLevels.length - 1].toFixed(2)}
+              Support: ${marketStateRef.current.supportLevels[marketStateRef.current.supportLevels.length - 1].toFixed(0)}
             </div>
           )}
           {marketStateRef.current.resistanceLevels.length > 0 && (
             <div className="text-red-300">
-              Resistance: ${marketStateRef.current.resistanceLevels[0].toFixed(2)}
+              Resistance: ${marketStateRef.current.resistanceLevels[0].toFixed(0)}
             </div>
           )}
+          <div className="text-blue-300 mt-1">
+            Momentum: {(marketStateRef.current.momentum * 100).toFixed(1)}%
+          </div>
         </div>
         
         {/* Scenario info overlay */}
