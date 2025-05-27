@@ -136,16 +136,18 @@ const PriceChart: React.FC<PriceChartProps> = ({
       rightPriceScale: {
         borderVisible: false,
         scaleMargins: {
-          top: 0.3,    // 30% margin top
-          bottom: 0.25, // 25% margin bottom
+          top: 0.1,    // Reduced from 0.3 to 0.1 for tighter view
+          bottom: 0.1, // Reduced from 0.25 to 0.1
         },
+        autoScale: true, // Enable auto-scaling
       },
       timeScale: {
         borderVisible: false,
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 5,
-        barSpacing: 6,
+        rightOffset: 12, // Increased from 5 to 12 for more space on the right
+        barSpacing: 12,  // Increased from 6 to 12 for wider candles
+        minBarSpacing: 8, // Minimum bar spacing
       },
       crosshair: {
         mode: 0, // Normal crosshair
@@ -174,50 +176,69 @@ const PriceChart: React.FC<PriceChartProps> = ({
     chartRef.current = chart;
     seriesRef.current = candlestickSeries;
 
-    // Generate enhanced initial data
+    // Generate enhanced initial data with fewer, more realistic candles
     const intervalSec = getIntervalSeconds(interval);
     const now = Math.floor(Date.now() / 1000);
-    const startTime = now - (intervalSec * 300); // 300 candles back
+    const candleCount = 96; // Reduced from 300 to 96 for better visibility
+    const startTime = now - (intervalSec * candleCount);
     
     let currentPrice = propCurrentPrice || 125;
     scenarioBasePrice.current = currentPrice;
     const initialData = [];
     
-    // Create 300 candles of more realistic history
-    for (let i = 0; i < 300; i++) {
+    // Create more realistic price movements with better visual character
+    for (let i = 0; i < candleCount; i++) {
       const time = startTime + (i * intervalSec);
       
-      // More sophisticated price movement
+      // Multi-layered price movement for more realistic patterns
       let priceChange = 0;
       
-      // Add some trending periods
-      if (i % 50 < 20) {
-        // Trending period
-        const trendDirection = Math.sin(i / 50) > 0 ? 1 : -1;
-        priceChange = trendDirection * 0.001 * currentPrice * (0.5 + Math.random() * 0.5);
-      } else if (i % 50 < 40) {
-        // Consolidation period
-        priceChange = (Math.random() - 0.5) * 0.0005 * currentPrice;
+      // Major trend (sine wave for overall direction)
+      const majorTrend = Math.sin(i / 20) * 0.002 * currentPrice;
+      
+      // Minor waves (smaller fluctuations)
+      const minorWave = Math.sin(i / 5) * 0.001 * currentPrice;
+      
+      // Micro volatility
+      const microVolatility = (Math.random() - 0.5) * 0.0008 * currentPrice;
+      
+      // Occasional larger moves (5% chance)
+      if (Math.random() < 0.05) {
+        const spike = (Math.random() - 0.5) * 0.003 * currentPrice;
+        priceChange = majorTrend + minorWave + spike;
       } else {
-        // Breakout period
-        const breakoutDirection = Math.random() > 0.5 ? 1 : -1;
-        priceChange = breakoutDirection * 0.002 * currentPrice * Math.random();
+        priceChange = majorTrend + minorWave + microVolatility;
+      }
+      
+      // Apply momentum from previous candles
+      if (i > 0 && initialData.length > 0) {
+        const prevCandle = initialData[initialData.length - 1];
+        const momentum = (prevCandle.close - prevCandle.open) * 0.3;
+        priceChange += momentum;
       }
       
       const open = currentPrice;
-      const close = Math.max(currentPrice + priceChange, 0.01); // Prevent negative prices
+      const close = Math.max(currentPrice + priceChange, 0.01);
       
-      // Enhanced wick generation
-      const range = Math.abs(close - open);
-      const wickSize = range * (0.2 + Math.random() * 0.8);
-      const high = Math.max(open, close) + wickSize * Math.random();
-      const low = Math.min(open, close) - wickSize * Math.random();
+      // More realistic wick generation based on volatility
+      const volatility = Math.abs(priceChange) / currentPrice;
+      const wickMultiplier = 1 + (volatility * 10); // Higher volatility = larger wicks
+      
+      const bodySize = Math.abs(close - open);
+      const upperWick = bodySize * wickMultiplier * (0.1 + Math.random() * 0.4);
+      const lowerWick = bodySize * wickMultiplier * (0.1 + Math.random() * 0.4);
+      
+      // Ensure wicks are visible even for doji candles
+      const minWick = currentPrice * 0.0001;
+      
+      const high = Math.max(open, close) + Math.max(upperWick, minWick);
+      const low = Math.min(open, close) - Math.max(lowerWick, minWick);
       
       initialData.push({
         time: time as Time,
         open: parseFloat(open.toFixed(2)),
         high: parseFloat(high.toFixed(2)),
-        low: parseFloat(Math.max(low, 0.01).toFixed(2)), // Prevent negative prices
+        low: parseFloat(Math.max(low, 0.01).toFixed(2)),
         close: parseFloat(close.toFixed(2))
       });
       
@@ -303,9 +324,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
       // Add to our data
       dataRef.current.push(newCandle);
       
-      // Keep only last 400 candles
-      if (dataRef.current.length > 400) {
-        dataRef.current = dataRef.current.slice(-350);
+      // Keep only last 120 candles for better performance and visibility
+      if (dataRef.current.length > 120) {
+        dataRef.current = dataRef.current.slice(-100);
       }
       
       // Update the whole dataset
@@ -314,12 +335,15 @@ const PriceChart: React.FC<PriceChartProps> = ({
       // Auto scroll to the right
       chartRef.current.timeScale().scrollToRealTime();
     } else {
-      // Update current candle
-      const wickSize = Math.abs(newPrice - lastCandle.open) * 0.05;
+      // Update current candle with more dynamic price action
+      const volatilityFactor = scenarioData ? 
+        (scenarioData.phase.priceAction.volatility || 1) : 1;
+      
+      const wickSize = Math.abs(newPrice - lastCandle.open) * 0.15 * volatilityFactor;
       const updatedCandle = {
         ...lastCandle,
-        high: Math.max(lastCandle.high, newPrice + wickSize * Math.random()),
-        low: Math.max(Math.min(lastCandle.low, newPrice - wickSize * Math.random()), 0.01),
+        high: parseFloat(Math.max(lastCandle.high, newPrice + wickSize * Math.random()).toFixed(2)),
+        low: parseFloat(Math.max(Math.min(lastCandle.low, newPrice - wickSize * Math.random()), 0.01).toFixed(2)),
         close: parseFloat(newPrice.toFixed(2))
       };
       
