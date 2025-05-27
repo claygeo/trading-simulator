@@ -5,7 +5,7 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 import path from 'path';
 import http from 'http';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import apiRoutes from './api/routes';
 import { simulationManager } from './services/simulationManager';
 
@@ -47,31 +47,136 @@ const server = http.createServer(app);
 // Create WebSocket server
 const wss = new WebSocketServer({ server });
 
-wss.on('connection', (ws) => {
+// Set up WebSocket handlers
+wss.on('connection', (ws: WebSocket, req) => {
   console.log('Client connected to WebSocket');
   
   // Register the client with the simulation manager
   simulationManager.registerClient(ws);
   
-  ws.on('message', (message) => {
+  // Send welcome message
+  ws.send(JSON.stringify({
+    type: 'connection',
+    status: 'connected',
+    timestamp: Date.now()
+  }));
+  
+  ws.on('message', (data: Buffer) => {
     try {
-      const data = JSON.parse(message.toString());
-      console.log('Received message:', data);
+      const message = JSON.parse(data.toString());
+      console.log('Received message:', message.type);
       
-      // Handle client messages if needed
+      switch (message.type) {
+        case 'subscribe':
+          // Handle subscription to a specific simulation
+          console.log(`Client subscribed to simulation: ${message.simulationId}`);
+          // Send current simulation state if it exists
+          const simulation = simulationManager.getSimulation(message.simulationId);
+          if (simulation) {
+            ws.send(JSON.stringify({
+              type: 'simulation_state',
+              simulationId: message.simulationId,
+              data: {
+                isRunning: simulation.isRunning,
+                isPaused: simulation.isPaused,
+                currentPrice: simulation.currentPrice,
+                speed: simulation.parameters.timeCompressionFactor
+              },
+              timestamp: Date.now()
+            }));
+          }
+          break;
+          
+        case 'setPauseState':
+          // Handle pause state updates from client
+          console.log(`Client set pause state for ${message.simulationId}: ${message.isPaused}`);
+          // Note: Actual pause/resume is handled via REST API endpoints
+          // This message is mainly for logging and coordination
+          break;
+          
+        case 'ping':
+          // Respond to ping with pong
+          ws.send(JSON.stringify({
+            type: 'pong',
+            timestamp: Date.now()
+          }));
+          break;
+          
+        default:
+          console.log('Unknown message type:', message.type);
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: 'Unknown message type',
+            timestamp: Date.now()
+          }));
+      }
     } catch (error) {
-      console.error('Invalid message format:', error);
+      console.error('Error parsing WebSocket message:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Invalid message format',
+        timestamp: Date.now()
+      }));
     }
   });
   
   ws.on('close', () => {
-    console.log('Client disconnected');
+    console.log('Client disconnected from WebSocket');
+    // Cleanup is handled automatically by simulationManager.registerClient
+  });
+  
+  ws.on('error', (error) => {
+    console.error('WebSocket error:', error);
   });
 });
+
+// Helper function to broadcast to all connected clients
+export function broadcastToAll(message: any) {
+  const messageStr = JSON.stringify(message);
+  
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(messageStr);
+    }
+  });
+}
 
 // Start server
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`WebSocket server running on ws://localhost:${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+});
+
+// Handle graceful shutdown
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  
+  // Close WebSocket server
+  wss.close(() => {
+    console.log('WebSocket server closed');
+  });
+  
+  // Close HTTP server
+  server.close(() => {
+    console.log('HTTP server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received, shutting down gracefully');
+  
+  // Close WebSocket server
+  wss.close(() => {
+    console.log('WebSocket server closed');
+  });
+  
+  // Close HTTP server
+  server.close(() => {
+    console.log('HTTP server closed');
+    process.exit(0);
+  });
 });
 
 export default app;
