@@ -1,4 +1,4 @@
-// Ultra-optimized Dashboard.tsx - Sub-5ms trade execution
+// Ultra-optimized Dashboard.tsx with Market Scenario Engine Integration
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -10,6 +10,7 @@ import ParticipantsOverview from './ParticipantsOverview';
 import DynamicMusicPlayer from './DynamicMusicPlayer';
 import PerformanceMonitor from './PerformanceMonitor';
 import TransactionProcessor from './TransactionProcessor';
+import MarketScenarioEngine, { MarketScenario } from './MarketScenarioEngine';
 
 const Dashboard: React.FC = () => {
   const [simulation, setSimulation] = useState<Simulation | null>(null);
@@ -32,6 +33,11 @@ const Dashboard: React.FC = () => {
   const [tradeExecutionTimes, setTradeExecutionTimes] = useState<number[]>([]);
   const [averageExecutionTime, setAverageExecutionTime] = useState<number>(0);
   const [isHighFrequencyMode, setIsHighFrequencyMode] = useState<boolean>(false);
+  
+  // Market Scenario Engine state
+  const [scenarioEngineActive, setScenarioEngineActive] = useState<boolean>(true);
+  const [currentScenario, setCurrentScenario] = useState<MarketScenario | null>(null);
+  const [scenarioPhaseData, setScenarioPhaseData] = useState<any>(null);
   
   // Performance timing refs
   const tradeStartTimeRef = useRef<number>(0);
@@ -111,6 +117,27 @@ const Dashboard: React.FC = () => {
     });
   }, []);
 
+  // Market Scenario Engine callbacks
+  const handleScenarioStart = useCallback((scenario: MarketScenario) => {
+    setCurrentScenario(scenario);
+    addDebugLog(`Market scenario started: ${scenario.name}`);
+  }, [addDebugLog]);
+
+  const handleScenarioEnd = useCallback(() => {
+    setCurrentScenario(null);
+    setScenarioPhaseData(null);
+    addDebugLog('Market scenario ended');
+  }, [addDebugLog]);
+
+  const handleScenarioUpdate = useCallback((phase: any, progress: number) => {
+    setScenarioPhaseData({ phase, progress });
+    
+    // Update market condition based on scenario
+    if (phase.marketCondition !== marketCondition) {
+      setMarketCondition(phase.marketCondition);
+    }
+  }, [marketCondition]);
+
   // Create simulation with performance optimizations
   useEffect(() => {
     const initSimulation = async () => {
@@ -157,30 +184,55 @@ const Dashboard: React.FC = () => {
     initSimulation();
   }, [addDebugLog]);
 
-  // Ultra-optimized market condition detection
+  // Enhanced market condition detection with scenario integration
   const determineMarketCondition = useCallback((simulation: Simulation): 'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash' => {
+    // If scenario is active, prioritize scenario-driven market condition
+    if (currentScenario && scenarioPhaseData) {
+      return scenarioPhaseData.phase.marketCondition;
+    }
+
     if (!simulation?.priceHistory?.length) return 'calm';
     
-    // Optimized calculation using pre-computed values
-    const recent = simulation.priceHistory.slice(-5); // Reduced from 10 for speed
+    // Enhanced analysis for more realistic detection
+    const recent = simulation.priceHistory.slice(-10); // Use more data points when not in scenario
     const firstPrice = recent[0].close;
     const lastPrice = simulation.currentPrice;
     const percentChange = ((lastPrice - firstPrice) / firstPrice) * 100;
     
-    // Simplified volatility calculation
+    // Calculate volatility with better algorithm
     let volatility = 0;
+    let volumeWeightedPrice = 0;
+    let totalVolume = 0;
+    
     for (let i = 1; i < recent.length; i++) {
       const change = Math.abs((recent[i].close - recent[i-1].close) / recent[i-1].close);
       volatility += change;
+      
+      // Add volume consideration if available
+      const volume = 1; // Default volume, could be enhanced with real volume data
+      volumeWeightedPrice += recent[i].close * volume;
+      totalVolume += volume;
     }
-    volatility = (volatility / (recent.length - 1)) * 100;
     
-    // Fast condition detection
-    if (volatility > 3) return percentChange < -5 ? 'crash' : 'volatile';
-    if (percentChange > 3) return 'bullish';
-    if (percentChange < -2) return 'bearish';
+    volatility = (volatility / (recent.length - 1)) * 100;
+    const vwap = totalVolume > 0 ? volumeWeightedPrice / totalVolume : lastPrice;
+    
+    // Enhanced condition detection
+    if (volatility > 4) {
+      if (percentChange < -8) return 'crash';
+      if (percentChange > 8) return 'volatile';
+      return 'volatile';
+    }
+    
+    if (percentChange > 5) return 'bullish';
+    if (percentChange < -3) return 'bearish';
+    
+    // Check for building momentum
+    const recentChange = ((recent[recent.length-1].close - recent[recent.length-3].close) / recent[recent.length-3].close) * 100;
+    if (recentChange > 2 && percentChange > 0) return 'building';
+    
     return 'calm';
-  }, []);
+  }, [currentScenario, scenarioPhaseData]);
 
   // High-performance timer
   useEffect(() => {
@@ -420,6 +472,10 @@ const Dashboard: React.FC = () => {
           averageLatency: 0
         };
         
+        // Reset scenario state
+        setCurrentScenario(null);
+        setScenarioPhaseData(null);
+        
         const resetTime = performance.now() - resetStartTime;
         addDebugLog(`Full reset completed in ${resetTime.toFixed(2)}ms`);
       }
@@ -450,7 +506,7 @@ const Dashboard: React.FC = () => {
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          <span className="mt-4 block text-xl">Initializing high-performance simulation...</span>
+          <span className="mt-4 block text-xl">Initializing realistic market simulation...</span>
         </div>
       </div>
     );
@@ -492,7 +548,7 @@ const Dashboard: React.FC = () => {
       <div className="flex flex-col mb-2 bg-surface rounded-md shadow-sm">
         <div className="flex justify-between items-center h-10 p-2">
           <div className="flex items-center">
-            <h1 className="text-base font-bold mr-2">Ultra-Low Latency Trading Sim</h1>
+            <h1 className="text-base font-bold mr-2">Realistic Market Simulation</h1>
             <div className="ml-2 text-xs bg-panel px-2 py-1 rounded">
               <span className="text-text-secondary mr-1">Price:</span>
               <span className="text-text-primary font-medium">${safeData.currentPrice.toFixed(2)}</span>
@@ -504,6 +560,13 @@ const Dashboard: React.FC = () => {
             {isHighFrequencyMode && (
               <div className="ml-2 text-xs bg-green-600 text-white px-2 py-1 rounded animate-pulse">
                 HFT MODE
+              </div>
+            )}
+            
+            {/* Market scenario indicator */}
+            {currentScenario && (
+              <div className="ml-2 text-xs bg-purple-600 text-white px-2 py-1 rounded animate-pulse">
+                📈 {currentScenario.name}
               </div>
             )}
           </div>
@@ -608,6 +671,21 @@ const Dashboard: React.FC = () => {
                 🚀 Ludicrous
               </button>
             </div>
+            
+            {/* Market condition indicator */}
+            <div className="ml-4 flex items-center space-x-2">
+              <span className="text-xs text-text-secondary">Market:</span>
+              <span className={`text-xs px-2 py-0.5 rounded font-medium ${
+                marketCondition === 'bullish' ? 'bg-green-600 text-white' :
+                marketCondition === 'bearish' ? 'bg-red-600 text-white' :
+                marketCondition === 'volatile' ? 'bg-orange-600 text-white' :
+                marketCondition === 'crash' ? 'bg-red-800 text-white animate-pulse' :
+                marketCondition === 'building' ? 'bg-blue-600 text-white' :
+                'bg-gray-600 text-white'
+              }`}>
+                {marketCondition.toUpperCase()}
+              </span>
+            </div>
           </div>
           
           <div className="flex space-x-2">
@@ -674,6 +752,7 @@ const Dashboard: React.FC = () => {
                 priceHistory={safeData.priceHistory} 
                 currentPrice={safeData.currentPrice} 
                 trades={safeData.recentTrades}
+                scenarioData={scenarioPhaseData}
               />
             </ErrorBoundary>
           </div>
@@ -688,6 +767,7 @@ const Dashboard: React.FC = () => {
               traders={safeData.traderRankings} 
               activePositions={safeData.activePositions}
               currentPrice={safeData.currentPrice}
+              scenarioModifiers={currentScenario?.traderBehaviorModifiers}
             />
           </ErrorBoundary>
         </div>
@@ -707,16 +787,28 @@ const Dashboard: React.FC = () => {
         onToggle={() => setShowTransactionProcessor(!showTransactionProcessor)}
         simulationRunning={simulation?.isRunning && !simulation?.isPaused}
       />
+
+      {/* Market Scenario Engine */}
+      <MarketScenarioEngine
+        isActive={scenarioEngineActive}
+        onScenarioStart={handleScenarioStart}
+        onScenarioEnd={handleScenarioEnd}
+        onScenarioUpdate={handleScenarioUpdate}
+        simulationRunning={simulation?.isRunning && !simulation?.isPaused}
+      />
       
       {/* Debug log with performance timing */}
       {showDebugInfo && process.env.NODE_ENV !== 'production' && (
         <div className="absolute bottom-2 right-2 z-20 bg-black bg-opacity-90 text-white p-3 rounded text-xs max-w-md max-h-40 overflow-auto">
           <div className="flex justify-between items-center mb-2">
-            <span className="font-bold">Ultra-Low Latency Debug</span>
+            <span className="font-bold">Realistic Market Debug</span>
             <div className="flex space-x-2 text-[10px]">
               <span className="text-green-400">Fast: {performanceStatsRef.current.fastTrades}</span>
               <span className="text-yellow-400">Med: {performanceStatsRef.current.mediumTrades}</span>
               <span className="text-red-400">Slow: {performanceStatsRef.current.slowTrades}</span>
+              {currentScenario && (
+                <span className="text-purple-400">Scenario: {currentScenario.name}</span>
+              )}
             </div>
           </div>
           <div className="font-mono whitespace-pre text-[10px]">
