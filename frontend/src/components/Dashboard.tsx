@@ -33,7 +33,7 @@ const Dashboard: React.FC = () => {
   const [elapsedTime, setElapsedTime] = useState<string>("00:00:00");
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
   const [showDebugInfo, setShowDebugInfo] = useState<boolean>(false);
-  const [chartInterval, setChartInterval] = useState<'1m' | '5m' | '15m' | '1h' | '4h' | '1d'>('1m');
+  const [chartInterval, setChartInterval] = useState<'1m' | '5m' | '15m' | '1h' | '4h' | '1d'>('1h');
   
   // Performance monitoring state
   const [showPerformanceMonitor, setShowPerformanceMonitor] = useState<boolean>(false);
@@ -314,6 +314,9 @@ const Dashboard: React.FC = () => {
   // Ultra-optimized WebSocket message processing
   useEffect(() => {
     if (!lastMessage || !simulation) return;
+    
+    // Don't process price updates when paused
+    if (simulation.isPaused && lastMessage.event?.type === 'price_update') return;
     
     const messageStartTime = performance.now();
     const { simulationId, event } = lastMessage;
