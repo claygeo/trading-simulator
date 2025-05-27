@@ -31,7 +31,7 @@ interface PriceChartProps {
 }
 
 const PriceChart: React.FC<PriceChartProps> = ({ 
-  symbol = 'BTC/USDT',
+  symbol = 'XBT/USD',
   interval = '1h',
   priceHistory = [],
   currentPrice: propCurrentPrice,
@@ -42,6 +42,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<any>(null);
   const candlesRef = useRef<any[]>([]);
+  const isInitializedRef = useRef<boolean>(false);
   
   const [isLoading, setIsLoading] = useState(true);
   const [displayPrice, setDisplayPrice] = useState<number>(50000);
@@ -124,9 +125,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return newPrice;
   }, [scenarioActive, scenarioData]);
 
-  // Initialize chart
+  // Initialize chart only once
   useEffect(() => {
-    if (!chartContainerRef.current) return;
+    if (!chartContainerRef.current || isInitializedRef.current) return;
+    
+    isInitializedRef.current = true;
 
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
@@ -247,9 +250,14 @@ const PriceChart: React.FC<PriceChartProps> = ({
     
     return () => {
       window.removeEventListener('resize', handleResize);
-      chart.remove();
+      if (chart && chartRef.current) {
+        chart.remove();
+        chartRef.current = null;
+        seriesRef.current = null;
+      }
+      isInitializedRef.current = false;
     };
-  }, [generateNextPrice, getIntervalMs, interval, propCurrentPrice]);
+  }, []); // Empty dependencies - only run once
 
   // Real-time price updates
   useEffect(() => {
@@ -259,6 +267,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     
     // Track last candle time to detect new candle creation
     let lastCandleTime = candlesRef.current[candlesRef.current.length - 1]?.time || 0;
+    let lastPropPrice = propCurrentPrice || 0;
 
     // Price update loop - smooth updates
     const priceUpdateInterval = setInterval(() => {
@@ -271,17 +280,25 @@ const PriceChart: React.FC<PriceChartProps> = ({
       
       if (!currentCandle) return;
       
-      // Use prop price if provided, otherwise generate
-      const newPrice = propCurrentPrice || generateNextPrice(priceStateRef.current.currentPrice);
+      // Generate price based on internal state, not prop
+      const newPrice = generateNextPrice(priceStateRef.current.currentPrice);
+      
+      // Only use prop price if it's significantly different (WebSocket update)
+      if (propCurrentPrice && Math.abs(propCurrentPrice - lastPropPrice) > 0.01) {
+        // Blend the WebSocket price with our generated price for smoothness
+        const blendedPrice = newPrice * 0.7 + propCurrentPrice * 0.3;
+        priceStateRef.current.currentPrice = blendedPrice;
+        lastPropPrice = propCurrentPrice;
+      }
       
       if (currentCandleTime > lastCandleTime) {
         // Time for a new candle
         const newCandle = {
           time: currentCandleTime as Time,
           open: parseFloat(currentCandle.close.toFixed(2)),
-          high: parseFloat(newPrice.toFixed(2)),
-          low: parseFloat(newPrice.toFixed(2)),
-          close: parseFloat(newPrice.toFixed(2))
+          high: parseFloat(priceStateRef.current.currentPrice.toFixed(2)),
+          low: parseFloat(priceStateRef.current.currentPrice.toFixed(2)),
+          close: parseFloat(priceStateRef.current.currentPrice.toFixed(2))
         };
         
         candlesRef.current.push(newCandle);
@@ -303,9 +320,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
         // Update only the current candle - no setData!
         const updatedCandle = {
           ...currentCandle,
-          close: parseFloat(newPrice.toFixed(2)),
-          high: parseFloat(Math.max(currentCandle.high, newPrice).toFixed(2)),
-          low: parseFloat(Math.min(currentCandle.low, newPrice).toFixed(2))
+          close: parseFloat(priceStateRef.current.currentPrice.toFixed(2)),
+          high: parseFloat(Math.max(currentCandle.high, priceStateRef.current.currentPrice).toFixed(2)),
+          low: parseFloat(Math.min(currentCandle.low, priceStateRef.current.currentPrice).toFixed(2))
         };
         
         // Update our reference
@@ -316,18 +333,18 @@ const PriceChart: React.FC<PriceChartProps> = ({
       }
       
       // Update display values smoothly
-      setDisplayPrice(newPrice);
+      setDisplayPrice(priceStateRef.current.currentPrice);
       
       const firstCandle = candlesRef.current[0];
       if (firstCandle) {
-        const change = newPrice - firstCandle.open;
+        const change = priceStateRef.current.currentPrice - firstCandle.open;
         setPriceChange(change);
         setPriceChangePercent((change / firstCandle.open) * 100);
       }
     }, 1000); // Update every second for smooth movement
 
     return () => clearInterval(priceUpdateInterval);
-  }, [generateNextPrice, getIntervalMs, interval, isLoading, propCurrentPrice]);
+  }, [generateNextPrice, getIntervalMs, interval, isLoading]); // Removed propCurrentPrice from dependencies
 
   return (
     <div className="flex flex-col h-full bg-gray-900 rounded-lg overflow-hidden">
