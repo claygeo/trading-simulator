@@ -44,17 +44,17 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const candlesRef = useRef<any[]>([]);
   
   const [isLoading, setIsLoading] = useState(true);
-  const [displayPrice, setDisplayPrice] = useState<number>(50000);
+  const [displayPrice, setDisplayPrice] = useState<number>(20000 + Math.random() * 60000);
   const [priceChange, setPriceChange] = useState<number>(0);
   const [priceChangePercent, setPriceChangePercent] = useState<number>(0);
   const [scenarioActive, setScenarioActive] = useState<boolean>(true);
   
   // Price interpolation state
   const priceStateRef = useRef({
-    currentPrice: 50000,
-    targetPrice: 50000,
+    currentPrice: 20000 + Math.random() * 60000,
+    targetPrice: 20000 + Math.random() * 60000,
     lastUpdateTime: Date.now(),
-    interpolationStartPrice: 50000,
+    interpolationStartPrice: 20000 + Math.random() * 60000,
     interpolationStartTime: Date.now()
   });
 
@@ -143,8 +143,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const now = Date.now();
     const candleCount = 100;
     
-    // Initialize with prop price or default
-    let currentPrice = propCurrentPrice || 50000;
+    // Generate random starting price between $20,000 and $80,000
+    const randomStartPrice = 20000 + Math.random() * 60000;
+    let currentPrice = propCurrentPrice || randomStartPrice;
+    
     priceStateRef.current = {
       currentPrice,
       targetPrice: currentPrice,
@@ -154,19 +156,42 @@ const PriceChart: React.FC<PriceChartProps> = ({
     };
     setDisplayPrice(currentPrice);
     
-    // Generate historical candles with realistic movement
+    // Generate historical candles with random trending patterns
     const candles = [];
+    
+    // Random market trend for this simulation
+    const trendBias = (Math.random() - 0.5) * 0.02; // -1% to +1% per candle
+    const baseVolatility = 0.002 + Math.random() * 0.003; // 0.2% to 0.5%
+    let momentum = 0;
+    
     for (let i = 0; i < candleCount; i++) {
       const time = Math.floor((now - (candleCount - i) * intervalMs) / 1000);
       
-      // Generate OHLC for this candle with small random movements
-      const open = currentPrice;
+      // Add momentum and trend to create more realistic patterns
+      momentum = momentum * 0.9 + (Math.random() - 0.5 + trendBias) * 0.1;
       
-      // Random price movement within candle (0.1% to 0.5% range)
-      const candleVolatility = 0.001 + Math.random() * 0.004;
-      const high = open * (1 + Math.random() * candleVolatility);
-      const low = open * (1 - Math.random() * candleVolatility);
-      const close = low + Math.random() * (high - low);
+      // Generate OHLC with trend influence
+      const open = currentPrice;
+      const trendEffect = currentPrice * momentum * baseVolatility;
+      
+      // Create realistic candle with trend
+      const candleVolatility = baseVolatility * (0.5 + Math.random());
+      const direction = Math.random() > 0.5 ? 1 : -1;
+      
+      // Calculate high/low with trend bias
+      let high, low, close;
+      
+      if (direction > 0) {
+        // Bullish candle
+        high = open + Math.abs(trendEffect) + (currentPrice * candleVolatility * Math.random());
+        low = open - (currentPrice * candleVolatility * 0.3 * Math.random());
+        close = low + Math.random() * (high - low) * 0.7 + (high - low) * 0.3; // Bias toward high
+      } else {
+        // Bearish candle
+        high = open + (currentPrice * candleVolatility * 0.3 * Math.random());
+        low = open - Math.abs(trendEffect) - (currentPrice * candleVolatility * Math.random());
+        close = low + Math.random() * (high - low) * 0.3; // Bias toward low
+      }
       
       candles.push({
         time: time as Time,
@@ -177,6 +202,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
       });
       
       currentPrice = close;
+      
+      // Occasionally change trend direction
+      if (Math.random() < 0.1) {
+        momentum *= -0.5;
+      }
     }
     
     candlesRef.current = candles;
