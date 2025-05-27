@@ -37,6 +37,7 @@ interface TraderBehaviorModifier {
 
 interface MarketScenarioEngineProps {
   isActive: boolean;
+  onActiveToggle?: (active: boolean) => void;
   onScenarioStart: (scenario: MarketScenario) => void;
   onScenarioEnd: () => void;
   onScenarioUpdate: (phase: ScenarioPhase, progress: number) => void;
@@ -45,6 +46,7 @@ interface MarketScenarioEngineProps {
 
 const MarketScenarioEngine: React.FC<MarketScenarioEngineProps> = ({
   isActive,
+  onActiveToggle,
   onScenarioStart,
   onScenarioEnd,
   onScenarioUpdate,
@@ -575,10 +577,11 @@ const MarketScenarioEngine: React.FC<MarketScenarioEngineProps> = ({
       <div className="flex items-center justify-between p-2 bg-gray-800 rounded">
         <span className="text-xs text-gray-300">Auto Scenarios</span>
         <button
-          onClick={() => setIsActive(!isActive)}
+          onClick={() => onActiveToggle?.(!isActive)}
+          disabled={!onActiveToggle}
           className={`px-3 py-1 text-xs rounded transition ${
             isActive ? 'bg-purple-600 text-white' : 'bg-gray-600 text-gray-300'
-          }`}
+          } ${!onActiveToggle ? 'cursor-not-allowed opacity-50' : ''}`}
         >
           {isActive ? 'ON' : 'OFF'}
         </button>
