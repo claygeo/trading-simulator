@@ -18,7 +18,15 @@ const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors());
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+      // Allow audio files from wikimedia
+      "media-src": ["'self'", "https://upload.wikimedia.org"]
+    }
+  }
+}));
 app.use(express.json());
 
 // API Routes
