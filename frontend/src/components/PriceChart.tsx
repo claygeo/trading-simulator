@@ -1,5 +1,11 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { createChart, IChartApi, ISeriesApi, Time, BarData, CandlestickData, LineData, HistogramData, UTCTimestamp } from 'lightweight-charts';
+import { 
+  createChart, 
+  IChartApi, 
+  Time, 
+  CandlestickData, 
+  UTCTimestamp
+} from 'lightweight-charts';
 import { Trade } from '../types';
 
 interface PriceChartProps {
@@ -29,9 +35,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
-  const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const candlestickSeriesRef = useRef<any>(null);
+  const volumeSeriesRef = useRef<any>(null);
   const [isInitialized, setIsInitialized] = useState(false);
+  const hasDataRef = useRef(false);
 
   // Interval to seconds mapping
   const intervalToSeconds = {
@@ -85,12 +92,17 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const candlestickData = useMemo(() => {
     if (!priceHistory || priceHistory.length === 0) return [];
 
+    // First, ensure the input data is sorted
+    const sortedHistory = [...priceHistory].sort((a, b) => a.time - b.time);
+
     const intervalSeconds = intervalToSeconds[interval];
     const aggregatedData: { [key: number]: CandlestickData } = {};
 
-    priceHistory.forEach(point => {
+    sortedHistory.forEach(point => {
+      // Convert milliseconds to seconds for lightweight-charts
+      const pointTimeInSeconds = Math.floor(point.time / 1000);
       // Round timestamp to nearest interval
-      const intervalTime = Math.floor(point.time / (intervalSeconds * 1000)) * intervalSeconds;
+      const intervalTime = Math.floor(pointTimeInSeconds / intervalSeconds) * intervalSeconds;
       
       if (!aggregatedData[intervalTime]) {
         aggregatedData[intervalTime] = {
@@ -108,7 +120,16 @@ const PriceChart: React.FC<PriceChartProps> = ({
       }
     });
 
-    return Object.values(aggregatedData).sort((a, b) => (a.time as number) - (b.time as number));
+    // Convert to array and ensure proper sorting
+    const sortedData = Object.values(aggregatedData)
+      .sort((a, b) => (a.time as number) - (b.time as number))
+      .filter((candle, index, array) => {
+        // Remove any duplicates
+        if (index === 0) return true;
+        return (candle.time as number) > (array[index - 1].time as number);
+      });
+
+    return sortedData;
   }, [priceHistory, interval]);
 
   // Volume data
@@ -122,7 +143,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
   // Initialize chart
   useEffect(() => {
-    if (!chartContainerRef.current || isInitialized) return;
+    if (!chartContainerRef.current) return;
+    if (isInitialized) return;
+    if (candlestickData.length === 0) return;
+
+    console.log('Initializing chart...');
 
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
@@ -192,6 +217,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
         type: 'volume',
       },
       priceScaleId: '',
+    });
+    
+    // Set the price scale margins after adding the series
+    chart.priceScale('').applyOptions({
       scaleMargins: {
         top: 0.8,
         bottom: 0,
@@ -201,87 +230,87 @@ const PriceChart: React.FC<PriceChartProps> = ({
     chartRef.current = chart;
     candlestickSeriesRef.current = candlestickSeries;
     volumeSeriesRef.current = volumeSeries;
+    hasDataRef.current = true;
 
     setIsInitialized(true);
 
     return () => {
+      console.log('Cleaning up chart...');
       chart.remove();
+      chartRef.current = null;
+      candlestickSeriesRef.current = null;
+      volumeSeriesRef.current = null;
+      hasDataRef.current = false;
       setIsInitialized(false);
     };
-  }, [isInitialized, interval]);
+  }, []); // Empty dependency array - only run once on mount
 
-  // Update chart data
+  // Update chart data when candlestick data changes
   useEffect(() => {
-    if (!candlestickSeriesRef.current || !volumeSeriesRef.current || candlestickData.length === 0) return;
+    if (!isInitialized) return;
+    if (!candlestickSeriesRef.current || !volumeSeriesRef.current) return;
+    if (candlestickData.length === 0) return;
 
-    candlestickSeriesRef.current.setData(candlestickData);
-    volumeSeriesRef.current.setData(volumeData);
+    try {
+      candlestickSeriesRef.current.setData(candlestickData);
+      volumeSeriesRef.current.setData(volumeData);
 
-    // Auto-scroll to the latest data with some right padding
-    if (chartRef.current && candlestickData.length > 0) {
-      const lastCandle = candlestickData[candlestickData.length - 1];
-      const timeScale = chartRef.current.timeScale();
-      
-      // Calculate visible range to show last 50-100 candles
-      const candlesToShow = Math.min(100, candlestickData.length);
-      const firstVisibleCandle = candlestickData[Math.max(0, candlestickData.length - candlesToShow)];
-      
-      // Add some padding to the right for future candles
-      const rightPadding = intervalToSeconds[interval] * 10; // 10 intervals of padding
-      const to = (lastCandle.time as number) + rightPadding;
-      
-      timeScale.setVisibleRange({
-        from: firstVisibleCandle.time,
-        to: to as Time,
-      });
+      // Auto-scroll to the latest data
+      if (chartRef.current) {
+        const timeScale = chartRef.current.timeScale();
+        const lastCandle = candlestickData[candlestickData.length - 1];
+        const candlesToShow = Math.min(100, candlestickData.length);
+        const firstVisibleCandle = candlestickData[Math.max(0, candlestickData.length - candlesToShow)];
+        
+        const rightPadding = intervalToSeconds[interval] * 10;
+        const to = (lastCandle.time as number) + rightPadding;
+        
+        timeScale.setVisibleRange({
+          from: firstVisibleCandle.time,
+          to: to as Time,
+        });
+      }
+    } catch (error) {
+      console.error('Error updating chart data:', error);
     }
-  }, [candlestickData, volumeData, interval]);
+  }, [candlestickData, volumeData, interval, isInitialized]);
 
-  // Handle real-time price updates
+  // Handle real-time price updates separately
   useEffect(() => {
-    if (!candlestickSeriesRef.current || !chartRef.current || candlestickData.length === 0) return;
+    if (!isInitialized) return;
+    if (!candlestickSeriesRef.current || !volumeSeriesRef.current) return;
+    if (candlestickData.length === 0) return;
 
     const lastCandle = candlestickData[candlestickData.length - 1];
     if (!lastCandle) return;
 
-    // Update the current candle with the latest price
     const currentTime = Math.floor(Date.now() / 1000);
     const intervalSeconds = intervalToSeconds[interval];
     const currentIntervalTime = Math.floor(currentTime / intervalSeconds) * intervalSeconds;
 
-    const updatedCandle: CandlestickData = {
-      time: currentIntervalTime as UTCTimestamp,
-      open: lastCandle.open,
-      high: Math.max(lastCandle.high, currentPrice),
-      low: Math.min(lastCandle.low, currentPrice),
-      close: currentPrice
-    };
-
-    candlestickSeriesRef.current.update(updatedCandle);
-
-    // Update volume
-    if (volumeSeriesRef.current) {
-      volumeSeriesRef.current.update({
+    // Only update if we're in the same interval as the last candle
+    if (currentIntervalTime === (lastCandle.time as number)) {
+      const updatedCandle: CandlestickData = {
         time: currentIntervalTime as UTCTimestamp,
-        value: Math.random() * 1000000 + 100000,
-        color: currentPrice >= lastCandle.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
-      });
-    }
+        open: lastCandle.open,
+        high: Math.max(lastCandle.high, currentPrice),
+        low: Math.min(lastCandle.low, currentPrice),
+        close: currentPrice
+      };
 
-    // Auto-scroll to keep current time in view
-    const timeScale = chartRef.current.timeScale();
-    const visibleRange = timeScale.getVisibleRange();
-    
-    if (visibleRange) {
-      const rangeWidth = (visibleRange.to as number) - (visibleRange.from as number);
-      const rightEdge = visibleRange.to as number;
-      
-      // If current time is near the right edge, scroll
-      if (currentIntervalTime > rightEdge - intervalSeconds * 2) {
-        timeScale.scrollToPosition(2, false);
+      try {
+        candlestickSeriesRef.current.update(updatedCandle);
+        
+        volumeSeriesRef.current.update({
+          time: currentIntervalTime as UTCTimestamp,
+          value: Math.random() * 1000000 + 100000,
+          color: currentPrice >= lastCandle.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
+        });
+      } catch (error) {
+        console.error('Error updating real-time data:', error);
       }
     }
-  }, [currentPrice, interval, candlestickData]);
+  }, [currentPrice, interval, isInitialized]); // Removed candlestickData dependency
 
   // Handle window resize
   useEffect(() => {
@@ -298,23 +327,48 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, []);
+  }, [isInitialized]);
 
   // Add trade markers
   useEffect(() => {
-    if (!candlestickSeriesRef.current || !trades || trades.length === 0) return;
+    if (!isInitialized) return;
+    if (!candlestickSeriesRef.current) return;
+    if (!trades || trades.length === 0) {
+      candlestickSeriesRef.current.setMarkers([]);
+      return;
+    }
 
-    const markers = trades.slice(-50).map(trade => ({
-      time: Math.floor(trade.timestamp / 1000) as UTCTimestamp,
-      position: trade.isBuy ? 'belowBar' : 'aboveBar',
-      color: trade.isBuy ? '#26a69a' : '#ef5350',
-      shape: trade.isBuy ? 'arrowUp' : 'arrowDown',
-      text: trade.isBuy ? 'B' : 'S',
-      size: 1
-    }));
+    try {
+      const sortedTrades = [...trades]
+        .sort((a, b) => a.timestamp - b.timestamp)
+        .slice(-50);
 
-    candlestickSeriesRef.current.setMarkers(markers as any);
-  }, [trades]);
+      const markers = sortedTrades.map(trade => ({
+        time: Math.floor(trade.timestamp / 1000) as UTCTimestamp,
+        position: trade.action === 'buy' ? 'belowBar' : 'aboveBar',
+        color: trade.action === 'buy' ? '#26a69a' : '#ef5350',
+        shape: trade.action === 'buy' ? 'arrowUp' : 'arrowDown',
+        text: trade.action === 'buy' ? 'B' : 'S',
+        size: 1
+      }));
+
+      candlestickSeriesRef.current.setMarkers(markers as any);
+    } catch (error) {
+      console.error('Error setting trade markers:', error);
+    }
+  }, [trades, isInitialized]);
+
+  // Loading state
+  if (candlestickData.length === 0) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-[#131722] text-gray-400">
+        <div className="text-center">
+          <div className="text-lg mb-2">No data available</div>
+          <div className="text-sm">Start the simulation to see price data</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative w-full h-full">
