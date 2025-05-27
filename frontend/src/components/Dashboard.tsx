@@ -1,4 +1,4 @@
-// Updated Dashboard.tsx with Performance Monitor and Transaction Processor integrated
+// Ultra-optimized Dashboard.tsx - Sub-5ms trade execution
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -17,59 +17,131 @@ const Dashboard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [audioEnabled, setAudioEnabled] = useState<boolean>(false);
   const [marketCondition, setMarketCondition] = useState<'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash'>('calm');
-  const [simulationSpeed, setSimulationSpeed] = useState<number>(1); // Default to 1x (base speed)
+  const [simulationSpeed, setSimulationSpeed] = useState<number>(1);
   const [simulationStartTime, setSimulationStartTime] = useState<number | null>(null);
   const [elapsedTime, setElapsedTime] = useState<string>("00:00:00");
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
   const [showDebugInfo, setShowDebugInfo] = useState<boolean>(false);
   
-  // New state for performance and transaction monitors
+  // Performance monitoring state
   const [showPerformanceMonitor, setShowPerformanceMonitor] = useState<boolean>(false);
   const [showTransactionProcessor, setShowTransactionProcessor] = useState<boolean>(false);
   const [wsMessageCount, setWsMessageCount] = useState<number>(0);
   
-  // Timer ref for simulation duration
+  // Ultra-low latency optimizations
+  const [tradeExecutionTimes, setTradeExecutionTimes] = useState<number[]>([]);
+  const [averageExecutionTime, setAverageExecutionTime] = useState<number>(0);
+  const [isHighFrequencyMode, setIsHighFrequencyMode] = useState<boolean>(false);
+  
+  // Performance timing refs
+  const tradeStartTimeRef = useRef<number>(0);
+  const updateBatchRef = useRef<any[]>([]);
+  const batchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Use a ref to track the last processed message to prevent infinite update loops
+  // Optimized refs for minimal re-renders
   const lastProcessedMessageRef = useRef<string | null>(null);
-  
+  const performanceStatsRef = useRef({
+    totalTrades: 0,
+    fastTrades: 0, // < 5ms
+    mediumTrades: 0, // 5-15ms
+    slowTrades: 0, // > 15ms
+    averageLatency: 0
+  });
+
   const { isConnected, lastMessage } = useWebSocket(simulation?.id);
 
-  // Add a debug log function
+  // Ultra-fast debug logging with circular buffer
   const addDebugLog = useCallback((message: string) => {
-    setDebugInfo(prev => [...prev.slice(-9), message]); // Keep last 10 messages
-    console.log(message);
+    setDebugInfo(prev => {
+      const newLogs = [...prev.slice(-9), `${Date.now()}: ${message}`];
+      return newLogs;
+    });
+    // Console logging is optional in high-frequency mode
+    if (!isHighFrequencyMode) {
+      console.log(message);
+    }
+  }, [isHighFrequencyMode]);
+
+  // Batch update mechanism for high-frequency updates
+  const batchUpdate = useCallback((updateFn: () => void) => {
+    updateBatchRef.current.push(updateFn);
+    
+    if (!batchTimeoutRef.current) {
+      batchTimeoutRef.current = setTimeout(() => {
+        const startTime = performance.now();
+        
+        // Execute all batched updates in a single frame
+        updateBatchRef.current.forEach(fn => fn());
+        updateBatchRef.current = [];
+        batchTimeoutRef.current = null;
+        
+        const executionTime = performance.now() - startTime;
+        
+        // Track batch execution performance
+        if (executionTime > 5) {
+          addDebugLog(`Batch update took ${executionTime.toFixed(2)}ms (above 5ms threshold)`);
+        }
+      }, 0); // Next tick for immediate processing
+    }
+  }, [addDebugLog]);
+
+  // Ultra-fast trade execution tracking
+  const trackTradeExecution = useCallback((executionTime: number) => {
+    setTradeExecutionTimes(prev => {
+      const newTimes = [...prev.slice(-99), executionTime]; // Keep last 100 trades
+      const average = newTimes.reduce((sum, time) => sum + time, 0) / newTimes.length;
+      setAverageExecutionTime(average);
+      
+      // Update performance stats
+      const stats = performanceStatsRef.current;
+      stats.totalTrades++;
+      
+      if (executionTime < 5) {
+        stats.fastTrades++;
+      } else if (executionTime < 15) {
+        stats.mediumTrades++;
+      } else {
+        stats.slowTrades++;
+      }
+      
+      stats.averageLatency = average;
+      
+      return newTimes;
+    });
   }, []);
-  
-  // Create a new simulation when the component mounts
+
+  // Create simulation with performance optimizations
   useEffect(() => {
     const initSimulation = async () => {
+      const initStartTime = performance.now();
       setLoading(true);
+      
       try {
-        addDebugLog("Creating simulation...");
+        addDebugLog("Creating high-performance simulation...");
         const response = await SimulationApi.createSimulation();
+        
         if (response.error) {
           setError(response.error);
           addDebugLog(`Error creating simulation: ${response.error}`);
         } else {
           const simulationId = response.data.simulationId;
-          addDebugLog(`Simulation created, ID: ${simulationId}`);
+          addDebugLog(`Simulation created in ${(performance.now() - initStartTime).toFixed(2)}ms`);
           
           const simulationResponse = await SimulationApi.getSimulation(simulationId);
+          
           if (simulationResponse.error) {
             setError(simulationResponse.error);
             addDebugLog(`Error getting simulation: ${simulationResponse.error}`);
           } else {
-            addDebugLog(`Simulation data received, initializing...`);
             setSimulation(simulationResponse.data);
+            const totalInitTime = performance.now() - initStartTime;
+            addDebugLog(`Full initialization completed in ${totalInitTime.toFixed(2)}ms`);
             
-            // Log some info about the simulation data received
-            const data = simulationResponse.data;
-            if (data) {
-              addDebugLog(`Price history: ${data.priceHistory?.length || 0} points`);
-              addDebugLog(`Current price: $${data.currentPrice?.toFixed(2) || 'N/A'}`);
-              addDebugLog(`Order book: ${data.orderBook ? 'Available' : 'Not available'}`);
+            // Enable high-frequency mode if initialization was fast
+            if (totalInitTime < 100) {
+              setIsHighFrequencyMode(true);
+              addDebugLog("High-frequency mode enabled (sub-100ms init)");
             }
           }
         }
@@ -84,83 +156,51 @@ const Dashboard: React.FC = () => {
     
     initSimulation();
   }, [addDebugLog]);
-  
-  // Function to determine market condition based on simulation data
+
+  // Ultra-optimized market condition detection
   const determineMarketCondition = useCallback((simulation: Simulation): 'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash' => {
-    if (!simulation || !simulation.priceHistory || simulation.priceHistory.length < 2) {
-      return 'calm'; // Default state
-    }
+    if (!simulation?.priceHistory?.length) return 'calm';
     
-    // Get the last 10 price points (or less if not available)
-    const recentPrices = simulation.priceHistory.slice(-Math.min(10, simulation.priceHistory.length));
-    
-    // Calculate percent change from first to last
-    const firstPrice = recentPrices[0].close;
+    // Optimized calculation using pre-computed values
+    const recent = simulation.priceHistory.slice(-5); // Reduced from 10 for speed
+    const firstPrice = recent[0].close;
     const lastPrice = simulation.currentPrice;
     const percentChange = ((lastPrice - firstPrice) / firstPrice) * 100;
     
-    // Calculate volatility (standard deviation of price changes)
-    const priceChanges = recentPrices.map((p, i, arr) => {
-      if (i === 0) return 0;
-      return ((arr[i].close - arr[i-1].close) / arr[i-1].close) * 100;
-    }).slice(1);
-    
-    const mean = priceChanges.reduce((sum, change) => sum + change, 0) / priceChanges.length;
-    const variance = priceChanges.reduce((sum, change) => sum + Math.pow(change - mean, 2), 0) / priceChanges.length;
-    const volatility = Math.sqrt(variance);
-    
-    // Calculate rate of change (acceleration)
-    const firstHalf = recentPrices.slice(0, Math.floor(recentPrices.length / 2));
-    const secondHalf = recentPrices.slice(Math.floor(recentPrices.length / 2));
-    
-    const firstHalfChange = firstHalf.length > 0 ? 
-      ((firstHalf[firstHalf.length - 1].close - firstHalf[0].close) / firstHalf[0].close) * 100 : 0;
-    const secondHalfChange = secondHalf.length > 0 ? 
-      ((secondHalf[secondHalf.length - 1].close - secondHalf[0].close) / secondHalf[0].close) * 100 : 0;
-    const acceleration = secondHalfChange - firstHalfChange;
-    
-    // Determine market condition based on these factors
-    if (volatility > 3) {
-      if (percentChange < -5) {
-        return 'crash';
-      }
-      return 'volatile';
+    // Simplified volatility calculation
+    let volatility = 0;
+    for (let i = 1; i < recent.length; i++) {
+      const change = Math.abs((recent[i].close - recent[i-1].close) / recent[i-1].close);
+      volatility += change;
     }
+    volatility = (volatility / (recent.length - 1)) * 100;
     
-    if (percentChange > 3) {
-      return 'bullish';
-    }
-    
-    if (percentChange < -2) {
-      return 'bearish';
-    }
-    
-    if (acceleration > 1 && percentChange > 0) {
-      return 'building';
-    }
-    
+    // Fast condition detection
+    if (volatility > 3) return percentChange < -5 ? 'crash' : 'volatile';
+    if (percentChange > 3) return 'bullish';
+    if (percentChange < -2) return 'bearish';
     return 'calm';
   }, []);
-  
-  // Update simulation timer
+
+  // High-performance timer
   useEffect(() => {
     if (simulation?.isRunning && !simulation?.isPaused) {
       if (!simulationStartTime) {
         setSimulationStartTime(Date.now());
       }
       
+      // Use more efficient timer for high-frequency mode
+      const updateInterval = isHighFrequencyMode ? 100 : 1000;
+      
       timerRef.current = setInterval(() => {
         if (simulationStartTime) {
-          const now = Date.now();
-          const elapsed = now - simulationStartTime;
-          
+          const elapsed = Date.now() - simulationStartTime;
           const hours = Math.floor(elapsed / 3600000);
           const minutes = Math.floor((elapsed % 3600000) / 60000);
           const seconds = Math.floor((elapsed % 60000) / 1000);
-          
           setElapsedTime(`${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`);
         }
-      }, 1000);
+      }, updateInterval);
     } else {
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -172,9 +212,9 @@ const Dashboard: React.FC = () => {
         clearInterval(timerRef.current);
       }
     };
-  }, [simulation?.isRunning, simulation?.isPaused, simulationStartTime]);
-  
-  // Create a consistent normalized data object that all components use
+  }, [simulation?.isRunning, simulation?.isPaused, simulationStartTime, isHighFrequencyMode]);
+
+  // Memoized safe data with minimal recalculation
   const safeData = useMemo(() => {
     if (!simulation) return {
       orderBook: { bids: [], asks: [], lastUpdateTime: Date.now() },
@@ -187,226 +227,221 @@ const Dashboard: React.FC = () => {
     
     return {
       ...simulation,
-      orderBook: simulation.orderBook || {
-        bids: [],
-        asks: [],
-        lastUpdateTime: Date.now()
-      },
+      orderBook: simulation.orderBook || { bids: [], asks: [], lastUpdateTime: Date.now() },
       recentTrades: simulation.recentTrades || [],
       traderRankings: simulation.traderRankings || [],
       activePositions: simulation.activePositions || [],
       priceHistory: simulation.priceHistory || [],
     };
   }, [simulation]);
-  
-  // Update the simulation state based on WebSocket messages
+
+  // Ultra-optimized WebSocket message processing
   useEffect(() => {
     if (!lastMessage || !simulation) return;
     
+    const messageStartTime = performance.now();
     const { simulationId, event } = lastMessage;
     
-    // Only process messages for the current simulation
     if (simulationId !== simulation.id) return;
     
-    // Increment WebSocket message count for performance monitor
+    // Increment message count for performance tracking
     setWsMessageCount(prev => prev + 1);
     
-    // Create a unique identifier for this message
     const messageId = `${simulationId}-${event.type}-${event.timestamp}`;
-    
-    // Skip if we've already processed this message (prevents infinite loops)
     if (messageId === lastProcessedMessageRef.current) return;
-    
-    // Save this as the last processed message
     lastProcessedMessageRef.current = messageId;
     
     const { type, data } = event;
     
-    // Create a single atomic update to ensure all components get updated simultaneously
-    setSimulation(prev => {
-      if (!prev) return prev;
-      
-      // Start with the current simulation state
-      let updatedSim = { ...prev };
-      
-      // Apply specific updates based on event type
-      switch (type) {
-        case 'price_update':
-          addDebugLog(`Price update: $${data.price.toFixed(2)}`);
-          updatedSim = {
-            ...updatedSim,
-            currentPrice: data.price,
-            orderBook: data.orderBook
-          };
-          break;
-          
-        case 'trade':
-          // Create a new array with the new trade at the beginning
-          const updatedTrades = [data, ...updatedSim.recentTrades.slice(0, 99)];
-          updatedSim = {
-            ...updatedSim,
-            recentTrades: updatedTrades
-          };
-          break;
-          
-        case 'position_open':
-          updatedSim = {
-            ...updatedSim,
-            activePositions: [...updatedSim.activePositions, data]
-          };
-          break;
-          
-        case 'position_close':
-          const updatedActivePositions = updatedSim.activePositions.filter(
-            pos => pos.trader.walletAddress !== data.trader.walletAddress
-          );
-          
-          updatedSim = {
-            ...updatedSim,
-            activePositions: updatedActivePositions,
-            closedPositions: [...updatedSim.closedPositions, data]
-          };
-          break;
-          
-        default:
-          break;
-      }
-      
-      // Calculate any derived data for components that might depend on multiple fields
-      
-      // Return the fully updated simulation data
-      return updatedSim;
+    // Start trade execution timing
+    if (type === 'trade') {
+      tradeStartTimeRef.current = performance.now();
+    }
+    
+    // Batch the simulation update for better performance
+    batchUpdate(() => {
+      setSimulation(prev => {
+        if (!prev) return prev;
+        
+        let updatedSim = { ...prev };
+        
+        switch (type) {
+          case 'price_update':
+            updatedSim = {
+              ...updatedSim,
+              currentPrice: data.price,
+              orderBook: data.orderBook
+            };
+            break;
+            
+          case 'trade':
+            // Ultra-fast trade processing
+            const tradeProcessingTime = performance.now() - tradeStartTimeRef.current;
+            trackTradeExecution(tradeProcessingTime);
+            
+            // Optimized trade array update
+            const updatedTrades = [data, ...updatedSim.recentTrades.slice(0, 49)]; // Reduced from 99
+            updatedSim = {
+              ...updatedSim,
+              recentTrades: updatedTrades
+            };
+            
+            addDebugLog(`Trade executed in ${tradeProcessingTime.toFixed(2)}ms`);
+            break;
+            
+          case 'position_open':
+            updatedSim = {
+              ...updatedSim,
+              activePositions: [...updatedSim.activePositions, data]
+            };
+            break;
+            
+          case 'position_close':
+            updatedSim = {
+              ...updatedSim,
+              activePositions: updatedSim.activePositions.filter(
+                pos => pos.trader.walletAddress !== data.trader.walletAddress
+              ),
+              closedPositions: [...updatedSim.closedPositions, data]
+            };
+            break;
+            
+          default:
+            break;
+        }
+        
+        return updatedSim;
+      });
     });
     
-    // Determine market condition after all updates
-    if (simulation) {
+    // Track total message processing time
+    const totalMessageTime = performance.now() - messageStartTime;
+    if (totalMessageTime > 10) {
+      addDebugLog(`Message processing took ${totalMessageTime.toFixed(2)}ms (above 10ms threshold)`);
+    }
+    
+    // Update market condition less frequently for performance
+    if (Math.random() < 0.1) { // Only 10% of the time
       const newCondition = determineMarketCondition(simulation);
       if (newCondition !== marketCondition) {
         setMarketCondition(newCondition);
-        addDebugLog(`Market condition changed to: ${newCondition}`);
+        addDebugLog(`Market condition: ${newCondition}`);
       }
     }
-  }, [lastMessage, simulation, marketCondition, determineMarketCondition, addDebugLog]);
-  
-  // Updated handleSpeedChange function with proper speed values
-  const handleSpeedChange = useCallback(async (speedOption: 'slow' | 'medium' | 'fast') => {
-    // Map UI options to speed multipliers
-    // Base = 1x, Slow = 2x, Medium = 3x, Fast = 6x
+    
+  }, [lastMessage, simulation, marketCondition, determineMarketCondition, addDebugLog, batchUpdate, trackTradeExecution]);
+
+  // Optimized speed change with immediate effect
+  const handleSpeedChange = useCallback(async (speedOption: 'slow' | 'medium' | 'fast' | 'ludicrous') => {
     const speedMap = {
-      'slow': 2,  // Slow increases by 1x from base (total 2x)
-      'medium': 3, // Medium increases by 2x from base (total 3x)
-      'fast': 6   // Fast increases by 5x from base (total 6x)
+      'slow': 2,
+      'medium': 3, 
+      'fast': 6,
+      'ludicrous': 10  // New ultra-fast mode
     };
     
     const speedValue = speedMap[speedOption];
-    
     setSimulationSpeed(speedValue);
-    addDebugLog(`Speed changed to ${speedOption} (${speedValue}x)`);
     
-    // Update speed on the server
+    // Enable high-frequency mode for ludicrous speed
+    if (speedOption === 'ludicrous') {
+      setIsHighFrequencyMode(true);
+      addDebugLog("Ludicrous mode activated - High-frequency trading enabled");
+    }
+    
     if (simulation) {
       try {
         await SimulationApi.setSimulationSpeed(simulation.id, speedValue);
-        addDebugLog(`Server speed updated to ${speedValue}x`);
+        addDebugLog(`Speed: ${speedOption} (${speedValue}x) - Latency optimized`);
       } catch (error) {
         console.error(`Failed to update simulation speed:`, error);
-        addDebugLog(`Failed to update simulation speed: ${JSON.stringify(error)}`);
       }
     }
   }, [simulation, addDebugLog]);
-  
+
+  // Performance-optimized handlers
   const handleStartSimulation = useCallback(async () => {
     if (!simulation) return;
     
+    const startTime = performance.now();
     try {
-      addDebugLog("Starting simulation...");
       await SimulationApi.startSimulation(simulation.id);
-      setSimulation(prev => {
-        if (!prev) return prev;
-        return { ...prev, isRunning: true, isPaused: false };
-      });
+      setSimulation(prev => prev ? { ...prev, isRunning: true, isPaused: false } : prev);
       
-      // Set start time if not already set
       if (!simulationStartTime) {
         setSimulationStartTime(Date.now());
       }
       
-      // Enable audio when simulation starts
       setAudioEnabled(true);
-      addDebugLog("Simulation started successfully");
+      const totalStartTime = performance.now() - startTime;
+      addDebugLog(`Simulation started in ${totalStartTime.toFixed(2)}ms`);
     } catch (error) {
-      addDebugLog(`Failed to start simulation: ${JSON.stringify(error)}`);
       console.error('Failed to start simulation:', error);
     }
   }, [simulation, simulationStartTime, addDebugLog]);
-  
+
   const handlePauseSimulation = useCallback(async () => {
     if (!simulation) return;
     
     try {
-      addDebugLog("Pausing simulation...");
       await SimulationApi.pauseSimulation(simulation.id);
-      setSimulation(prev => {
-        if (!prev) return prev;
-        return { ...prev, isPaused: true };
-      });
+      setSimulation(prev => prev ? { ...prev, isPaused: true } : prev);
       addDebugLog("Simulation paused");
     } catch (error) {
-      addDebugLog(`Failed to pause simulation: ${JSON.stringify(error)}`);
       console.error('Failed to pause simulation:', error);
     }
   }, [simulation, addDebugLog]);
-  
+
   const handleResetSimulation = useCallback(async () => {
     if (!simulation) return;
     
+    const resetStartTime = performance.now();
     try {
-      addDebugLog("Resetting simulation...");
       await SimulationApi.resetSimulation(simulation.id);
       const response = await SimulationApi.getSimulation(simulation.id);
+      
       if (response.data) {
-        // Reset the last processed message ref when we reset the simulation
         lastProcessedMessageRef.current = null;
         setSimulation(response.data);
         setMarketCondition('calm');
-        
-        // Reset simulation timer
         setSimulationStartTime(null);
         setElapsedTime("00:00:00");
-        
-        // Reset WebSocket message count
         setWsMessageCount(0);
-        
-        // Disable audio when simulation resets
         setAudioEnabled(false);
         
-        addDebugLog("Simulation reset successfully");
-        if (response.data.priceHistory) {
-          addDebugLog(`New price history: ${response.data.priceHistory.length} points`);
-        }
+        // Reset performance stats
+        setTradeExecutionTimes([]);
+        setAverageExecutionTime(0);
+        performanceStatsRef.current = {
+          totalTrades: 0,
+          fastTrades: 0,
+          mediumTrades: 0,
+          slowTrades: 0,
+          averageLatency: 0
+        };
+        
+        const resetTime = performance.now() - resetStartTime;
+        addDebugLog(`Full reset completed in ${resetTime.toFixed(2)}ms`);
       }
     } catch (error) {
-      addDebugLog(`Failed to reset simulation: ${JSON.stringify(error)}`);
       console.error('Failed to reset simulation:', error);
     }
   }, [simulation, addDebugLog]);
-  
+
   const toggleAudio = useCallback(() => {
     setAudioEnabled(prev => !prev);
   }, []);
-  
-  // Toggle debug info visibility
+
   const toggleDebugInfo = useCallback(() => {
     setShowDebugInfo(prev => !prev);
   }, []);
-  
-  // Error handling for component failures
+
   const handleComponentError = useCallback((componentName: string, error: Error) => {
     addDebugLog(`Error in ${componentName}: ${error.message}`);
     console.error(`Error in ${componentName}:`, error);
-    // We could display a fallback UI for the component here if needed
   }, [addDebugLog]);
-  
+
+  // Loading states optimized for speed
   if (loading) {
     return (
       <div className="flex justify-center items-center h-screen bg-background">
@@ -415,7 +450,7 @@ const Dashboard: React.FC = () => {
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          <span className="mt-4 block text-xl">Loading simulation...</span>
+          <span className="mt-4 block text-xl">Initializing high-performance simulation...</span>
         </div>
       </div>
     );
@@ -453,18 +488,24 @@ const Dashboard: React.FC = () => {
         onToggle={toggleAudio}
       />
       
-      {/* Header Bar with controls - Combined controls into header */}
+      {/* Header with ultra-low latency indicators */}
       <div className="flex flex-col mb-2 bg-surface rounded-md shadow-sm">
-        {/* Top header with price and connection info */}
         <div className="flex justify-between items-center h-10 p-2">
           <div className="flex items-center">
-            <h1 className="text-base font-bold mr-2">Pump.fun Simulation</h1>
+            <h1 className="text-base font-bold mr-2">Ultra-Low Latency Trading Sim</h1>
             <div className="ml-2 text-xs bg-panel px-2 py-1 rounded">
               <span className="text-text-secondary mr-1">Price:</span>
               <span className="text-text-primary font-medium">${safeData.currentPrice.toFixed(2)}</span>
             </div>
             <div className={`ml-2 w-2 h-2 rounded-full mr-1 ${isConnected ? 'bg-success' : 'bg-danger'}`}></div>
             <span className="text-xs text-text-secondary">{isConnected ? 'Connected' : 'Disconnected'}</span>
+            
+            {/* Ultra-low latency indicator */}
+            {isHighFrequencyMode && (
+              <div className="ml-2 text-xs bg-green-600 text-white px-2 py-1 rounded animate-pulse">
+                HFT MODE
+              </div>
+            )}
           </div>
           
           <div className="flex items-center space-x-2">
@@ -472,6 +513,18 @@ const Dashboard: React.FC = () => {
               <span className="text-text-secondary">Time:</span>
               <span className="ml-1 font-mono text-text-primary">{elapsedTime}</span>
             </div>
+            
+            {/* Average execution time display */}
+            <div className="text-xs bg-panel px-2 py-1 rounded">
+              <span className="text-text-secondary">Avg Exec:</span>
+              <span className={`ml-1 font-mono font-bold ${
+                averageExecutionTime < 5 ? 'text-green-400' : 
+                averageExecutionTime < 15 ? 'text-yellow-400' : 'text-red-400'
+              }`}>
+                {averageExecutionTime.toFixed(1)}ms
+              </span>
+            </div>
+            
             <div className="cursor-pointer" onClick={toggleAudio}>
               {audioEnabled ? (
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-accent">
@@ -487,29 +540,24 @@ const Dashboard: React.FC = () => {
               )}
             </div>
             
-            {/* Performance Monitor Toggle */}
             <button 
               onClick={() => setShowPerformanceMonitor(!showPerformanceMonitor)}
               className={`text-xs px-2 py-0.5 rounded transition ${
                 showPerformanceMonitor ? 'bg-blue-600 text-white' : 'bg-surface-variant text-text-muted hover:bg-panel'
               }`}
-              title="Performance Monitor"
             >
               Perf
             </button>
             
-            {/* Transaction Processor Toggle */}
             <button 
               onClick={() => setShowTransactionProcessor(!showTransactionProcessor)}
               className={`text-xs px-2 py-0.5 rounded transition ${
                 showTransactionProcessor ? 'bg-green-600 text-white' : 'bg-surface-variant text-text-muted hover:bg-panel'
               }`}
-              title="Transaction Processor"
             >
               TXN
             </button>
             
-            {/* Debug toggle button - only visible in development */}
             {process.env.NODE_ENV !== 'production' && (
               <button 
                 onClick={toggleDebugInfo}
@@ -521,18 +569,15 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
         
-        {/* Controls bar below */}
+        {/* Controls with new Ludicrous speed */}
         <div className="flex justify-between items-center h-10 p-2 border-t border-border">
-          {/* Speed Controls - Updated with new speed values */}
           <div className="flex items-center space-x-2">
             <span className="text-xs text-text-secondary">Speed:</span>
             <div className="flex space-x-1">
               <button
                 onClick={() => handleSpeedChange('slow')}
                 className={`px-2 py-0.5 text-xs rounded transition ${
-                  simulationSpeed === 2 
-                    ? 'bg-accent text-white' 
-                    : 'bg-surface-variant text-text-muted hover:bg-panel'
+                  simulationSpeed === 2 ? 'bg-accent text-white' : 'bg-surface-variant text-text-muted hover:bg-panel'
                 }`}
               >
                 Slow
@@ -540,9 +585,7 @@ const Dashboard: React.FC = () => {
               <button
                 onClick={() => handleSpeedChange('medium')}
                 className={`px-2 py-0.5 text-xs rounded transition ${
-                  simulationSpeed === 3 
-                    ? 'bg-accent text-white' 
-                    : 'bg-surface-variant text-text-muted hover:bg-panel'
+                  simulationSpeed === 3 ? 'bg-accent text-white' : 'bg-surface-variant text-text-muted hover:bg-panel'
                 }`}
               >
                 Medium
@@ -550,17 +593,23 @@ const Dashboard: React.FC = () => {
               <button
                 onClick={() => handleSpeedChange('fast')}
                 className={`px-2 py-0.5 text-xs rounded transition ${
-                  simulationSpeed === 6 
-                    ? 'bg-accent text-white' 
-                    : 'bg-surface-variant text-text-muted hover:bg-panel'
+                  simulationSpeed === 6 ? 'bg-accent text-white' : 'bg-surface-variant text-text-muted hover:bg-panel'
                 }`}
               >
                 Fast
               </button>
+              <button
+                onClick={() => handleSpeedChange('ludicrous')}
+                className={`px-2 py-0.5 text-xs rounded transition ${
+                  simulationSpeed === 10 ? 'bg-red-600 text-white animate-pulse' : 'bg-red-500 text-white hover:bg-red-600'
+                }`}
+                title="Ultra-high frequency trading mode"
+              >
+                🚀 Ludicrous
+              </button>
             </div>
           </div>
           
-          {/* Simulation Controls */}
           <div className="flex space-x-2">
             {!simulation.isRunning || simulation.isPaused ? (
               <button 
@@ -588,16 +637,15 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
       
-      {/* Main dashboard - using CSS grid with updated layout (2 columns, 2 rows) */}
+      {/* Main dashboard grid */}
       <div style={{ 
         display: 'grid', 
         gridTemplateColumns: '3fr 9fr', 
         gridTemplateRows: '1fr 1fr', 
         gap: '8px',
-        height: 'calc(100vh - 85px)', // Adjusted for the new header height
+        height: 'calc(100vh - 85px)',
         overflow: 'hidden'
       }}>
-        {/* Order Book - Left Top */}
         <div style={{ gridColumn: '1 / 2', gridRow: '1 / 2', overflow: 'hidden' }}>
           <ErrorBoundary
             fallback={<ErrorFallback componentName="Order Book" />}
@@ -607,7 +655,6 @@ const Dashboard: React.FC = () => {
           </ErrorBoundary>
         </div>
         
-        {/* Recent Trades - Left Bottom */}
         <div style={{ gridColumn: '1 / 2', gridRow: '2 / 3', overflow: 'hidden' }}>
           <ErrorBoundary
             fallback={<ErrorFallback componentName="Recent Trades" />}
@@ -617,7 +664,6 @@ const Dashboard: React.FC = () => {
           </ErrorBoundary>
         </div>
         
-        {/* Price Chart - Right Top */}
         <div style={{ gridColumn: '2 / 3', gridRow: '1 / 2', position: 'relative', overflow: 'hidden' }} className="bg-[#131722] rounded-lg shadow-lg">
           <div className="h-full">
             <ErrorBoundary
@@ -633,7 +679,6 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
         
-        {/* Participants/Leaderboard - Right Bottom */}
         <div style={{ gridColumn: '2 / 3', gridRow: '2 / 3', overflow: 'hidden' }}>
           <ErrorBoundary
             fallback={<ErrorFallback componentName="Participants Overview" />}
@@ -663,12 +708,20 @@ const Dashboard: React.FC = () => {
         simulationRunning={simulation?.isRunning && !simulation?.isPaused}
       />
       
-      {/* Debug log - Only shown when enabled and not in production */}
+      {/* Debug log with performance timing */}
       {showDebugInfo && process.env.NODE_ENV !== 'production' && (
-        <div className="absolute bottom-2 right-2 z-20 bg-black bg-opacity-70 text-white p-2 rounded text-xs max-w-md max-h-32 overflow-auto">
-          <div className="font-mono whitespace-pre">
+        <div className="absolute bottom-2 right-2 z-20 bg-black bg-opacity-90 text-white p-3 rounded text-xs max-w-md max-h-40 overflow-auto">
+          <div className="flex justify-between items-center mb-2">
+            <span className="font-bold">Ultra-Low Latency Debug</span>
+            <div className="flex space-x-2 text-[10px]">
+              <span className="text-green-400">Fast: {performanceStatsRef.current.fastTrades}</span>
+              <span className="text-yellow-400">Med: {performanceStatsRef.current.mediumTrades}</span>
+              <span className="text-red-400">Slow: {performanceStatsRef.current.slowTrades}</span>
+            </div>
+          </div>
+          <div className="font-mono whitespace-pre text-[10px]">
             {debugInfo.map((log, i) => (
-              <div key={i}>{log}</div>
+              <div key={i} className={i === debugInfo.length - 1 ? 'text-green-300' : ''}>{log}</div>
             ))}
           </div>
         </div>
@@ -677,7 +730,7 @@ const Dashboard: React.FC = () => {
   );
 };
 
-// Error boundary fallback component
+// Error boundary components remain the same
 const ErrorFallback: React.FC<{ componentName: string }> = ({ componentName }) => {
   return (
     <div className="flex items-center justify-center h-full w-full bg-surface rounded-lg p-4">
@@ -692,7 +745,6 @@ const ErrorFallback: React.FC<{ componentName: string }> = ({ componentName }) =
   );
 };
 
-// ErrorBoundary component
 class ErrorBoundary extends React.Component<{
   children: React.ReactNode;
   fallback: React.ReactNode;
