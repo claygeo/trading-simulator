@@ -43,14 +43,14 @@ const PriceChart: React.FC<PriceChartProps> = ({
       const timestamp = Math.floor((now - (i * intervalMs)) / 1000);
       const alignedTimestamp = Math.floor(timestamp / (intervalMs / 1000)) * (intervalMs / 1000);
       
-      const trend = Math.sin(i / 30) * (basePrice * 0.01); // 1% wave
-      const volatility = 0.001 + Math.random() * 0.002; // 0.1-0.3% volatility
+      const trend = Math.sin(i / 50) * (basePrice * 0.005); // 0.5% wave
+      const volatility = 0.0005 + Math.random() * 0.001; // 0.05-0.15% volatility
       
       const open = basePrice + trend;
-      const change = (Math.random() - 0.5) * basePrice * volatility * 2;
+      const change = (Math.random() - 0.5) * basePrice * volatility;
       const close = open + change;
-      const high = Math.max(open, close) + Math.random() * Math.abs(change) * 0.3;
-      const low = Math.min(open, close) - Math.random() * Math.abs(change) * 0.3;
+      const high = Math.max(open, close) + Math.random() * Math.abs(change) * 0.2;
+      const low = Math.min(open, close) - Math.random() * Math.abs(change) * 0.2;
       
       data.push({
         timestamp: alignedTimestamp,
@@ -172,8 +172,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
         rightBarStaysOnScroll: true,
         borderColor: 'rgba(197, 203, 206, 0.8)',
         visible: true,
-        timeVisible: true,
-        secondsVisible: false,
       },
       handleScroll: {
         mouseWheel: true,
@@ -231,6 +229,32 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
     // Scroll to the end to show latest data
     chart.timeScale().scrollToRealTime();
+    
+    // Set proper price scale to prevent god candles
+    const prices = candleData.map(c => [c.high, c.low]).flat();
+    const minPrice = Math.min(...prices);
+    const maxPrice = Math.max(...prices);
+    const priceRange = maxPrice - minPrice;
+    
+    // Force a minimum visible range to prevent small moves looking huge
+    const minVisibleRange = 10; // $10 minimum range
+    if (priceRange < minVisibleRange) {
+      const centerPrice = (maxPrice + minPrice) / 2;
+      const padding = (minVisibleRange - priceRange) / 2;
+      
+      chart.priceScale('right').applyOptions({
+        autoScale: false,
+      });
+      
+      // Set visible range with padding
+      setTimeout(() => {
+        candlestickSeriesRef.current.priceScale().setVisiblePriceRange({
+          from: minPrice - padding,
+          to: maxPrice + padding,
+        });
+      }, 0);
+    }
+    
     setIsLoading(false);
 
     // Handle resize
@@ -303,6 +327,35 @@ const PriceChart: React.FC<PriceChartProps> = ({
       // Update just the current candle
       candlestickSeriesRef.current.update(updatedCandle);
       currentCandleRef.current = updatedCandle;
+    }
+    
+    // Maintain proper price scale to prevent god candles
+    try {
+      const visibleRange = candlestickSeriesRef.current.priceScale().getVisiblePriceRange();
+      if (visibleRange) {
+        const currentRange = visibleRange.to - visibleRange.from;
+        
+        // If range is too small (making small moves look huge), expand it
+        if (currentRange < 10) { // Less than $10 range
+          const center = (visibleRange.to + visibleRange.from) / 2;
+          candlestickSeriesRef.current.priceScale().setVisiblePriceRange({
+            from: center - 5,
+            to: center + 5,
+          });
+        }
+        
+        // If price is near the edge, recenter but maintain scale
+        const buffer = currentRange * 0.1;
+        if (propCurrentPrice > visibleRange.to - buffer || propCurrentPrice < visibleRange.from + buffer) {
+          const shift = propCurrentPrice - (visibleRange.to + visibleRange.from) / 2;
+          candlestickSeriesRef.current.priceScale().setVisiblePriceRange({
+            from: visibleRange.from + shift,
+            to: visibleRange.to + shift,
+          });
+        }
+      }
+    } catch (e) {
+      // Ignore errors during scale adjustment
     }
     
     // Update price change
