@@ -45,7 +45,7 @@ const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({
   const lastWsCountRef = useRef(0);
   const renderStartTimeRef = useRef(0);
   const componentUpdateCountRef = useRef(0);
-  const animationFrameRef = useRef<number>();
+  const animationFrameRef = useRef<number | null>(null);
 
   // Track component updates
   const trackComponentUpdate = useCallback(() => {
@@ -88,7 +88,7 @@ const PerformanceMonitor: React.FC<PerformanceMonitorProps> = ({
           fps,
           memoryUsage,
           wsMessagesPerSec: wsPerSec,
-          renderTime: prev.renderTime || 0,
+          renderTime: 0, // Will be updated separately by render effect
           totalTrades: tradeCount,
           activeConnections: 1,
           latency: Math.round(latency),
