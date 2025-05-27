@@ -66,7 +66,10 @@ const Dashboard: React.FC = () => {
     averageLatency: 0
   });
 
-  const { isConnected, lastMessage, setPauseState } = useWebSocket(simulation?.id, simulation?.isPaused);
+  const { isConnected, lastMessage, setPauseState } = useWebSocket(
+    simulation?.isRunning ? simulation?.id : undefined, 
+    simulation?.isPaused
+  );
 
   // Ultra-fast debug logging with circular buffer
   const addDebugLog = useCallback((message: string) => {
@@ -279,7 +282,10 @@ const Dashboard: React.FC = () => {
 
   // Convert price history to chart format
   const convertPriceHistory = useCallback((priceHistory: SimulationPricePoint[]): ChartPricePoint[] => {
-    return priceHistory.map(point => ({
+    if (!priceHistory || priceHistory.length === 0) return [];
+    
+    // First convert the data
+    const converted = priceHistory.map(point => ({
       time: point.timestamp,
       open: point.open,
       high: point.high,
@@ -287,6 +293,9 @@ const Dashboard: React.FC = () => {
       close: point.close,
       volume: point.volume
     }));
+    
+    // Then sort by time to ensure chronological order
+    return converted.sort((a, b) => a.time - b.time);
   }, []);
 
   // Memoized safe data with minimal recalculation
@@ -300,13 +309,21 @@ const Dashboard: React.FC = () => {
       currentPrice: 0,
     };
     
+    // Sort price history to ensure chronological order
+    const sortedPriceHistory = simulation.priceHistory ? 
+      [...simulation.priceHistory].sort((a, b) => a.timestamp - b.timestamp) : [];
+    
+    // Sort recent trades by timestamp
+    const sortedRecentTrades = simulation.recentTrades ? 
+      [...simulation.recentTrades].sort((a, b) => a.timestamp - b.timestamp) : [];
+    
     return {
       ...simulation,
       orderBook: simulation.orderBook || { bids: [], asks: [], lastUpdateTime: Date.now() },
-      recentTrades: simulation.recentTrades || [],
+      recentTrades: sortedRecentTrades,
       traderRankings: simulation.traderRankings || [],
       activePositions: simulation.activePositions || [],
-      priceHistory: convertPriceHistory(simulation.priceHistory || []),
+      priceHistory: convertPriceHistory(sortedPriceHistory),
       currentPrice: simulation.currentPrice || 0,
     };
   }, [simulation, convertPriceHistory]);
@@ -314,9 +331,6 @@ const Dashboard: React.FC = () => {
   // Ultra-optimized WebSocket message processing
   useEffect(() => {
     if (!lastMessage || !simulation) return;
-    
-    // Don't process price updates when paused
-    if (simulation.isPaused && lastMessage.event?.type === 'price_update') return;
     
     const messageStartTime = performance.now();
     const { simulationId, event } = lastMessage;
