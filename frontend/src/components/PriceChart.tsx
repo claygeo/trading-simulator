@@ -331,7 +331,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     
     // Cluster and filter levels
     const currentPrice = prices[prices.length - 1];
-    const uniqueLevels = [...new Set(levels)].sort((a, b) => a - b);
+    const uniqueLevels = Array.from(new Set(levels)).sort((a, b) => a - b);
     
     state.supportLevels = uniqueLevels
       .filter(level => level < currentPrice * 0.98)
