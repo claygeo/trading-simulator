@@ -23,6 +23,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<any>(null);
   const currentCandleRef = useRef<any>(null);
+  const allCandlesRef = useRef<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [currentPrice, setCurrentPrice] = useState<number | null>(propCurrentPrice || null);
   const [priceChange, setPriceChange] = useState<number>(0);
@@ -33,28 +34,23 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const data: PricePoint[] = [];
     const now = Date.now();
     const intervalMs = getIntervalMs(interval);
-    const candleCount = 300; // Always generate 300 candles
+    const candleCount = 300;
     
-    // Start price around current price or default
     let basePrice = propCurrentPrice || 125;
-    
-    // Add some initial variance to avoid flat line
-    basePrice = basePrice * (0.95 + Math.random() * 0.1); // ±5% variance
+    basePrice = basePrice * (0.98 + Math.random() * 0.04); // ±2% variance
     
     for (let i = candleCount - 1; i >= 0; i--) {
-      // Calculate timestamp aligned to interval
       const timestamp = Math.floor((now - (i * intervalMs)) / 1000);
       const alignedTimestamp = Math.floor(timestamp / (intervalMs / 1000)) * (intervalMs / 1000);
       
-      // Add some trend and volatility
-      const trend = Math.sin(i / 30) * (basePrice * 0.02); // 2% wave
-      const volatility = 0.002 + Math.random() * 0.003; // 0.2-0.5% volatility
+      const trend = Math.sin(i / 30) * (basePrice * 0.01); // 1% wave
+      const volatility = 0.001 + Math.random() * 0.002; // 0.1-0.3% volatility
       
       const open = basePrice + trend;
       const change = (Math.random() - 0.5) * basePrice * volatility * 2;
       const close = open + change;
-      const high = Math.max(open, close) + Math.random() * Math.abs(change) * 0.5;
-      const low = Math.min(open, close) - Math.random() * Math.abs(change) * 0.5;
+      const high = Math.max(open, close) + Math.random() * Math.abs(change) * 0.3;
+      const low = Math.min(open, close) - Math.random() * Math.abs(change) * 0.3;
       
       data.push({
         timestamp: alignedTimestamp,
@@ -91,10 +87,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const intervalSec = intervalMs / 1000;
     const result: PricePoint[] = [];
     
-    // If we have data, ensure it's properly spaced
     const sortedData = [...data].sort((a, b) => a.timestamp - b.timestamp);
     
-    // Start from the earliest time we want (300 candles ago)
     const now = Math.floor(Date.now() / 1000);
     const alignedNow = Math.floor(now / intervalSec) * intervalSec;
     const startTime = alignedNow - (intervalSec * (targetCount - 1));
@@ -102,14 +96,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
     let dataIndex = 0;
     let lastClose = sortedData[0]?.close || propCurrentPrice || 125;
     
-    // Add some variance to avoid flat lines
-    const baseVariance = lastClose * 0.001; // 0.1% base variance
+    const baseVariance = lastClose * 0.0005; // 0.05% base variance
     
-    // Generate candles for each interval
     for (let i = 0; i < targetCount; i++) {
       const candleTime = startTime + (i * intervalSec);
       
-      // Find if we have real data for this time
       let candle: PricePoint | null = null;
       while (dataIndex < sortedData.length && sortedData[dataIndex].timestamp <= candleTime) {
         if (Math.abs(sortedData[dataIndex].timestamp - candleTime) < intervalSec / 2) {
@@ -119,7 +110,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
         dataIndex++;
       }
       
-      // If no data for this time, create a candle with slight variance
       if (!candle) {
         const variance = (Math.random() - 0.5) * baseVariance;
         const price = lastClose + variance;
@@ -140,12 +130,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return result;
   };
 
-  // Initialize chart - only when priceHistory changes, not on every price update
+  // Initialize chart
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
     console.log('Initializing chart with interval:', interval);
-    console.log('Price history length:', priceHistory?.length);
 
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
@@ -164,24 +153,38 @@ const PriceChart: React.FC<PriceChartProps> = ({
       rightPriceScale: {
         borderVisible: false,
         scaleMargins: {
-          top: 0.2,    // 20% padding at top
-          bottom: 0.2, // 20% padding at bottom
+          top: 0.1,
+          bottom: 0.1,
         },
-        mode: 0, // Normal mode
-        autoScale: true, // Let it auto scale but with good margins
+        mode: 0,
+        autoScale: true,
       },
       timeScale: {
         borderVisible: false,
+        timeVisible: true,
+        secondsVisible: false,
+        rightOffset: 12, // Keep some space on the right for new candles
+        barSpacing: 6,
+        minBarSpacing: 3,
+        fixLeftEdge: false,
+        fixRightEdge: false,
+        lockVisibleTimeRangeOnResize: true,
+        rightBarStaysOnScroll: true,
+        borderColor: 'rgba(197, 203, 206, 0.8)',
+        visible: true,
         timeVisible: true,
         secondsVisible: false,
       },
       handleScroll: {
         mouseWheel: true,
         pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false,
       },
       handleScale: {
         mouseWheel: true,
         pinch: true,
+        axisPressedMouseMove: false,
       },
     });
 
@@ -196,11 +199,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
     chartRef.current = chart;
     candlestickSeriesRef.current = candlestickSeries;
 
-    // Prepare data - ensure we have 300 candles
+    // Prepare data
     const data = ensureEnoughCandles(priceHistory);
     console.log('Prepared data length:', data.length);
-    console.log('First candle:', data[0]);
-    console.log('Last candle:', data[data.length - 1]);
 
     // Convert to chart format
     const candleData = data.map(d => ({
@@ -212,40 +213,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }));
 
     candlestickSeries.setData(candleData);
+    allCandlesRef.current = [...candleData];
     
-    // Set price scale to show a reasonable range around the current price
-    const minPrice = Math.min(...data.map(d => d.low));
-    const maxPrice = Math.max(...data.map(d => d.high));
-    const currentPrice = data[data.length - 1].close;
-    
-    // Calculate a reasonable buffer around prices
-    const priceRange = maxPrice - minPrice;
-    const buffer = Math.max(currentPrice * 0.02, 5); // 2% or $5 minimum
-    
-    // Set price scale margins to prevent auto-scaling from making small moves look huge
-    if (priceRange < buffer * 2) {
-      // If the natural range is small, add padding
-      candlestickSeries.applyOptions({
-        priceScaleId: 'right',
-      });
-      
-      // Set the visible range manually
-      chart.priceScale('right').applyOptions({
-        autoScale: false,
-        scaleMargins: {
-          top: 0.2,
-          bottom: 0.2,
-        },
-      });
-      
-      // Use the series' built-in coordinate methods for v4
-      const priceToCoordinate = candlestickSeries.priceToCoordinate(currentPrice);
-      if (priceToCoordinate !== null) {
-        chart.timeScale().scrollToPosition(0, false);
-      }
-    }
-    
-    // Store the current candle for updates
     if (data.length > 0) {
       currentCandleRef.current = candleData[candleData.length - 1];
     }
@@ -260,7 +229,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
       setPriceChangePercent((change / firstCandle.open) * 100);
     }
 
-    chart.timeScale().fitContent();
+    // Scroll to the end to show latest data
+    chart.timeScale().scrollToRealTime();
     setIsLoading(false);
 
     // Handle resize
@@ -278,7 +248,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       window.removeEventListener('resize', handleResize);
       chart.remove();
     };
-  }, [priceHistory.length, interval]); // Only reinit when priceHistory length or interval changes
+  }, [priceHistory.length, interval]);
 
   // Update chart when current price changes
   useEffect(() => {
@@ -286,13 +256,39 @@ const PriceChart: React.FC<PriceChartProps> = ({
     
     setCurrentPrice(propCurrentPrice);
     
-    // Update the current candle with new price
     const now = Math.floor(Date.now() / 1000);
     const intervalSec = getIntervalMs(interval) / 1000;
     const currentCandleTime = Math.floor(now / intervalSec) * intervalSec;
     
-    if (currentCandleRef.current && currentCandleRef.current.time === currentCandleTime) {
-      // Update existing candle
+    // Check if we need to create a new candle
+    const needNewCandle = !currentCandleRef.current || currentCandleRef.current.time < currentCandleTime;
+    
+    if (needNewCandle) {
+      // Create new candle when time interval changes
+      const newCandle = {
+        time: currentCandleTime as Time,
+        open: currentCandleRef.current ? currentCandleRef.current.close : propCurrentPrice,
+        high: propCurrentPrice,
+        low: propCurrentPrice,
+        close: propCurrentPrice
+      };
+      
+      // Add the new candle to our data
+      allCandlesRef.current.push(newCandle);
+      
+      // Keep only the last 500 candles to prevent memory issues
+      if (allCandlesRef.current.length > 500) {
+        allCandlesRef.current = allCandlesRef.current.slice(-400);
+      }
+      
+      // Update the entire dataset
+      candlestickSeriesRef.current.setData(allCandlesRef.current);
+      currentCandleRef.current = newCandle;
+      
+      // Scroll to show the latest candle
+      chartRef.current.timeScale().scrollToRealTime();
+    } else {
+      // Update the current candle
       const updatedCandle = {
         time: currentCandleTime as Time,
         open: currentCandleRef.current.open,
@@ -301,48 +297,12 @@ const PriceChart: React.FC<PriceChartProps> = ({
         close: propCurrentPrice
       };
       
+      // Update the last candle in our array
+      allCandlesRef.current[allCandlesRef.current.length - 1] = updatedCandle;
+      
+      // Update just the current candle
       candlestickSeriesRef.current.update(updatedCandle);
       currentCandleRef.current = updatedCandle;
-    } else {
-      // Create new candle
-      const newCandle = {
-        time: currentCandleTime as Time,
-        open: propCurrentPrice,
-        high: propCurrentPrice,
-        low: propCurrentPrice,
-        close: propCurrentPrice
-      };
-      
-      candlestickSeriesRef.current.update(newCandle);
-      currentCandleRef.current = newCandle;
-    }
-    
-    // For v4, we'll control scale through the scale margins instead
-    // This prevents small price movements from looking huge
-    if (chartRef.current) {
-      const priceScale = chartRef.current.priceScale('right');
-      
-      // Calculate dynamic scale margins based on price movement
-      const percentMove = Math.abs((propCurrentPrice - (priceHistory[0]?.close || propCurrentPrice)) / propCurrentPrice);
-      
-      // Adjust margins based on volatility
-      let topMargin = 0.2;
-      let bottomMargin = 0.2;
-      
-      if (percentMove < 0.02) { // Less than 2% move
-        topMargin = 0.3;
-        bottomMargin = 0.3;
-      } else if (percentMove > 0.05) { // More than 5% move
-        topMargin = 0.1;
-        bottomMargin = 0.1;
-      }
-      
-      priceScale.applyOptions({
-        scaleMargins: {
-          top: topMargin,
-          bottom: bottomMargin,
-        },
-      });
     }
     
     // Update price change
