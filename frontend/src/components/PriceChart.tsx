@@ -32,7 +32,7 @@ interface PriceChartProps {
 
 const PriceChart: React.FC<PriceChartProps> = ({ 
   symbol = 'BTC/USDT',
-  interval = '1m',
+  interval = '1m', // Changed to 1 minute for better visibility
   priceHistory = [],
   currentPrice: propCurrentPrice,
   trades = [],
@@ -44,17 +44,17 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const candlesRef = useRef<any[]>([]);
   
   const [isLoading, setIsLoading] = useState(true);
-  const [displayPrice, setDisplayPrice] = useState<number>(30000 + Math.random() * 40000);
+  const [displayPrice, setDisplayPrice] = useState<number>(20000 + Math.random() * 60000);
   const [priceChange, setPriceChange] = useState<number>(0);
   const [priceChangePercent, setPriceChangePercent] = useState<number>(0);
   const [scenarioActive, setScenarioActive] = useState<boolean>(true);
   
   // Price interpolation state
   const priceStateRef = useRef({
-    currentPrice: 30000 + Math.random() * 40000,
-    targetPrice: 30000 + Math.random() * 40000,
+    currentPrice: 20000 + Math.random() * 60000,
+    targetPrice: 20000 + Math.random() * 60000,
     lastUpdateTime: Date.now(),
-    interpolationStartPrice: 30000 + Math.random() * 40000,
+    interpolationStartPrice: 20000 + Math.random() * 60000,
     interpolationStartTime: Date.now()
   });
 
@@ -68,7 +68,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       '4h': 14400000,
       '1d': 86400000
     };
-    return map[interval] || 60000;
+    return map[interval] || 3600000;
   }, []);
 
   // Smooth interpolation function
@@ -103,21 +103,19 @@ const PriceChart: React.FC<PriceChartProps> = ({
           top: 0.1,
           bottom: 0.1,
         },
-        autoScale: true,
       },
       timeScale: {
         borderVisible: false,
         timeVisible: true,
         secondsVisible: true,
-        rightOffset: 5, // Keep some space on the right
+        rightOffset: 2,
         barSpacing: 12,
         minBarSpacing: 8,
         fixLeftEdge: false,
         fixRightEdge: false,
         lockVisibleTimeRangeOnResize: true,
         rightBarStaysOnScroll: true,
-        borderColor: '#2a2e39',
-        visible: true,
+        borderColor: '#2B2B43',
       },
       crosshair: {
         mode: 0,
@@ -301,17 +299,23 @@ const PriceChart: React.FC<PriceChartProps> = ({
     candlesRef.current = candles;
     candlestickSeries.setData(candles);
     
-    // Set initial visible range to show last 50 candles
+    // Calculate initial price change
     if (candles.length > 0) {
-      const visibleCandles = 50;
-      const from = candles[Math.max(0, candles.length - visibleCandles)].time;
-      const to = candles[candles.length - 1].time;
-      chart.timeScale().setVisibleRange({ from, to });
-      
       const firstPrice = candles[0].open;
       const lastPrice = candles[candles.length - 1].close;
       setPriceChange(lastPrice - firstPrice);
       setPriceChangePercent(((lastPrice - firstPrice) / firstPrice) * 100);
+    }
+
+    // Set initial visible range to show last 50 candles
+    const visibleCandles = 50;
+    if (candles.length > visibleCandles) {
+      const firstVisibleCandle = candles[candles.length - visibleCandles];
+      const lastVisibleCandle = candles[candles.length - 1];
+      chart.timeScale().setVisibleRange({
+        from: firstVisibleCandle.time,
+        to: lastVisibleCandle.time
+      });
     }
 
     setIsLoading(false);
@@ -347,13 +351,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }
   }, [propCurrentPrice]);
 
-  // Real-time price updates with smooth interpolation and scrolling
+  // Real-time price updates with smooth interpolation
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current || isLoading) return;
 
     const intervalMs = getIntervalMs(interval);
     let lastCandleTime = candlesRef.current[candlesRef.current.length - 1]?.time || 0;
-    let lastScrollTime = Date.now();
+    let currentCandleStartTime = lastCandleTime * 1000; // Convert back to milliseconds
 
     // Update loop - runs frequently for smooth price movement
     const updateInterval = setInterval(() => {
@@ -393,9 +397,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
         
         candlesRef.current.push(newCandle);
         
-        // Keep a reasonable number of candles in memory
-        if (candlesRef.current.length > 500) {
-          candlesRef.current = candlesRef.current.slice(-300);
+        // Keep last 150 candles
+        if (candlesRef.current.length > 150) {
+          candlesRef.current.shift();
         }
         
         // Update the entire dataset
@@ -403,14 +407,21 @@ const PriceChart: React.FC<PriceChartProps> = ({
         
         // Update tracking variables
         lastCandleTime = currentCandleTime;
+        currentCandleStartTime = currentCandleTime * 1000;
         
-        // Scroll to show latest candles
-        const visibleCandles = 50;
-        const allCandles = candlesRef.current;
-        if (allCandles.length > visibleCandles && chartRef.current) {
-          const from = allCandles[allCandles.length - visibleCandles].time;
-          const to = allCandles[allCandles.length - 1].time;
-          chartRef.current.timeScale().setVisibleRange({ from, to });
+        // Auto-scroll to show latest candles with some history
+        if (chartRef.current) {
+          const visibleLogicalRange = chartRef.current.timeScale().getVisibleLogicalRange();
+          if (visibleLogicalRange) {
+            const barsToShow = 50; // Number of candles to keep visible
+            const endIndex = candlesRef.current.length - 1;
+            const startIndex = Math.max(0, endIndex - barsToShow + 1);
+            
+            chartRef.current.timeScale().setVisibleLogicalRange({
+              from: startIndex,
+              to: endIndex + 1 // Add 1 to show some empty space on the right
+            });
+          }
         }
       } else {
         // Update current candle (the last one in the array)
@@ -434,27 +445,14 @@ const PriceChart: React.FC<PriceChartProps> = ({
         }
       }
       
-      // Smooth continuous scrolling - update visible range frequently
-      if (now - lastScrollTime > 1000) { // Every second
-        const visibleCandles = 50;
-        const allCandles = candlesRef.current;
-        if (allCandles.length > visibleCandles && chartRef.current) {
-          const from = allCandles[Math.max(0, allCandles.length - visibleCandles)].time;
-          const to = allCandles[allCandles.length - 1].time;
-          chartRef.current.timeScale().setVisibleRange({ from, to });
-        }
-        lastScrollTime = now;
-      }
-      
       // Update display
       setDisplayPrice(currentPrice);
       
-      const visibleCandles = candlesRef.current.slice(-50);
-      if (visibleCandles.length > 0) {
-        const firstVisible = visibleCandles[0];
-        const change = currentPrice - firstVisible.open;
+      const firstCandle = candlesRef.current[0];
+      if (firstCandle) {
+        const change = currentPrice - firstCandle.open;
         setPriceChange(change);
-        setPriceChangePercent((change / firstVisible.open) * 100);
+        setPriceChangePercent((change / firstCandle.open) * 100);
       }
     }, 100); // Update every 100ms for smooth movement
 
