@@ -143,8 +143,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const now = Date.now();
     const candleCount = 100;
     
-    // Generate random starting price between $20,000 and $80,000
-    const randomStartPrice = 20000 + Math.random() * 60000;
+    // Generate random starting price between $30,000 and $70,000
+    const randomStartPrice = 30000 + Math.random() * 40000;
     let currentPrice = propCurrentPrice || randomStartPrice;
     
     priceStateRef.current = {
@@ -156,42 +156,115 @@ const PriceChart: React.FC<PriceChartProps> = ({
     };
     setDisplayPrice(currentPrice);
     
-    // Generate historical candles with random trending patterns
+    // Generate realistic historical candles
     const candles = [];
     
-    // Random market trend for this simulation
-    const trendBias = (Math.random() - 0.5) * 0.02; // -1% to +1% per candle
-    const baseVolatility = 0.002 + Math.random() * 0.003; // 0.2% to 0.5%
+    // Market state for realistic price generation
+    let trend = 0; // -1 to 1
     let momentum = 0;
+    let volatility = 0.003; // 0.3% base
+    let supportLevel = currentPrice * 0.98;
+    let resistanceLevel = currentPrice * 1.02;
+    
+    // Pattern state
+    let patternType = 'ranging'; // 'trending_up', 'trending_down', 'ranging', 'breakout'
+    let patternDuration = 0;
+    let consolidationCenter = currentPrice;
     
     for (let i = 0; i < candleCount; i++) {
       const time = Math.floor((now - (candleCount - i) * intervalMs) / 1000);
       
-      // Add momentum and trend to create more realistic patterns
-      momentum = momentum * 0.9 + (Math.random() - 0.5 + trendBias) * 0.1;
+      // Decide on pattern changes
+      patternDuration++;
+      if (patternDuration > 15 + Math.random() * 20) { // 15-35 candles per pattern
+        patternDuration = 0;
+        const rand = Math.random();
+        if (rand < 0.3) {
+          patternType = 'trending_up';
+          resistanceLevel = currentPrice * (1.05 + Math.random() * 0.05);
+        } else if (rand < 0.6) {
+          patternType = 'trending_down';
+          supportLevel = currentPrice * (0.90 + Math.random() * 0.05);
+        } else if (rand < 0.8) {
+          patternType = 'ranging';
+          consolidationCenter = currentPrice;
+          supportLevel = currentPrice * 0.98;
+          resistanceLevel = currentPrice * 1.02;
+        } else {
+          patternType = 'breakout';
+        }
+      }
       
-      // Generate OHLC with trend influence
+      // Generate price based on pattern
       const open = currentPrice;
-      const trendEffect = currentPrice * momentum * baseVolatility;
+      let close = open;
       
-      // Create realistic candle with trend
-      const candleVolatility = baseVolatility * (0.5 + Math.random());
-      const direction = Math.random() > 0.5 ? 1 : -1;
+      switch (patternType) {
+        case 'trending_up':
+          // Gradual move up with pullbacks
+          momentum = momentum * 0.8 + 0.2;
+          trend = trend * 0.9 + 0.1;
+          close = open * (1 + (trend * 0.003 + (Math.random() - 0.3) * volatility));
+          
+          // Occasional pullback
+          if (Math.random() < 0.3) {
+            close = open * (1 - Math.random() * volatility * 0.5);
+          }
+          break;
+          
+        case 'trending_down':
+          // Gradual move down with bounces
+          momentum = momentum * 0.8 - 0.2;
+          trend = trend * 0.9 - 0.1;
+          close = open * (1 + (trend * 0.003 + (Math.random() - 0.7) * volatility));
+          
+          // Occasional bounce
+          if (Math.random() < 0.3) {
+            close = open * (1 + Math.random() * volatility * 0.5);
+          }
+          break;
+          
+        case 'ranging':
+          // Oscillate around center
+          const distanceFromCenter = (open - consolidationCenter) / consolidationCenter;
+          const pullToCenter = -distanceFromCenter * 0.1;
+          trend = trend * 0.8 + pullToCenter;
+          close = open * (1 + trend * volatility + (Math.random() - 0.5) * volatility * 0.5);
+          break;
+          
+        case 'breakout':
+          // Sudden move with increased volatility
+          const breakoutDirection = Math.random() > 0.5 ? 1 : -1;
+          volatility = 0.008; // Increase volatility
+          close = open * (1 + breakoutDirection * (0.005 + Math.random() * 0.005));
+          patternType = breakoutDirection > 0 ? 'trending_up' : 'trending_down';
+          break;
+      }
       
-      // Calculate high/low with trend bias
-      let high, low, close;
+      // Respect support and resistance
+      if (close > resistanceLevel && Math.random() < 0.7) {
+        close = resistanceLevel * (0.998 + Math.random() * 0.002);
+      }
+      if (close < supportLevel && Math.random() < 0.7) {
+        close = supportLevel * (1 + Math.random() * 0.002);
+      }
       
-      if (direction > 0) {
+      // Generate realistic wicks
+      let high, low;
+      const wickSize = volatility * (0.5 + Math.random());
+      
+      if (close > open) {
         // Bullish candle
-        high = open + Math.abs(trendEffect) + (currentPrice * candleVolatility * Math.random());
-        low = open - (currentPrice * candleVolatility * 0.3 * Math.random());
-        close = low + Math.random() * (high - low) * 0.7 + (high - low) * 0.3; // Bias toward high
+        high = Math.max(open, close) * (1 + wickSize * (0.3 + Math.random() * 0.7));
+        low = Math.min(open, close) * (1 - wickSize * (0.1 + Math.random() * 0.3));
       } else {
         // Bearish candle
-        high = open + (currentPrice * candleVolatility * 0.3 * Math.random());
-        low = open - Math.abs(trendEffect) - (currentPrice * candleVolatility * Math.random());
-        close = low + Math.random() * (high - low) * 0.3; // Bias toward low
+        high = Math.max(open, close) * (1 + wickSize * (0.1 + Math.random() * 0.3));
+        low = Math.min(open, close) * (1 - wickSize * (0.3 + Math.random() * 0.7));
       }
+      
+      // Ensure price doesn't go negative
+      low = Math.max(low, open * 0.9);
       
       candles.push({
         time: time as Time,
@@ -203,10 +276,19 @@ const PriceChart: React.FC<PriceChartProps> = ({
       
       currentPrice = close;
       
-      // Occasionally change trend direction
-      if (Math.random() < 0.1) {
-        momentum *= -0.5;
+      // Update support/resistance occasionally
+      if (i % 10 === 0) {
+        const recentPrices = candles.slice(-20).map(c => c.close);
+        if (recentPrices.length > 0) {
+          const maxPrice = Math.max(...recentPrices);
+          const minPrice = Math.min(...recentPrices);
+          resistanceLevel = maxPrice * 1.01;
+          supportLevel = minPrice * 0.99;
+        }
       }
+      
+      // Decay volatility back to normal
+      volatility = Math.max(0.003, volatility * 0.98);
     }
     
     candlesRef.current = candles;
