@@ -32,7 +32,7 @@ interface PriceChartProps {
 
 const PriceChart: React.FC<PriceChartProps> = ({ 
   symbol = 'BTC/USDT',
-  interval = '1h',
+  interval = '1m', // Changed to 1 minute for better visibility
   priceHistory = [],
   currentPrice: propCurrentPrice,
   trades = [],
@@ -107,10 +107,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
       timeScale: {
         borderVisible: false,
         timeVisible: true,
-        secondsVisible: false,
+        secondsVisible: true,
         rightOffset: 12,
         barSpacing: 12,
         minBarSpacing: 8,
+        fixLeftEdge: true,
+        fixRightEdge: true,
+        lockVisibleTimeRangeOnResize: true,
       },
       crosshair: {
         mode: 0,
@@ -341,6 +344,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
     const intervalMs = getIntervalMs(interval);
     let lastCandleTime = candlesRef.current[candlesRef.current.length - 1]?.time || 0;
+    let currentCandleStartTime = lastCandleTime * 1000; // Convert back to milliseconds
 
     // Update loop - runs frequently for smooth price movement
     const updateInterval = setInterval(() => {
@@ -364,17 +368,15 @@ const PriceChart: React.FC<PriceChartProps> = ({
       const microMovement = interpolatedPrice * (0.0001 * (Math.random() - 0.5));
       const currentPrice = interpolatedPrice + microMovement;
       
-      // Get current candle
-      const currentCandleIndex = candlesRef.current.length - 1;
-      const currentCandle = candlesRef.current[currentCandleIndex];
-      
-      if (!currentCandle) return;
-      
+      // Check if we need a new candle
       if (currentCandleTime > lastCandleTime) {
+        // Get the last completed candle
+        const lastCandle = candlesRef.current[candlesRef.current.length - 1];
+        
         // Create new candle
         const newCandle = {
           time: currentCandleTime as Time,
-          open: parseFloat(currentCandle.close.toFixed(2)),
+          open: parseFloat(lastCandle.close.toFixed(2)),
           high: parseFloat(currentPrice.toFixed(2)),
           low: parseFloat(currentPrice.toFixed(2)),
           close: parseFloat(currentPrice.toFixed(2))
@@ -387,23 +389,37 @@ const PriceChart: React.FC<PriceChartProps> = ({
           candlesRef.current.shift();
         }
         
+        // Update the entire dataset
         seriesRef.current.setData(candlesRef.current);
-        lastCandleTime = currentCandleTime;
         
+        // Update tracking variables
+        lastCandleTime = currentCandleTime;
+        currentCandleStartTime = currentCandleTime * 1000;
+        
+        // Auto-scroll to show latest candles
         if (chartRef.current) {
           chartRef.current.timeScale().scrollToRealTime();
         }
       } else {
-        // Update current candle smoothly
-        const updatedCandle = {
-          ...currentCandle,
-          close: parseFloat(currentPrice.toFixed(2)),
-          high: parseFloat(Math.max(currentCandle.high, currentPrice).toFixed(2)),
-          low: parseFloat(Math.min(currentCandle.low, currentPrice).toFixed(2))
-        };
+        // Update current candle (the last one in the array)
+        const currentCandleIndex = candlesRef.current.length - 1;
+        const currentCandle = candlesRef.current[currentCandleIndex];
         
-        candlesRef.current[currentCandleIndex] = updatedCandle;
-        seriesRef.current.update(updatedCandle);
+        if (currentCandle) {
+          // Update the candle with new price data
+          const updatedCandle = {
+            ...currentCandle,
+            close: parseFloat(currentPrice.toFixed(2)),
+            high: parseFloat(Math.max(currentCandle.high, currentPrice).toFixed(2)),
+            low: parseFloat(Math.min(currentCandle.low, currentPrice).toFixed(2))
+          };
+          
+          // Update in our data array
+          candlesRef.current[currentCandleIndex] = updatedCandle;
+          
+          // Update just this candle on the chart
+          seriesRef.current.update(updatedCandle);
+        }
       }
       
       // Update display
