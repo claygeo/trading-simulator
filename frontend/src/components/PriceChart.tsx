@@ -53,7 +53,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const priceStateRef = useRef({
     currentPrice: 50000,
     trend: 0, // -1 to 1
-    volatility: 0.002, // 0.2% base volatility
+    volatility: 0.001, // 0.1% base volatility - reduced for smoother movement
     momentum: 0,
     lastUpdateTime: Date.now()
   });
@@ -75,47 +75,47 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const generateNextPrice = useCallback((currentPrice: number): number => {
     const state = priceStateRef.current;
     
-    // Base random walk
+    // Smaller, more realistic movements
     const randomWalk = (Math.random() - 0.5) * 2;
     
-    // Trend component (mean reversion)
-    state.trend = state.trend * 0.98 + randomWalk * 0.02;
+    // Trend component with strong mean reversion for stability
+    state.trend = state.trend * 0.95 + randomWalk * 0.05;
     
-    // Momentum (smooths price movement)
-    state.momentum = state.momentum * 0.95 + state.trend * 0.05;
+    // Momentum (smooths price movement even more)
+    state.momentum = state.momentum * 0.98 + state.trend * 0.02;
     
-    // Calculate price change
-    let priceChangePercent = state.momentum * state.volatility;
+    // Calculate price change - smaller base volatility
+    let priceChangePercent = state.momentum * state.volatility * 0.5; // Reduced by 50%
     
-    // Apply scenario influence if active
+    // Apply scenario influence if active (also reduced)
     if (scenarioActive && scenarioData && scenarioData.phase) {
       const phase = scenarioData.phase;
-      const scenarioInfluence = phase.priceAction.intensity * 0.001;
+      const scenarioInfluence = phase.priceAction.intensity * 0.0005; // Reduced from 0.001
       
       switch (phase.priceAction.type) {
         case 'trend':
           priceChangePercent += scenarioInfluence * (phase.priceAction.direction === 'up' ? 1 : -1);
           break;
         case 'breakout':
-          priceChangePercent += scenarioInfluence * 1.5 * (phase.priceAction.direction === 'up' ? 1 : -1);
-          state.volatility = Math.min(0.005, state.volatility * 1.2);
+          priceChangePercent += scenarioInfluence * 1.2 * (phase.priceAction.direction === 'up' ? 1 : -1);
+          state.volatility = Math.min(0.003, state.volatility * 1.1); // Reduced max volatility
           break;
         case 'crash':
-          priceChangePercent -= scenarioInfluence * 2;
-          state.volatility = Math.min(0.008, state.volatility * 1.5);
+          priceChangePercent -= scenarioInfluence * 1.5;
+          state.volatility = Math.min(0.004, state.volatility * 1.2);
           break;
         case 'pump':
-          priceChangePercent += scenarioInfluence * 1.8;
-          state.volatility = Math.min(0.006, state.volatility * 1.3);
+          priceChangePercent += scenarioInfluence * 1.3;
+          state.volatility = Math.min(0.0035, state.volatility * 1.15);
           break;
         case 'consolidation':
-          state.volatility = Math.max(0.001, state.volatility * 0.9);
+          state.volatility = Math.max(0.0005, state.volatility * 0.95); // Lower minimum
           break;
       }
     }
     
     // Natural volatility decay
-    state.volatility = Math.max(0.002, state.volatility * 0.995);
+    state.volatility = Math.max(0.001, state.volatility * 0.998); // Slower decay, lower minimum
     
     // Apply price change
     const newPrice = currentPrice * (1 + priceChangePercent);
@@ -256,19 +256,26 @@ const PriceChart: React.FC<PriceChartProps> = ({
     if (!seriesRef.current || !chartRef.current || isLoading) return;
 
     const intervalMs = getIntervalMs(interval);
-    let currentCandle = candlesRef.current[candlesRef.current.length - 1];
-    if (!currentCandle) return;
+    
+    // Track last candle time to detect new candle creation
+    let lastCandleTime = candlesRef.current[candlesRef.current.length - 1]?.time || 0;
 
     // Price update loop - smooth updates
     const priceUpdateInterval = setInterval(() => {
       const now = Date.now();
       const currentCandleTime = Math.floor(now / intervalMs) * intervalMs / 1000;
       
+      // Get the current candle (always the last one in our array)
+      const currentCandleIndex = candlesRef.current.length - 1;
+      const currentCandle = candlesRef.current[currentCandleIndex];
+      
+      if (!currentCandle) return;
+      
       // Use prop price if provided, otherwise generate
       const newPrice = propCurrentPrice || generateNextPrice(priceStateRef.current.currentPrice);
       
-      if (currentCandleTime > currentCandle.time) {
-        // Start new candle
+      if (currentCandleTime > lastCandleTime) {
+        // Time for a new candle
         const newCandle = {
           time: currentCandleTime as Time,
           open: parseFloat(currentCandle.close.toFixed(2)),
@@ -281,26 +288,34 @@ const PriceChart: React.FC<PriceChartProps> = ({
         
         // Keep last 150 candles
         if (candlesRef.current.length > 150) {
-          candlesRef.current = candlesRef.current.slice(-150);
+          candlesRef.current.shift();
         }
         
+        // Use setData only when adding new candle
         seriesRef.current.setData(candlesRef.current);
-        currentCandle = newCandle;
+        lastCandleTime = currentCandleTime;
         
         // Scroll to latest
         if (chartRef.current) {
           chartRef.current.timeScale().scrollToRealTime();
         }
       } else {
-        // Update current candle
-        currentCandle.close = parseFloat(newPrice.toFixed(2));
-        currentCandle.high = parseFloat(Math.max(currentCandle.high, newPrice).toFixed(2));
-        currentCandle.low = parseFloat(Math.min(currentCandle.low, newPrice).toFixed(2));
+        // Update only the current candle - no setData!
+        const updatedCandle = {
+          ...currentCandle,
+          close: parseFloat(newPrice.toFixed(2)),
+          high: parseFloat(Math.max(currentCandle.high, newPrice).toFixed(2)),
+          low: parseFloat(Math.min(currentCandle.low, newPrice).toFixed(2))
+        };
         
-        seriesRef.current.update(currentCandle);
+        // Update our reference
+        candlesRef.current[currentCandleIndex] = updatedCandle;
+        
+        // Use update() method for smooth updates
+        seriesRef.current.update(updatedCandle);
       }
       
-      // Update display values
+      // Update display values smoothly
       setDisplayPrice(newPrice);
       
       const firstCandle = candlesRef.current[0];
