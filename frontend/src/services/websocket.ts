@@ -12,19 +12,24 @@ interface WebSocketMessage {
   };
 }
 
-export const useWebSocket = (simulationId?: string) => {
+export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
   const [messages, setMessages] = useState<WebSocketMessage[]>([]);
   
-  // Store the simulationId in a ref to avoid dependency issues
+  // Store the simulationId and pause state in refs to avoid dependency issues
   const simulationIdRef = useRef<string | undefined>(simulationId);
+  const isPausedRef = useRef<boolean>(isPaused || false);
   
-  // Update the ref when the simulationId changes
+  // Update the refs when the values change
   useEffect(() => {
     simulationIdRef.current = simulationId;
   }, [simulationId]);
+
+  useEffect(() => {
+    isPausedRef.current = isPaused || false;
+  }, [isPaused]);
 
   // Track the last processed message to avoid duplicate processing
   const lastProcessedMessageRef = useRef<string>('');
@@ -63,6 +68,11 @@ export const useWebSocket = (simulationId?: string) => {
         
         // Only process messages for our current simulation
         if (simulationIdRef.current && message.simulationId !== simulationIdRef.current) {
+          return;
+        }
+        
+        // Skip price updates when paused
+        if (isPausedRef.current && message.event.type === 'price_update') {
           return;
         }
         
@@ -109,11 +119,23 @@ export const useWebSocket = (simulationId?: string) => {
     }
   };
   
+  // Function to notify server about pause state
+  const setPauseState = (paused: boolean) => {
+    if (socket && isConnected && simulationIdRef.current) {
+      socket.send(JSON.stringify({
+        type: 'setPauseState',
+        simulationId: simulationIdRef.current,
+        isPaused: paused
+      }));
+    }
+  };
+  
   return {
     socket,
     isConnected,
     lastMessage,
     messages,
-    sendMessage
+    sendMessage,
+    setPauseState
   };
 };
