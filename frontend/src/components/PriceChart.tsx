@@ -118,8 +118,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
         rightBarStaysOnScroll: true,
         borderColor: '#2a2e39',
         visible: true,
-        timeVisible: true,
-        secondsVisible: true,
       },
       crosshair: {
         mode: 0,
@@ -409,7 +407,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         // Scroll to show latest candles
         const visibleCandles = 50;
         const allCandles = candlesRef.current;
-        if (allCandles.length > visibleCandles) {
+        if (allCandles.length > visibleCandles && chartRef.current) {
           const from = allCandles[allCandles.length - visibleCandles].time;
           const to = allCandles[allCandles.length - 1].time;
           chartRef.current.timeScale().setVisibleRange({ from, to });
