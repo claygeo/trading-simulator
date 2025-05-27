@@ -35,6 +35,11 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
   const lastProcessedMessageRef = useRef<string>('');
   
   useEffect(() => {
+    // Only create connection if we have a simulationId
+    if (!simulationId) {
+      return;
+    }
+
     // Create WebSocket connection
     const ws = new WebSocket(WS_BASE_URL);
     
@@ -42,18 +47,40 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       console.log('WebSocket connected');
       setIsConnected(true);
       
-      // If a simulation ID is provided, send a message to subscribe to that simulation
-      if (simulationIdRef.current) {
-        ws.send(JSON.stringify({ 
-          type: 'subscribe', 
-          simulationId: simulationIdRef.current 
-        }));
-      }
+      // Subscribe to the simulation
+      ws.send(JSON.stringify({ 
+        type: 'subscribe', 
+        simulationId: simulationIdRef.current 
+      }));
     };
     
     ws.onmessage = (event) => {
       try {
-        const message = JSON.parse(event.data) as WebSocketMessage;
+        const rawData = event.data;
+        
+        // Handle different message formats
+        let message: WebSocketMessage;
+        
+        if (typeof rawData === 'string') {
+          const parsed = JSON.parse(rawData);
+          
+          // Check if this is a status message or other non-simulation message
+          if (parsed.type && !parsed.simulationId) {
+            console.log('Received status message:', parsed);
+            return;
+          }
+          
+          // Validate the message structure
+          if (!parsed.simulationId || !parsed.event || !parsed.event.type) {
+            console.warn('Invalid message structure:', parsed);
+            return;
+          }
+          
+          message = parsed as WebSocketMessage;
+        } else {
+          console.warn('Received non-string WebSocket message:', rawData);
+          return;
+        }
         
         // Create a unique identifier for this message to avoid duplicate processing
         const messageId = `${message.simulationId}-${message.event.type}-${message.event.timestamp}`;
@@ -87,7 +114,8 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
           return newMessages;
         });
       } catch (error) {
-        console.error('Error parsing message:', error);
+        console.error('Error parsing WebSocket message:', error);
+        console.error('Raw message:', event.data);
       }
     };
     
@@ -102,13 +130,13 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     
     setSocket(ws);
     
-    // Clean up on unmount
+    // Clean up on unmount or when simulationId changes
     return () => {
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
       }
     };
-  }, []); // Empty dependency array to only create the connection once
+  }, [simulationId]); // Only recreate connection when simulationId changes
   
   // Function to send messages to the server
   const sendMessage = (message: any) => {
