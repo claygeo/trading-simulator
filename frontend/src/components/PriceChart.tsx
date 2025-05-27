@@ -48,24 +48,44 @@ const PriceChart: React.FC<PriceChartProps> = ({
   // Enhanced price generation based on scenario phase
   const generateScenarioPrice = (basePrice: number, phase: any, progress: number): number => {
     if (!phase) {
-      // Default realistic random walk
-      const change = (Math.random() - 0.5) * 0.001 * basePrice;
-      const momentum = Math.random() < 0.7 ? change * 0.5 : change; // 70% chance of continuing direction
-      return basePrice + change + momentum;
+      // Default realistic random walk with tendency to consolidate
+      const consolidationChance = Math.random();
+      
+      if (consolidationChance < 0.6) {
+        // 60% chance of sideways movement
+        const change = (Math.random() - 0.5) * 0.0005 * basePrice;
+        return basePrice + change;
+      } else if (consolidationChance < 0.8) {
+        // 20% chance of small trend
+        const direction = Math.random() > 0.5 ? 1 : -1;
+        const change = direction * (0.0005 + Math.random() * 0.0005) * basePrice;
+        return basePrice + change;
+      } else {
+        // 20% chance of larger move
+        const direction = Math.random() > 0.5 ? 1 : -1;
+        const change = direction * (0.001 + Math.random() * 0.001) * basePrice;
+        return basePrice + change;
+      }
     }
 
     const { priceAction } = phase;
     let priceChange = 0;
     
     // Base random component for all movements
-    const randomness = (Math.random() - 0.5) * 0.0005 * basePrice;
+    const randomness = (Math.random() - 0.5) * 0.0003 * basePrice;
     
     switch (priceAction.type) {
       case 'trend':
-        // Steady movement with noise
-        const trendStrength = priceAction.intensity * 0.0008;
+        // Steady movement with pauses
+        const trendStrength = priceAction.intensity * 0.0005;
         const direction = priceAction.direction === 'up' ? 1 : priceAction.direction === 'down' ? -1 : 0;
-        priceChange = direction * trendStrength * basePrice + randomness * 2;
+        const pauseChance = Math.random();
+        if (pauseChance < 0.3) {
+          // 30% chance of pause in trend
+          priceChange = randomness * 2;
+        } else {
+          priceChange = direction * trendStrength * basePrice + randomness;
+        }
         break;
         
       case 'consolidation':
@@ -76,38 +96,38 @@ const PriceChart: React.FC<PriceChartProps> = ({
         
       case 'breakout':
         // Sharp move with follow-through
-        const breakoutStrength = priceAction.intensity * 0.002;
+        const breakoutStrength = priceAction.intensity * 0.0015;
         const breakoutDirection = priceAction.direction === 'up' ? 1 : -1;
-        const followThrough = progress < 0.3 ? 1.5 : 0.7; // Strong at start, weaker later
+        const followThrough = progress < 0.3 ? 1.2 : 0.6; // Strong at start, weaker later
         priceChange = breakoutDirection * breakoutStrength * basePrice * followThrough + randomness;
         break;
         
       case 'crash':
         // Cascading downward movement
-        const crashStrength = priceAction.intensity * 0.003;
-        const panic = progress < 0.5 ? 1.2 : 0.6; // Panic selling early, then stabilization
+        const crashStrength = priceAction.intensity * 0.002;
+        const panic = progress < 0.5 ? 1.2 : 0.5; // Panic selling early, then stabilization
         priceChange = -crashStrength * basePrice * panic + randomness;
         break;
         
       case 'pump':
         // FOMO-driven upward movement
-        const pumpStrength = priceAction.intensity * 0.002;
-        const fomo = progress < 0.4 ? 1.3 : 0.5; // Strong FOMO early, then exhaustion
+        const pumpStrength = priceAction.intensity * 0.0015;
+        const fomo = progress < 0.4 ? 1.2 : 0.4; // Strong FOMO early, then exhaustion
         priceChange = pumpStrength * basePrice * fomo + randomness;
         break;
         
       case 'accumulation':
         // Quiet buying with occasional pops
-        const accumStrength = priceAction.intensity * 0.0005;
+        const accumStrength = priceAction.intensity * 0.0004;
         const accumDirection = priceAction.direction === 'up' ? 1 : -1;
-        const pop = Math.random() < 0.1 ? 2 : 1; // 10% chance of a pop
+        const pop = Math.random() < 0.05 ? 1.5 : 1; // 5% chance of a pop
         priceChange = accumDirection * accumStrength * basePrice * pop + randomness;
         break;
         
       case 'distribution':
         // Quiet selling with occasional dumps
-        const distStrength = priceAction.intensity * 0.0006;
-        const dump = Math.random() < 0.1 ? 2 : 1; // 10% chance of a dump
+        const distStrength = priceAction.intensity * 0.0005;
+        const dump = Math.random() < 0.05 ? 1.5 : 1; // 5% chance of a dump
         priceChange = -distStrength * basePrice * dump + randomness;
         break;
         
@@ -192,73 +212,110 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const initialData = [];
     
     // Create realistic price movements without patterns
-    let trendDirection = Math.random() > 0.5 ? 1 : -1;
+    let trendDirection = 0; // Start neutral (0 = sideways, 1 = up, -1 = down)
     let trendStrength = 0;
-    let supportLevel = currentPrice * 0.98;
-    let resistanceLevel = currentPrice * 1.02;
+    let consolidationCounter = 0;
+    let trendCounter = 0;
+    let lastPriceLevel = currentPrice;
     
     for (let i = 0; i < candleCount; i++) {
       const time = startTime + (i * intervalSec);
       
-      // Random walk with occasional trend changes
+      // Implement more realistic market phases
       let priceChange = 0;
       
-      // Change trend occasionally (10% chance)
-      if (Math.random() < 0.1) {
-        trendDirection = Math.random() > 0.5 ? 1 : -1;
-        trendStrength = Math.random() * 0.002;
-      }
-      
-      // Base movement: random walk with slight trend
-      const randomWalk = (Math.random() - 0.5) * 0.002 * currentPrice;
-      const trendComponent = trendDirection * trendStrength * currentPrice;
-      
-      // Support and resistance behavior
-      if (currentPrice > resistanceLevel && Math.random() < 0.7) {
-        // Resistance rejection
-        priceChange = -Math.abs(randomWalk) * 1.5;
-      } else if (currentPrice < supportLevel && Math.random() < 0.7) {
-        // Support bounce
-        priceChange = Math.abs(randomWalk) * 1.5;
+      // Determine market phase
+      if (consolidationCounter > 0) {
+        // Sideways/consolidation phase
+        consolidationCounter--;
+        trendDirection = 0;
+        
+        // Price oscillates around a level
+        const meanReversion = (lastPriceLevel - currentPrice) * 0.1;
+        const noise = (Math.random() - 0.5) * 0.001 * currentPrice;
+        priceChange = meanReversion + noise;
+        
+      } else if (trendCounter > 0) {
+        // Trending phase
+        trendCounter--;
+        
+        // Trend with some noise
+        const trendMove = trendDirection * trendStrength * currentPrice;
+        const noise = (Math.random() - 0.5) * 0.001 * currentPrice;
+        priceChange = trendMove + noise;
+        
+        // Occasionally pause the trend (20% chance)
+        if (Math.random() < 0.2) {
+          priceChange = noise; // Just noise, no trend
+        }
+        
       } else {
-        // Normal movement
-        priceChange = randomWalk + trendComponent;
+        // Decide on next phase
+        const phaseRoll = Math.random();
+        
+        if (phaseRoll < 0.5) {
+          // Start consolidation (50% chance)
+          consolidationCounter = 5 + Math.floor(Math.random() * 10); // 5-15 candles
+          lastPriceLevel = currentPrice;
+          trendDirection = 0;
+          
+        } else if (phaseRoll < 0.75) {
+          // Start uptrend (25% chance)
+          trendCounter = 3 + Math.floor(Math.random() * 7); // 3-10 candles
+          trendDirection = 1;
+          trendStrength = 0.0005 + Math.random() * 0.0015; // 0.05% - 0.2% per candle
+          
+        } else {
+          // Start downtrend (25% chance)
+          trendCounter = 3 + Math.floor(Math.random() * 7); // 3-10 candles
+          trendDirection = -1;
+          trendStrength = 0.0005 + Math.random() * 0.0015; // 0.05% - 0.2% per candle
+        }
+        
+        // This candle is transition, small random move
+        priceChange = (Math.random() - 0.5) * 0.0005 * currentPrice;
       }
       
-      // Occasional volatility spikes (5% chance)
-      if (Math.random() < 0.05) {
-        priceChange *= (2 + Math.random() * 2); // 2-4x normal movement
+      // Add occasional volatility spikes (3% chance)
+      if (Math.random() < 0.03) {
+        const spikeDirection = Math.random() > 0.5 ? 1 : -1;
+        priceChange += spikeDirection * (0.002 + Math.random() * 0.003) * currentPrice;
       }
       
-      // Update support/resistance levels occasionally
-      if (i % 10 === 0) {
-        supportLevel = currentPrice * (0.96 + Math.random() * 0.02);
-        resistanceLevel = currentPrice * (1.02 + Math.random() * 0.02);
-      }
-      
+      // Prevent price from going negative
       const open = currentPrice;
       const close = Math.max(currentPrice + priceChange, 0.01);
       
       // Realistic candle body and wick generation
       const bodySize = Math.abs(close - open);
-      const isGreenCandle = close > open;
       
-      // Wicks should be proportional to body size but with randomness
-      const upperWickRatio = 0.1 + Math.random() * 0.5; // 10-60% of body
-      const lowerWickRatio = 0.1 + Math.random() * 0.5; // 10-60% of body
+      // Calculate wicks based on volatility
+      const volatility = Math.abs(priceChange) / currentPrice;
       
-      // Sometimes create long wicks (10% chance)
-      const hasLongUpperWick = Math.random() < 0.1;
-      const hasLongLowerWick = Math.random() < 0.1;
+      // Normal wicks (20-80% of body size)
+      let upperWickRatio = 0.2 + Math.random() * 0.6;
+      let lowerWickRatio = 0.2 + Math.random() * 0.6;
       
-      const upperWick = bodySize * (hasLongUpperWick ? 1 + Math.random() : upperWickRatio);
-      const lowerWick = bodySize * (hasLongLowerWick ? 1 + Math.random() : lowerWickRatio);
+      // During consolidation, create more doji-like candles
+      if (consolidationCounter > 0 && Math.random() < 0.3) {
+        upperWickRatio = 1 + Math.random() * 2; // Larger wicks
+        lowerWickRatio = 1 + Math.random() * 2;
+      }
       
-      // For doji candles (very small body), ensure visible wicks
-      const minWick = currentPrice * 0.0005;
+      // Sometimes create long wicks (5% chance)
+      if (Math.random() < 0.05) {
+        if (Math.random() > 0.5) {
+          upperWickRatio = 2 + Math.random() * 2; // Very long upper wick
+        } else {
+          lowerWickRatio = 2 + Math.random() * 2; // Very long lower wick
+        }
+      }
       
-      const high = Math.max(open, close) + Math.max(upperWick, minWick);
-      const low = Math.min(open, close) - Math.max(lowerWick, minWick);
+      const upperWick = Math.max(bodySize * upperWickRatio, currentPrice * 0.0001);
+      const lowerWick = Math.max(bodySize * lowerWickRatio, currentPrice * 0.0001);
+      
+      const high = Math.max(open, close) + upperWick;
+      const low = Math.min(open, close) - lowerWick;
       
       initialData.push({
         time: time as Time,
