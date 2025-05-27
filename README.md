@@ -3,9 +3,40 @@
 
 ## Overview
 
-This is a  trading simulation dashboard that recreates the experience of cryptocurrency trading platforms like Binance, Kucoin, and Bybit. It features realistic market dynamics, order book visualization, trade execution, and trader performance tracking in a polished, interactive interface.
+A professional-grade trading simulation that brings real cryptocurrency market dynamics to your screen. This educational platform queries and analyzes 118 actual trades from Dune Analytics, transforming raw blockchain data into an interactive trading experience. Watch how traders react to market volatility, understand order book dynamics, and develop your trading intuition—all without risking a single dollar. Built to mirror the interfaces of Binance, Kucoin, and Bybit for authentic learning.
 
-This platform is designed for educational purposes, allowing users to observe and understand trader behavior in volatile markets without real financial risk.
+# Trading Simulation Platform
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Key Features](#key-features)
+  - [Professional Trading Dashboard](#professional-trading-dashboard)
+  - [Simulation Engine](#simulation-engine)
+  - [Technical Implementation](#technical-implementation)
+- [Screenshots](#screenshots)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+- [Development](#development)
+  - [Project Structure](#project-structure)
+  - [Key Components](#key-components)
+    - [PriceChart.tsx](#pricechart.tsx)
+    - [OrderBook.tsx](#orderbook.tsx)
+    - [Simulation Controls](#simulation-controls)
+  - [API Integration](#api-integration)
+- [Customization](#customization)
+  - [Styling](#styling)
+  - [Adding Features](#adding-features)
+- [Performance Optimization](#performance-optimization)
+- [Contributing](#contributing)
+- [Acknowledgments](#acknowledgments)
+
+---
+
+## Overview
+
+This is a  trading simulation dashboard that recreates the experience of cryptocurrency trading platforms like Binance, Kucoin, and Bybit. It features realistic market dynamics, order book visualization, trade execution, and trader performance tracking in
 
 ## Key Features
 
@@ -27,28 +58,9 @@ This platform is designed for educational purposes, allowing users to observe an
 - **Canvas-Based Charting**: High-performance rendering of price data
 - **Custom Data Generation**: Realistic synthetic price data when needed
 
-## Dashboard Layout
+## Screenshots
 
-The dashboard follows a grid-based layout optimized for both functionality and aesthetics:
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│ Header: Controls, Status, Simulation Speed                          │
-├────────────────────┬────────────────────────────────────────────────┤
-│                    │                                                │
-│   Order Book       │                                                │
-│                    │             TradingView Price Chart            │
-│                    │                                                │
-├────────────────────┤                                                │
-│                    │                                                │
-│   Recent Trades    │                                                │
-│                    │                                                │
-├────────────────────┼────────────────────────────────────────────────┤
-│                    │                                                │
-│   Positions        │            Participants Table                  │
-│                    │                                                │
-└────────────────────┴────────────────────────────────────────────────┘
-```
+![image](https://github.com/user-attachments/assets/a5916eea-f6ef-4f7d-96a1-3e526aa0da2c)
 
 ## Getting Started
 
@@ -155,10 +167,6 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 3. Commit your changes (`git commit -m 'Add some amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
 
 ## Acknowledgments
 
