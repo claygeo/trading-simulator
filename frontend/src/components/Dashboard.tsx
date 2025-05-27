@@ -66,7 +66,7 @@ const Dashboard: React.FC = () => {
     averageLatency: 0
   });
 
-  const { isConnected, lastMessage } = useWebSocket(simulation?.id);
+  const { isConnected, lastMessage, setPauseState } = useWebSocket(simulation?.id, simulation?.isPaused);
 
   // Ultra-fast debug logging with circular buffer
   const addDebugLog = useCallback((message: string) => {
@@ -446,6 +446,7 @@ const Dashboard: React.FC = () => {
     try {
       await SimulationApi.startSimulation(simulation.id);
       setSimulation(prev => prev ? { ...prev, isRunning: true, isPaused: false } : prev);
+      setPauseState(false); // Notify WebSocket
       
       if (!simulationStartTime) {
         setSimulationStartTime(Date.now());
@@ -457,7 +458,7 @@ const Dashboard: React.FC = () => {
     } catch (error) {
       console.error('Failed to start simulation:', error);
     }
-  }, [simulation, simulationStartTime, addDebugLog]);
+  }, [simulation, simulationStartTime, addDebugLog, setPauseState]);
 
   const handlePauseSimulation = useCallback(async () => {
     if (!simulation) return;
@@ -465,11 +466,12 @@ const Dashboard: React.FC = () => {
     try {
       await SimulationApi.pauseSimulation(simulation.id);
       setSimulation(prev => prev ? { ...prev, isPaused: true } : prev);
+      setPauseState(true); // Notify WebSocket
       addDebugLog("Simulation paused");
     } catch (error) {
       console.error('Failed to pause simulation:', error);
     }
-  }, [simulation, addDebugLog]);
+  }, [simulation, addDebugLog, setPauseState]);
 
   const handleResetSimulation = useCallback(async () => {
     if (!simulation) return;
