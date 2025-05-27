@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
-import { Simulation } from '../types';
+import { Simulation, PricePoint as SimulationPricePoint } from '../types';
 import PriceChart from './PriceChart';
 import OrderBookComponent from './OrderBook';
 import RecentTrades from './RecentTrades';
@@ -11,6 +11,16 @@ import DynamicMusicPlayer from './DynamicMusicPlayer';
 import PerformanceMonitor from './PerformanceMonitor';
 import TransactionProcessor from './TransactionProcessor';
 import MarketScenarioEngine, { MarketScenario } from './MarketScenarioEngine';
+
+// Type adapter to convert between different PricePoint formats
+interface ChartPricePoint {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume?: number;
+}
 
 const Dashboard: React.FC = () => {
   const [simulation, setSimulation] = useState<Simulation | null>(null);
@@ -266,6 +276,18 @@ const Dashboard: React.FC = () => {
     };
   }, [simulation?.isRunning, simulation?.isPaused, simulationStartTime, isHighFrequencyMode]);
 
+  // Convert price history to chart format
+  const convertPriceHistory = useCallback((priceHistory: SimulationPricePoint[]): ChartPricePoint[] => {
+    return priceHistory.map(point => ({
+      time: point.timestamp,
+      open: point.open,
+      high: point.high,
+      low: point.low,
+      close: point.close,
+      volume: point.volume
+    }));
+  }, []);
+
   // Memoized safe data with minimal recalculation
   const safeData = useMemo(() => {
     if (!simulation) return {
@@ -273,7 +295,7 @@ const Dashboard: React.FC = () => {
       recentTrades: [],
       traderRankings: [],
       activePositions: [],
-      priceHistory: [],
+      priceHistory: [] as ChartPricePoint[],
       currentPrice: 0,
     };
     
@@ -283,9 +305,10 @@ const Dashboard: React.FC = () => {
       recentTrades: simulation.recentTrades || [],
       traderRankings: simulation.traderRankings || [],
       activePositions: simulation.activePositions || [],
-      priceHistory: simulation.priceHistory || [],
+      priceHistory: convertPriceHistory(simulation.priceHistory || []),
+      currentPrice: simulation.currentPrice || 0,
     };
-  }, [simulation]);
+  }, [simulation, convertPriceHistory]);
 
   // Ultra-optimized WebSocket message processing
   useEffect(() => {
