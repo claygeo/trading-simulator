@@ -1,4 +1,4 @@
-// Updated Dashboard.tsx with properly implemented speed controls
+// Updated Dashboard.tsx with Performance Monitor and Transaction Processor integrated
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -8,6 +8,8 @@ import OrderBookComponent from './OrderBook';
 import RecentTrades from './RecentTrades';
 import ParticipantsOverview from './ParticipantsOverview';
 import DynamicMusicPlayer from './DynamicMusicPlayer';
+import PerformanceMonitor from './PerformanceMonitor';
+import TransactionProcessor from './TransactionProcessor';
 
 const Dashboard: React.FC = () => {
   const [simulation, setSimulation] = useState<Simulation | null>(null);
@@ -20,6 +22,11 @@ const Dashboard: React.FC = () => {
   const [elapsedTime, setElapsedTime] = useState<string>("00:00:00");
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
   const [showDebugInfo, setShowDebugInfo] = useState<boolean>(false);
+  
+  // New state for performance and transaction monitors
+  const [showPerformanceMonitor, setShowPerformanceMonitor] = useState<boolean>(false);
+  const [showTransactionProcessor, setShowTransactionProcessor] = useState<boolean>(false);
+  const [wsMessageCount, setWsMessageCount] = useState<number>(0);
   
   // Timer ref for simulation duration
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -201,6 +208,9 @@ const Dashboard: React.FC = () => {
     // Only process messages for the current simulation
     if (simulationId !== simulation.id) return;
     
+    // Increment WebSocket message count for performance monitor
+    setWsMessageCount(prev => prev + 1);
+    
     // Create a unique identifier for this message
     const messageId = `${simulationId}-${event.type}-${event.timestamp}`;
     
@@ -364,6 +374,9 @@ const Dashboard: React.FC = () => {
         setSimulationStartTime(null);
         setElapsedTime("00:00:00");
         
+        // Reset WebSocket message count
+        setWsMessageCount(0);
+        
         // Disable audio when simulation resets
         setAudioEnabled(false);
         
@@ -473,6 +486,28 @@ const Dashboard: React.FC = () => {
                 </svg>
               )}
             </div>
+            
+            {/* Performance Monitor Toggle */}
+            <button 
+              onClick={() => setShowPerformanceMonitor(!showPerformanceMonitor)}
+              className={`text-xs px-2 py-0.5 rounded transition ${
+                showPerformanceMonitor ? 'bg-blue-600 text-white' : 'bg-surface-variant text-text-muted hover:bg-panel'
+              }`}
+              title="Performance Monitor"
+            >
+              Perf
+            </button>
+            
+            {/* Transaction Processor Toggle */}
+            <button 
+              onClick={() => setShowTransactionProcessor(!showTransactionProcessor)}
+              className={`text-xs px-2 py-0.5 rounded transition ${
+                showTransactionProcessor ? 'bg-green-600 text-white' : 'bg-surface-variant text-text-muted hover:bg-panel'
+              }`}
+              title="Transaction Processor"
+            >
+              TXN
+            </button>
             
             {/* Debug toggle button - only visible in development */}
             {process.env.NODE_ENV !== 'production' && (
@@ -612,6 +647,21 @@ const Dashboard: React.FC = () => {
           </ErrorBoundary>
         </div>
       </div>
+      
+      {/* Performance Monitor */}
+      <PerformanceMonitor 
+        isVisible={showPerformanceMonitor}
+        onToggle={() => setShowPerformanceMonitor(!showPerformanceMonitor)}
+        wsMessageCount={wsMessageCount}
+        tradeCount={safeData.recentTrades.length}
+      />
+
+      {/* Transaction Processor */}
+      <TransactionProcessor 
+        isVisible={showTransactionProcessor}
+        onToggle={() => setShowTransactionProcessor(!showTransactionProcessor)}
+        simulationRunning={simulation?.isRunning && !simulation?.isPaused}
+      />
       
       {/* Debug log - Only shown when enabled and not in production */}
       {showDebugInfo && process.env.NODE_ENV !== 'production' && (
