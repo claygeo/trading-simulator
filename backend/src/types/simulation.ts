@@ -1,109 +1,73 @@
-// backend/src/types/simulation.ts - Updated to include TokenInfo
-export interface PricePoint {
-  timestamp: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume?: number;
-}
+// backend/src/routes/simulation.ts - Add or update these endpoints
 
-export interface OrderBookLevel {
-  price: number;
-  quantity: number;
-}
+import { Router } from 'express';
+import { simulationManager } from '../services/simulationManager';
 
-export interface OrderBook {
-  bids: OrderBookLevel[];
-  asks: OrderBookLevel[];
-  lastUpdateTime: number;
-}
+const router = Router();
 
-export interface Trader {
-  position: number;
-  walletAddress: string;
-  netPnl: number;
-  totalVolume: number;
-  buyVolume: number;
-  sellVolume: number;
-  tradeCount: number;
-  feesUsd: number;
-  winRate: number;
-  riskProfile: 'conservative' | 'moderate' | 'aggressive';
-  portfolioEfficiency: number;
-  simulationPnl?: number;
-}
+// Pause simulation endpoint
+router.post('/simulation/:id/pause', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    simulationManager.pauseSimulation(id);
+    
+    res.json({ 
+      success: true, 
+      message: 'Simulation paused',
+      simulationId: id 
+    });
+  } catch (error) {
+    console.error(`Error pausing simulation ${id}:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Failed to pause simulation' 
+    });
+  }
+});
 
-export interface TraderPosition {
-  trader: Trader;
-  entryPrice: number;
-  quantity: number;
-  entryTime: number;
-  exitPrice?: number;
-  exitTime?: number;
-  currentPnl: number;
-  currentPnlPercentage: number;
-}
+// Start/Resume simulation endpoint
+router.post('/simulation/:id/start', async (req, res) => {
+  const { id } = req.params;
+  
+  try {
+    simulationManager.startSimulation(id);
+    
+    res.json({ 
+      success: true, 
+      message: 'Simulation started/resumed',
+      simulationId: id 
+    });
+  } catch (error) {
+    console.error(`Error starting simulation ${id}:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Failed to start simulation' 
+    });
+  }
+});
 
-export type TradeAction = 'buy' | 'sell';
+// Set simulation speed endpoint
+router.post('/simulation/:id/speed', async (req, res) => {
+  const { id } = req.params;
+  const { speed } = req.body;
+  
+  try {
+    simulationManager.setSimulationSpeed(id, speed);
+    
+    res.json({ 
+      success: true, 
+      message: 'Simulation speed updated',
+      simulationId: id,
+      speed 
+    });
+  } catch (error) {
+    console.error(`Error setting simulation speed for ${id}:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Failed to update simulation speed' 
+    });
+  }
+});
 
-export interface Trade {
-  id: string;
-  timestamp: number;
-  trader: Trader;
-  action: TradeAction;
-  price: number;
-  quantity: number;
-  value: number;
-  impact: number;
-}
-
-export interface SimulationEvent {
-  type: string;
-  timestamp: number;
-  data: any;
-}
-
-export interface MarketConditions {
-  volatility: number;
-  trend: 'bullish' | 'bearish' | 'sideways';
-  volume: number;
-}
-
-export interface SimulationParameters {
-  timeCompressionFactor: number;
-  initialPrice: number;
-  initialLiquidity: number;
-  volatilityFactor: number;
-  duration: number;
-  scenarioType: string;
-}
-
-// New interface for token information
-export interface TokenInfo {
-  symbol: string;
-  name: string;
-  totalSupply: number;
-  marketCap: number;
-}
-
-export interface SimulationState {
-  id: string;
-  startTime: number;
-  currentTime: number;
-  endTime: number;
-  isRunning: boolean;
-  isPaused: boolean;
-  parameters: SimulationParameters;
-  marketConditions: MarketConditions;
-  priceHistory: PricePoint[];
-  currentPrice: number;
-  orderBook: OrderBook;
-  traders: any[]; // This is intentionally loose to accommodate various trader profile formats
-  activePositions: TraderPosition[];
-  closedPositions: (TraderPosition & { exitPrice: number, exitTime: number })[];
-  recentTrades: Trade[];
-  traderRankings: Trader[];
-  // Add the token info to the simulation state
-  tokenInfo?: TokenInfo;
-}
+export default router;
