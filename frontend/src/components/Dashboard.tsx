@@ -469,20 +469,37 @@ const Dashboard: React.FC = () => {
     
   }, [lastMessage, simulation, marketCondition, determineMarketCondition, addDebugLog, batchUpdate, trackTradeExecution]);
 
-  // Optimized speed change with immediate effect
-  const handleSpeedChange = useCallback(async (speedOption: 'slow' | 'medium' | 'fast' | 'ludicrous') => {
+  // Updated handleSpeedChange method with Ultra and Quantum modes
+  const handleSpeedChange = useCallback(async (speedOption: 'slow' | 'medium' | 'fast' | 'ludicrous' | 'ultra' | 'quantum') => {
     const speedMap = {
       'slow': 2,
       'medium': 3, 
       'fast': 6,
-      'ludicrous': 10  // New ultra-fast mode
+      'ludicrous': 10,
+      'ultra': 50,     // New ultra-fast mode
+      'quantum': 100   // New quantum mode - maximum speed
     };
     
     const speedValue = speedMap[speedOption];
     setSimulationSpeed(speedValue);
     
-    // Enable high-frequency mode for ludicrous speed
-    if (speedOption === 'ludicrous') {
+    // Enable high-frequency mode for speeds above 10x
+    if (speedOption === 'ultra' || speedOption === 'quantum') {
+      setIsHighFrequencyMode(true);
+      addDebugLog(`${speedOption.toUpperCase()} MODE ACTIVATED - ${speedValue}x speed`);
+      
+      // Enable HFT mode in simulation manager
+      if (simulation) {
+        try {
+          await fetch(`/api/simulation/${simulation.id}/enable-hft`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+          });
+        } catch (error) {
+          console.error('Failed to enable HFT mode:', error);
+        }
+      }
+    } else if (speedOption === 'ludicrous') {
       setIsHighFrequencyMode(true);
       addDebugLog("Ludicrous mode activated - High-frequency trading enabled");
     }
@@ -490,7 +507,7 @@ const Dashboard: React.FC = () => {
     if (simulation) {
       try {
         await SimulationApi.setSimulationSpeed(simulation.id, speedValue);
-        addDebugLog(`Speed: ${speedOption} (${speedValue}x) - Latency optimized`);
+        addDebugLog(`Speed: ${speedOption} (${speedValue}x) - ${speedValue > 10 ? 'HFT' : 'Normal'} mode`);
       } catch (error) {
         console.error(`Failed to update simulation speed:`, error);
       }
@@ -722,7 +739,7 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
         
-        {/* Controls with new Ludicrous speed */}
+        {/* Controls with Ultra and Quantum speeds */}
         <div className="flex justify-between items-center h-10 p-2 border-t border-border">
           <div className="flex items-center space-x-2">
             <span className="text-xs text-text-secondary">Speed:</span>
@@ -759,6 +776,24 @@ const Dashboard: React.FC = () => {
                 title="Ultra-high frequency trading mode"
               >
                 🚀 Ludicrous
+              </button>
+              <button
+                onClick={() => handleSpeedChange('ultra')}
+                className={`px-2 py-0.5 text-xs rounded transition ${
+                  simulationSpeed === 50 ? 'bg-purple-600 text-white animate-pulse' : 'bg-purple-500 text-white hover:bg-purple-600'
+                }`}
+                title="50x speed - Ultra mode"
+              >
+                ⚡ Ultra
+              </button>
+              <button
+                onClick={() => handleSpeedChange('quantum')}
+                className={`px-2 py-0.5 text-xs rounded transition ${
+                  simulationSpeed === 100 ? 'bg-cyan-600 text-white animate-pulse animate-bounce' : 'bg-cyan-500 text-white hover:bg-cyan-600'
+                }`}
+                title="100x speed - Quantum mode"
+              >
+                🌌 Quantum
               </button>
             </div>
             
