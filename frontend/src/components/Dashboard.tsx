@@ -375,9 +375,8 @@ const Dashboard: React.FC = () => {
     const sortedPriceHistory = simulation.priceHistory ? 
       [...simulation.priceHistory].sort((a, b) => a.timestamp - b.timestamp) : [];
     
-    // Sort recent trades by timestamp
-    const sortedRecentTrades = simulation.recentTrades ? 
-      [...simulation.recentTrades].sort((a, b) => a.timestamp - b.timestamp) : [];
+    // Don't sort recent trades - simulation manager maintains correct order (newest first)
+    const sortedRecentTrades = simulation.recentTrades || [];
     
     return {
       ...simulation,
@@ -894,7 +893,7 @@ const Dashboard: React.FC = () => {
       <div style={{ 
         display: 'grid', 
         gridTemplateColumns: '3fr 9fr', 
-        gridTemplateRows: '1fr 1fr', 
+        gridTemplateRows: '2fr 3fr', 
         gap: '8px',
         height: 'calc(100vh - 85px)',
         overflow: 'hidden'
