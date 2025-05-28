@@ -1,4 +1,4 @@
-// backend/src/services/simulationManager.ts - Complete Fixed File with Pause State Handling
+// backend/src/services/simulationManager.ts - Complete Fixed File with Realistic Candle Generation
 import { v4 as uuidv4 } from 'uuid';
 import {
   SimulationState,
@@ -112,12 +112,12 @@ class SimulationManager {
     const dummyTraders = Array.from({ length: 10 }, (_, i) => ({
       position: i + 1,
       walletAddress: `Trader${i+1}`,
-      netPnl: Math.random() * 100000 - 50000,
-      totalVolume: 100000 + Math.random() * 900000,
-      buyVolume: 50000 + Math.random() * 450000,
-      sellVolume: 50000 + Math.random() * 450000,
+      netPnl: Math.random() * 10000 - 5000, // Reduced from 100000
+      totalVolume: 10000 + Math.random() * 90000, // Reduced from 900000
+      buyVolume: 5000 + Math.random() * 45000,
+      sellVolume: 5000 + Math.random() * 45000,
       tradeCount: 10 + Math.floor(Math.random() * 90),
-      feesUsd: 500 + Math.random() * 4500,
+      feesUsd: 50 + Math.random() * 450, // Reduced from 4500
       winRate: 0.4 + Math.random() * 0.3,
       riskProfile: ['conservative', 'moderate', 'aggressive'][Math.floor(Math.random() * 3)] as 'conservative' | 'moderate' | 'aggressive',
       portfolioEfficiency: (Math.random() * 0.2) - 0.1
@@ -125,7 +125,6 @@ class SimulationManager {
     
     const traderProfiles = traderService.generateTraderProfiles(dummyTraders);
     
-    // Wrap in Promise.resolve to fix the TypeScript error
     return Promise.resolve(this.finalizeSimulationCreation(parameters, dummyTraders, traderProfiles));
   }
   
@@ -171,7 +170,7 @@ class SimulationManager {
     return 'aggressive';
   }
   
-  // Helper method to create the simulation object with more realistic token data
+  // Helper method to create the simulation object with realistic token data
   private finalizeSimulationCreation(
     parameters: Partial<SimulationParameters>,
     traders: Trader[],
@@ -199,21 +198,53 @@ class SimulationManager {
     // Create the initial simulation state
     const now = Date.now();
     
-    // Create initial price history (250 candles of 15 minutes each)
+    // Create realistic initial price history (250 candles of 15 minutes each)
     const initialPriceHistory: PricePoint[] = [];
     const candleInterval = 15 * 60 * 1000; // 15 minutes in milliseconds
     
+    // Initialize price tracking variables
+    let currentPrice = finalParams.initialPrice;
+    let trend = 0;
+    let trendMomentum = 0;
+    
     for (let i = 0; i < 250; i++) {
-      const timestamp = now - (250 - i) * candleInterval; // Going back in time
-      const basePrice = finalParams.initialPrice;
-      // Add some random variation to create a realistic price history
-      const variation = (Math.random() - 0.5) * 0.02; // ±1% variation
-      const close = basePrice * (1 + variation);
-      const open = close * (1 + (Math.random() - 0.5) * 0.01);
-      const high = Math.max(open, close) * (1 + Math.random() * 0.005);
-      const low = Math.min(open, close) * (1 - Math.random() * 0.005);
-      // More realistic volume for a higher-priced token
-      const volume = Math.random() * 2000 + 500; // 500 to 2500 tokens (adjusted for higher price)
+      const timestamp = now - (250 - i) * candleInterval;
+      
+      // Update trend with momentum (creates more realistic price movement)
+      trendMomentum += (Math.random() - 0.5) * 0.0002; // Very small momentum changes
+      trendMomentum = Math.max(-0.001, Math.min(0.001, trendMomentum)); // Cap momentum
+      trend += trendMomentum;
+      trend = Math.max(-0.02, Math.min(0.02, trend)); // Cap total trend to ±2%
+      
+      // Calculate open price (close of previous candle or initial price)
+      const open = currentPrice;
+      
+      // Generate realistic intracandle movement
+      const volatility = 0.0015 * finalParams.volatilityFactor; // 0.15% base volatility
+      const candleRange = open * volatility;
+      
+      // Generate close price with trend bias
+      const trendBias = trend * 0.5; // Apply 50% of trend to close
+      const randomWalk = (Math.random() - 0.5) * candleRange;
+      const close = open * (1 + trendBias + randomWalk);
+      
+      // Generate high and low with realistic constraints
+      // High and low should contain open and close
+      const minPrice = Math.min(open, close);
+      const maxPrice = Math.max(open, close);
+      
+      // Add realistic wicks (between 0.05% and 0.3% beyond the body)
+      const upperWick = maxPrice * (0.0005 + Math.random() * 0.0025);
+      const lowerWick = minPrice * (0.0005 + Math.random() * 0.0025);
+      
+      const high = maxPrice + upperWick;
+      const low = minPrice - lowerWick;
+      
+      // Generate realistic volume (varies with price movement)
+      const priceMovement = Math.abs(close - open) / open;
+      const baseVolume = 1000; // Base volume in tokens
+      const volumeMultiplier = 1 + (priceMovement * 50); // More movement = more volume
+      const volume = baseVolume * volumeMultiplier * (0.5 + Math.random());
       
       initialPriceHistory.push({
         timestamp,
@@ -223,6 +254,9 @@ class SimulationManager {
         close,
         volume
       });
+      
+      // Update current price for next candle
+      currentPrice = close;
     }
     
     const simulation: SimulationState = {
@@ -239,10 +273,10 @@ class SimulationManager {
         volume: finalParams.initialLiquidity * 0.1
       },
       priceHistory: initialPriceHistory,
-      currentPrice: finalParams.initialPrice,
+      currentPrice: currentPrice, // Use the last close price
       orderBook: {
-        bids: this.generateInitialOrderBook('bids', finalParams.initialPrice, finalParams.initialLiquidity),
-        asks: this.generateInitialOrderBook('asks', finalParams.initialPrice, finalParams.initialLiquidity),
+        bids: this.generateInitialOrderBook('bids', currentPrice, finalParams.initialLiquidity),
+        asks: this.generateInitialOrderBook('asks', currentPrice, finalParams.initialLiquidity),
         lastUpdateTime: now
       },
       traders: traderProfiles,
@@ -259,7 +293,7 @@ class SimulationManager {
     this.simulations.set(id, simulation);
     
     console.log(`Simulation ${id} created with ${traders.length} traders`);
-    console.log(`Initial price: $${finalParams.initialPrice.toFixed(2)}`);
+    console.log(`Initial price: $${currentPrice.toFixed(2)}`);
     
     return simulation;
   }
@@ -612,21 +646,53 @@ class SimulationManager {
     const now = Date.now();
     const params = simulation.parameters;
     
-    // Create initial price history (250 candles of 15 minutes each)
+    // Create realistic initial price history (250 candles of 15 minutes each)
     const initialPriceHistory: PricePoint[] = [];
     const candleInterval = 15 * 60 * 1000; // 15 minutes in milliseconds
     
+    // Initialize price tracking variables
+    let currentPrice = params.initialPrice;
+    let trend = 0;
+    let trendMomentum = 0;
+    
     for (let i = 0; i < 250; i++) {
-      const timestamp = now - (250 - i) * candleInterval; // Going back in time
-      const basePrice = params.initialPrice;
-      // Add some random variation to create a realistic price history
-      const variation = (Math.random() - 0.5) * 0.02; // ±1% variation
-      const close = basePrice * (1 + variation);
-      const open = close * (1 + (Math.random() - 0.5) * 0.01);
-      const high = Math.max(open, close) * (1 + Math.random() * 0.005);
-      const low = Math.min(open, close) * (1 - Math.random() * 0.005);
-      // More realistic volume for a higher-priced token
-      const volume = Math.random() * 2000 + 500; // 500 to 2500 tokens
+      const timestamp = now - (250 - i) * candleInterval;
+      
+      // Update trend with momentum (creates more realistic price movement)
+      trendMomentum += (Math.random() - 0.5) * 0.0002; // Very small momentum changes
+      trendMomentum = Math.max(-0.001, Math.min(0.001, trendMomentum)); // Cap momentum
+      trend += trendMomentum;
+      trend = Math.max(-0.02, Math.min(0.02, trend)); // Cap total trend to ±2%
+      
+      // Calculate open price (close of previous candle or initial price)
+      const open = currentPrice;
+      
+      // Generate realistic intracandle movement
+      const volatility = 0.0015 * params.volatilityFactor; // 0.15% base volatility
+      const candleRange = open * volatility;
+      
+      // Generate close price with trend bias
+      const trendBias = trend * 0.5; // Apply 50% of trend to close
+      const randomWalk = (Math.random() - 0.5) * candleRange;
+      const close = open * (1 + trendBias + randomWalk);
+      
+      // Generate high and low with realistic constraints
+      // High and low should contain open and close
+      const minPrice = Math.min(open, close);
+      const maxPrice = Math.max(open, close);
+      
+      // Add realistic wicks (between 0.05% and 0.3% beyond the body)
+      const upperWick = maxPrice * (0.0005 + Math.random() * 0.0025);
+      const lowerWick = minPrice * (0.0005 + Math.random() * 0.0025);
+      
+      const high = maxPrice + upperWick;
+      const low = minPrice - lowerWick;
+      
+      // Generate realistic volume (varies with price movement)
+      const priceMovement = Math.abs(close - open) / open;
+      const baseVolume = 1000; // Base volume in tokens
+      const volumeMultiplier = 1 + (priceMovement * 50); // More movement = more volume
+      const volume = baseVolume * volumeMultiplier * (0.5 + Math.random());
       
       initialPriceHistory.push({
         timestamp,
@@ -636,6 +702,9 @@ class SimulationManager {
         close,
         volume
       });
+      
+      // Update current price for next candle
+      currentPrice = close;
     }
     
     simulation.startTime = now;
@@ -644,10 +713,10 @@ class SimulationManager {
     simulation.isRunning = false;
     simulation.isPaused = false;
     simulation.priceHistory = initialPriceHistory;
-    simulation.currentPrice = params.initialPrice;
+    simulation.currentPrice = currentPrice; // Use the last close price
     simulation.orderBook = {
-      bids: this.generateInitialOrderBook('bids', params.initialPrice, params.initialLiquidity),
-      asks: this.generateInitialOrderBook('asks', params.initialPrice, params.initialLiquidity),
+      bids: this.generateInitialOrderBook('bids', currentPrice, params.initialLiquidity),
+      asks: this.generateInitialOrderBook('asks', currentPrice, params.initialLiquidity),
       lastUpdateTime: now
     };
     simulation.activePositions = [];
@@ -706,7 +775,8 @@ class SimulationManager {
         timestamp: simulation.currentTime,
         data: {
           price: simulation.currentPrice,
-          orderBook: simulation.orderBook
+          orderBook: simulation.orderBook,
+          priceHistory: simulation.priceHistory
         }
       });
     }
@@ -718,13 +788,13 @@ class SimulationManager {
   private updatePrice(simulation: SimulationState): void {
     const { marketConditions, currentPrice } = simulation;
     
-    // Base volatility adjusted by the volatility factor
-    const baseVolatility = marketConditions.volatility;
+    // Base volatility adjusted by the volatility factor and reduced for realism
+    const baseVolatility = marketConditions.volatility * 0.3; // Reduced from 0.5 or 1.0
     
     // Random walk model with trend bias
     let trendFactor = 0;
-    if (marketConditions.trend === 'bullish') trendFactor = 0.0005;
-    else if (marketConditions.trend === 'bearish') trendFactor = -0.0005;
+    if (marketConditions.trend === 'bullish') trendFactor = 0.0001; // Reduced from 0.0005
+    else if (marketConditions.trend === 'bearish') trendFactor = -0.0001;
     
     // Random component (normal distribution around 0)
     const randomFactor = (Math.random() - 0.5) * baseVolatility;
@@ -734,19 +804,20 @@ class SimulationManager {
     const newPrice = currentPrice + priceChange;
     
     // Update the current price
-    simulation.currentPrice = Math.max(1.00, newPrice); // Prevent price from going too low
+    simulation.currentPrice = Math.max(1.00, newPrice);
     
-    // Add to price history (ensuring consistent 15-minute candles)
+    // Handle candle updates
     const lastCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
     
-    // If we're in a new 15-minute period, create a new candle
-    const inNewPeriod = Math.floor(simulation.currentTime / (15 * 60 * 1000)) > 
-                         Math.floor(lastCandle.timestamp / (15 * 60 * 1000));
+    // Check if we're in a new 15-minute period
+    const candleInterval = 15 * 60 * 1000;
+    const currentCandlePeriod = Math.floor(simulation.currentTime / candleInterval);
+    const lastCandlePeriod = Math.floor(lastCandle.timestamp / candleInterval);
     
-    if (inNewPeriod) {
+    if (currentCandlePeriod > lastCandlePeriod) {
       // Create a new candle
       simulation.priceHistory.push({
-        timestamp: simulation.currentTime,
+        timestamp: currentCandlePeriod * candleInterval, // Align to period start
         open: simulation.currentPrice,
         high: simulation.currentPrice,
         low: simulation.currentPrice,
@@ -756,15 +827,19 @@ class SimulationManager {
       
       // Keep only the most recent 250 candles
       if (simulation.priceHistory.length > 250) {
-        simulation.priceHistory.shift(); // Remove oldest candle
+        simulation.priceHistory.shift();
       }
     } else {
-      // Update the current candle
-      lastCandle.close = simulation.currentPrice;
-      lastCandle.high = Math.max(lastCandle.high, simulation.currentPrice);
-      lastCandle.low = Math.min(lastCandle.low, simulation.currentPrice);
+      // Update the current candle - THIS IS KEY FOR REALISTIC CANDLES
+      const currentCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
+      currentCandle.close = simulation.currentPrice;
       
-      simulation.priceHistory[simulation.priceHistory.length - 1] = lastCandle;
+      // Properly track high and low during the candle period
+      currentCandle.high = Math.max(currentCandle.high, simulation.currentPrice);
+      currentCandle.low = Math.min(currentCandle.low, simulation.currentPrice);
+      
+      // Don't regenerate the entire candle, just update it
+      simulation.priceHistory[simulation.priceHistory.length - 1] = currentCandle;
     }
     
     // Update market trend based on recent price movement
@@ -774,9 +849,9 @@ class SimulationManager {
       const lastPrice = simulation.currentPrice;
       const percentChange = ((lastPrice - firstPrice) / firstPrice) * 100;
       
-      if (percentChange > 3) {
+      if (percentChange > 2) { // Reduced from 3%
         simulation.marketConditions.trend = 'bullish';
-      } else if (percentChange < -2) {
+      } else if (percentChange < -1.5) { // Reduced from -2%
         simulation.marketConditions.trend = 'bearish';
       } else {
         simulation.marketConditions.trend = 'sideways';
