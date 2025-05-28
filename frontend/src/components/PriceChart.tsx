@@ -9,19 +9,88 @@ interface Candle {
   volume: number;
 }
 
+interface ChartPricePoint {
+  time: number;
+  price: number;
+  volume?: number;
+}
+
+interface Trade {
+  id: string;
+  price: number;
+  amount: number;
+  side: 'buy' | 'sell';
+  timestamp: number;
+}
+
 interface PriceChartProps {
-  candles?: Candle[];
+  interval?: '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+  priceHistory?: ChartPricePoint[];
   currentPrice?: number;
+  trades?: Trade[];
+  scenarioData?: any;
+  candles?: Candle[];
   symbol?: string;
 }
 
 const PriceChart: React.FC<PriceChartProps> = ({ 
-  candles = [], 
+  interval = '15m',
+  priceHistory = [],
   currentPrice = 0,
+  trades = [],
+  scenarioData,
+  candles = [], 
   symbol = 'BTC/USDT'
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+
+  // Convert priceHistory to candles if no candles provided
+  const convertPriceHistoryToCandles = (history: ChartPricePoint[]): Candle[] => {
+    if (history.length === 0) return [];
+    
+    const candles: Candle[] = [];
+    const candleInterval = 15 * 60 * 1000; // 15 minutes in milliseconds
+    
+    // Group price points into candles
+    let currentCandle: Candle | null = null;
+    let candleStartTime = Math.floor(history[0].time / candleInterval) * candleInterval;
+    
+    history.forEach(point => {
+      const pointCandleTime = Math.floor(point.time / candleInterval) * candleInterval;
+      
+      if (pointCandleTime !== candleStartTime || !currentCandle) {
+        // Save previous candle if exists
+        if (currentCandle) {
+          candles.push(currentCandle);
+        }
+        
+        // Start new candle
+        currentCandle = {
+          time: pointCandleTime,
+          open: point.price,
+          high: point.price,
+          low: point.price,
+          close: point.price,
+          volume: point.volume || 0
+        };
+        candleStartTime = pointCandleTime;
+      } else {
+        // Update current candle
+        currentCandle.high = Math.max(currentCandle.high, point.price);
+        currentCandle.low = Math.min(currentCandle.low, point.price);
+        currentCandle.close = point.price;
+        currentCandle.volume += point.volume || 0;
+      }
+    });
+    
+    // Don't forget the last candle
+    if (currentCandle) {
+      candles.push(currentCandle);
+    }
+    
+    return candles;
+  };
 
   // Generate sample data for 1 day (96 candles for 15-minute intervals)
   const generateDayCandles = (): Candle[] => {
@@ -55,7 +124,16 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return candleData;
   };
 
-  const [chartCandles] = useState<Candle[]>(candles.length > 0 ? candles : generateDayCandles());
+  const [chartCandles] = useState<Candle[]>(() => {
+    // Priority: candles prop > converted priceHistory > generated sample data
+    if (candles.length > 0) {
+      return candles;
+    } else if (priceHistory.length > 0) {
+      return convertPriceHistoryToCandles(priceHistory);
+    } else {
+      return generateDayCandles();
+    }
+  });
 
   useEffect(() => {
     const updateDimensions = () => {
