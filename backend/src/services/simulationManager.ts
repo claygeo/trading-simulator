@@ -449,7 +449,29 @@ class SimulationManager {
     });
     
     // Update trader rankings based on PnL
-    this.updateTraderRankings(simulation);
+    // Inline the ranking update to avoid method call issues
+    const traderPnL = new Map<string, number>();
+    
+    // Calculate P&L for ranking
+    simulation.closedPositions.forEach((position: any) => {
+      const walletAddress = position.trader.walletAddress;
+      const currentPnL = traderPnL.get(walletAddress) || 0;
+      traderPnL.set(walletAddress, currentPnL + position.currentPnl);
+    });
+    
+    simulation.activePositions.forEach((position: TraderPosition) => {
+      const walletAddress = position.trader.walletAddress;
+      const currentPnL = traderPnL.get(walletAddress) || 0;
+      traderPnL.set(walletAddress, currentPnL + position.currentPnl);
+    });
+    
+    // Update trader rankings
+    simulation.traderRankings = traders
+      .map((profile: TraderProfile) => ({
+        ...profile.trader,
+        simulationPnl: traderPnL.get(profile.trader.walletAddress) || 0
+      }))
+      .sort((a: any, b: any) => (b.simulationPnl || 0) - (a.simulationPnl || 0));
     
     // Limit recent trades to last 100
     if (simulation.recentTrades.length > 100) {
@@ -787,14 +809,66 @@ class SimulationManager {
   
   private updatePrice(simulation: SimulationState): void {
     const { marketConditions, currentPrice } = simulation;
+    const activeScenario = (simulation as any).activeScenario;
     
-    // Base volatility adjusted by the volatility factor and reduced for realism
-    const baseVolatility = marketConditions.volatility * 0.3; // Reduced from 0.5 or 1.0
+    // Base volatility adjusted by the volatility factor
+    let baseVolatility = marketConditions.volatility * 0.3;
     
     // Random walk model with trend bias
     let trendFactor = 0;
-    if (marketConditions.trend === 'bullish') trendFactor = 0.0001; // Reduced from 0.0005
-    else if (marketConditions.trend === 'bearish') trendFactor = -0.0001;
+    
+    // If there's an active scenario, use its price action
+    if (activeScenario && activeScenario.phase) {
+      const { priceAction, progress } = activeScenario;
+      
+      // Apply scenario-specific price movements
+      switch (priceAction.type) {
+        case 'crash':
+          trendFactor = -0.01 * priceAction.intensity; // Strong downward pressure
+          baseVolatility = marketConditions.volatility * priceAction.volatility;
+          break;
+        
+        case 'pump':
+          trendFactor = 0.01 * priceAction.intensity; // Strong upward pressure
+          baseVolatility = marketConditions.volatility * priceAction.volatility;
+          break;
+        
+        case 'breakout':
+          trendFactor = priceAction.direction === 'up' ? 0.005 * priceAction.intensity : -0.005 * priceAction.intensity;
+          baseVolatility = marketConditions.volatility * priceAction.volatility;
+          break;
+        
+        case 'trend':
+          if (priceAction.direction === 'up') trendFactor = 0.002 * priceAction.intensity;
+          else if (priceAction.direction === 'down') trendFactor = -0.002 * priceAction.intensity;
+          baseVolatility = marketConditions.volatility * 0.5;
+          break;
+        
+        case 'consolidation':
+          trendFactor = 0;
+          baseVolatility = marketConditions.volatility * 0.2;
+          break;
+        
+        case 'accumulation':
+          trendFactor = 0.0005 * priceAction.intensity; // Slight upward bias
+          baseVolatility = marketConditions.volatility * 0.3;
+          break;
+        
+        case 'distribution':
+          trendFactor = -0.0005 * priceAction.intensity; // Slight downward bias
+          baseVolatility = marketConditions.volatility * 0.3;
+          break;
+      }
+      
+      // Apply direction override if specified
+      if (priceAction.direction === 'sideways') {
+        trendFactor = 0;
+      }
+    } else {
+      // Default behavior when no scenario is active
+      if (marketConditions.trend === 'bullish') trendFactor = 0.0001;
+      else if (marketConditions.trend === 'bearish') trendFactor = -0.0001;
+    }
     
     // Random component (normal distribution around 0)
     const randomFactor = (Math.random() - 0.5) * baseVolatility;
@@ -1082,8 +1156,30 @@ class SimulationManager {
       simulation.recentTrades.pop();
     }
     
+    // Update trader rankings inline
+    const traderPnL = new Map<string, number>();
+    
+    // Add P&L from closed positions
+    simulation.closedPositions.forEach((position: any) => {
+      const walletAddress = position.trader.walletAddress;
+      const currentPnL = traderPnL.get(walletAddress) || 0;
+      traderPnL.set(walletAddress, currentPnL + position.currentPnl);
+    });
+    
+    // Add P&L from active positions
+    simulation.activePositions.forEach((position: TraderPosition) => {
+      const walletAddress = position.trader.walletAddress;
+      const currentPnL = traderPnL.get(walletAddress) || 0;
+      traderPnL.set(walletAddress, currentPnL + position.currentPnl);
+    });
+    
     // Update trader rankings
-    this.updateTraderRankings(simulation);
+    simulation.traderRankings = simulation.traders
+      .map((profile: TraderProfile) => ({
+        ...profile.trader,
+        simulationPnl: traderPnL.get(profile.trader.walletAddress) || 0
+      }))
+      .sort((a: any, b: any) => (b.simulationPnl || 0) - (a.simulationPnl || 0));
     
     // Broadcast the trade event
     this.broadcastEvent(simulation.id, {
@@ -1107,31 +1203,39 @@ class SimulationManager {
     }
   }
   
-  private updateTraderRankings(simulation: SimulationState): void {
-    // Calculate total P&L for each trader
-    const traderPnL = new Map<string, number>();
+  clearScenarioEffects(simulationId: string): void {
+    const simulation = this.simulations.get(simulationId);
+    if (!simulation) return;
     
-    // Add P&L from closed positions
-    simulation.closedPositions.forEach((position: TraderPosition & { exitPrice: number; exitTime: number }) => {
-      const walletAddress = position.trader.walletAddress;
-      const currentPnL = traderPnL.get(walletAddress) || 0;
-      traderPnL.set(walletAddress, currentPnL + position.currentPnl);
+    // Reset to default market conditions
+    simulation.marketConditions.volatility = 0.02 * simulation.parameters.volatilityFactor;
+    simulation.marketConditions.volume = simulation.parameters.initialLiquidity * 0.1;
+    
+    // Clear scenario metadata
+    delete (simulation as any).activeScenario;
+    
+    // Reset trader behaviors to original values
+    const traders = simulation.traders;
+    traders.forEach(traderProfile => {
+      // Recreate the profile with original values
+      // Note: This assumes traderService has a createTraderProfile method
+      // If not, we'll need to reset the values manually
+      const trader = traderProfile.trader;
+      
+      // Reset to default values based on risk profile
+      const aggressionFactor = trader.riskProfile === 'aggressive' ? 1 :
+                              trader.riskProfile === 'moderate' ? 0.7 : 0.4;
+      const successFactor = trader.winRate;
+      
+      traderProfile.entryThreshold = 0.005 + (aggressionFactor * 0.02);
+      traderProfile.exitProfitThreshold = 0.01 + (successFactor * 0.04);
+      traderProfile.exitLossThreshold = 0.005 + (aggressionFactor * 0.025);
+      traderProfile.positionSizing = 0.1 + (aggressionFactor * 0.4);
+      traderProfile.tradingFrequency = 0.2 + (aggressionFactor * 0.6);
+      traderProfile.sentimentSensitivity = 0.3 + (aggressionFactor * 0.5);
     });
     
-    // Add P&L from active positions
-    simulation.activePositions.forEach((position: TraderPosition) => {
-      const walletAddress = position.trader.walletAddress;
-      const currentPnL = traderPnL.get(walletAddress) || 0;
-      traderPnL.set(walletAddress, currentPnL + position.currentPnl);
-    });
-    
-    // Update trader rankings
-    simulation.traderRankings = simulation.traders
-      .map((profile: TraderProfile) => ({
-        ...profile.trader,
-        simulationPnl: traderPnL.get(profile.trader.walletAddress) || 0
-      }))
-      .sort((a: Trader & { simulationPnl?: number }, b: Trader & { simulationPnl?: number }) => (b.simulationPnl || 0) - (a.simulationPnl || 0));
+    this.simulations.set(simulationId, simulation);
   }
   
   private updateOrderBook(simulation: SimulationState): void {
