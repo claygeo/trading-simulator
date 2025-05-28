@@ -1,11 +1,15 @@
-// backend/src/api/routes.ts - Updated to match frontend endpoints
+// backend/src/api/routes.ts - Complete file with scenario routes
 import express, { Request, Response } from 'express';
 import duneApi from './duneApi';
 import traderService from '../services/traderService';
 import { simulationManager } from '../services/simulationManager';
 import { RawTrader } from '../types/traders';
+import scenarioRoutes from '../routes/scenario';
 
 const router = express.Router();
+
+// Include scenario routes
+router.use('/', scenarioRoutes);
 
 // Get all traders
 router.get('/traders', async (req: Request, res: Response) => {
