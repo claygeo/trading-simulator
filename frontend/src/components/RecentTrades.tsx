@@ -1,4 +1,4 @@
-// frontend/src/components/RecentTrades.tsx - Fixed
+// frontend/src/components/RecentTrades.tsx - Compact version
 import React, { useState, useRef } from 'react';
 import { Trade } from '../types';
 
@@ -50,23 +50,23 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
   };
   
   return (
-    <div className="bg-surface p-3 rounded-lg shadow-lg h-full">
-      <div className="flex justify-between items-center mb-2">
-        <h2 className="text-base font-semibold text-text-primary">Recent Trades</h2>
-        <div className="flex space-x-2">
+    <div className="bg-surface p-2 rounded-lg shadow-lg h-full">
+      <div className="flex justify-between items-center mb-1">
+        <h2 className="text-xs font-semibold text-text-primary">Recent Trades</h2>
+        <div className="flex space-x-1">
           <button 
             onClick={scrollLeft}
-            className="text-accent hover:text-accent-hover focus:outline-none p-1"
+            className="text-accent hover:text-accent-hover focus:outline-none p-0.5"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="15 18 9 12 15 6"></polyline>
             </svg>
           </button>
           <button 
             onClick={scrollRight}
-            className="text-accent hover:text-accent-hover focus:outline-none p-1"
+            className="text-accent hover:text-accent-hover focus:outline-none p-0.5"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="9 18 15 12 9 6"></polyline>
             </svg>
           </button>
@@ -76,29 +76,29 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
       {/* Adding the scrollbar-hiding styles directly to the div using className */}
       <div 
         ref={scrollContainerRef}
-        className="overflow-x-auto pb-2 hide-scrollbar"
+        className="overflow-x-auto pb-1 hide-scrollbar"
         style={{ 
           scrollbarWidth: 'none', 
           msOverflowStyle: 'none' 
         }}
       >
         <div className="min-w-max">
-          <table className="w-full text-xs">
+          <table className="w-full text-[10px]">
             <thead className="bg-surface z-10">
               <tr className="border-b border-border">
-                <th className="py-2 px-3 text-left text-text-secondary">Time</th>
-                <th className="py-2 px-3 text-left text-text-secondary">Trader</th>
-                <th className="py-2 px-3 text-center text-text-secondary">Type</th>
-                <th className="py-2 px-3 text-right text-text-secondary">Price</th>
-                <th className="py-2 px-3 text-right text-text-secondary">Quantity</th>
-                <th className="py-2 px-3 text-right text-text-secondary">Value</th>
-                <th className="py-2 px-3 text-right text-text-secondary">Impact</th>
+                <th className="py-0.5 px-1 text-left text-text-secondary">Time</th>
+                <th className="py-0.5 px-1 text-left text-text-secondary">Trader</th>
+                <th className="py-0.5 px-1 text-center text-text-secondary">Type</th>
+                <th className="py-0.5 px-1 text-right text-text-secondary">Price</th>
+                <th className="py-0.5 px-1 text-right text-text-secondary">Quantity</th>
+                <th className="py-0.5 px-1 text-right text-text-secondary">Value</th>
+                <th className="py-0.5 px-1 text-right text-text-secondary">Impact</th>
               </tr>
             </thead>
             <tbody>
               {trades.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-4 text-text-muted">No trades yet</td>
+                  <td colSpan={7} className="text-center py-2 text-text-muted">No trades yet</td>
                 </tr>
               ) : (
                 trades.slice(0, displayCount).map((trade) => {
@@ -110,24 +110,24 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
                       key={trade.id} 
                       className="border-b border-border hover:bg-panel transition-colors"
                     >
-                      <td className="py-2 px-3 text-xs text-text-muted font-mono">{formatTime(trade.timestamp)}</td>
-                      <td className="py-2 px-3 text-text-primary">
-                        <span className={`inline-block w-2 h-2 rounded-full mr-1 ${
+                      <td className="py-0.5 px-1 text-[9px] text-text-muted font-mono">{formatTime(trade.timestamp)}</td>
+                      <td className="py-0.5 px-1 text-text-primary">
+                        <span className={`inline-block w-1.5 h-1.5 rounded-full mr-0.5 ${
                           trade.trader.riskProfile === 'aggressive' ? 'bg-danger' : 
                           trade.trader.riskProfile === 'moderate' ? 'bg-warning' : 
                           'bg-success'
                         }`}></span>
                         {truncateAddress(trade.trader.walletAddress)}
                       </td>
-                      <td className={`py-2 px-3 text-center ${
+                      <td className={`py-0.5 px-1 text-center ${
                         trade.action === 'buy' ? 'text-chart-up' : 'text-chart-down'
                       } font-semibold`}>
                         {trade.action.toUpperCase()}
                       </td>
-                      <td className="py-2 px-3 text-right text-text-primary font-mono">{formatPrice(trade.price)}</td>
-                      <td className="py-2 px-3 text-right text-text-primary font-mono">{quantityDisplay}</td>
-                      <td className="py-2 px-3 text-right text-text-primary font-mono">{formatValue(trade.value)}</td>
-                      <td className="py-2 px-3 text-right text-xs text-text-muted font-mono">{formatImpact(trade.impact)}</td>
+                      <td className="py-0.5 px-1 text-right text-text-primary font-mono">{formatPrice(trade.price)}</td>
+                      <td className="py-0.5 px-1 text-right text-text-primary font-mono">{quantityDisplay}</td>
+                      <td className="py-0.5 px-1 text-right text-text-primary font-mono">{formatValue(trade.value)}</td>
+                      <td className="py-0.5 px-1 text-right text-[9px] text-text-muted font-mono">{formatImpact(trade.impact)}</td>
                     </tr>
                   );
                 })
@@ -138,10 +138,10 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
       </div>
       
       {displayCount < trades.length && (
-        <div className="mt-2 text-center">
+        <div className="mt-1 text-center">
           <button 
             onClick={loadMore}
-            className="px-4 py-1 bg-panel hover:bg-panel-hover text-text-primary text-xs rounded"
+            className="px-2 py-0.5 bg-panel hover:bg-panel-hover text-text-primary text-[10px] rounded"
           >
             Load More
           </button>
@@ -149,7 +149,7 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
       )}
       
       {trades.length > 0 && (
-        <div className="mt-2 text-xs text-text-secondary">
+        <div className="mt-1 text-[9px] text-text-secondary">
           <div className="flex justify-between">
             <span>Total trades: {trades.length}</span>
             <span>
