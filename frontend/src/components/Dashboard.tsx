@@ -1,4 +1,4 @@
-// Ultra-optimized Dashboard.tsx with Market Scenario Engine Integration
+// Updated Dashboard.tsx with proper Market Scenario Engine Integration
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -46,7 +46,7 @@ const Dashboard: React.FC = () => {
   const [isHighFrequencyMode, setIsHighFrequencyMode] = useState<boolean>(false);
   
   // Market Scenario Engine state
-  const [scenarioEngineActive] = useState<boolean>(true); // removed setter
+  const [scenarioEngineActive] = useState<boolean>(true);
   const [currentScenario, setCurrentScenario] = useState<MarketScenario | null>(null);
   const [scenarioPhaseData, setScenarioPhaseData] = useState<any>(null);
   
@@ -131,26 +131,73 @@ const Dashboard: React.FC = () => {
     });
   }, []);
 
-  // Market Scenario Engine callbacks
-  const handleScenarioStart = useCallback((scenario: MarketScenario) => {
+  // Market Scenario Engine callbacks - FIXED to actually affect the simulation
+  const handleScenarioStart = useCallback(async (scenario: MarketScenario) => {
+    if (!simulation) return;
+    
     setCurrentScenario(scenario);
     addDebugLog(`Market scenario started: ${scenario.name}`);
-  }, [addDebugLog]);
+    
+    // Apply initial trader behavior modifiers via API
+    try {
+      const response = await fetch(`/api/simulation/${simulation.id}/scenario/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modifiers: scenario.traderBehaviorModifiers
+        })
+      });
+      
+      if (!response.ok) {
+        addDebugLog(`Failed to apply scenario modifiers: ${response.statusText}`);
+      }
+    } catch (error) {
+      addDebugLog(`Error applying scenario: ${error}`);
+    }
+  }, [simulation, addDebugLog]);
 
-  const handleScenarioEnd = useCallback(() => {
+  const handleScenarioEnd = useCallback(async () => {
+    if (!simulation) return;
+    
     setCurrentScenario(null);
     setScenarioPhaseData(null);
     addDebugLog('Market scenario ended');
-  }, [addDebugLog]);
+    
+    // Clear scenario effects via API
+    try {
+      await fetch(`/api/simulation/${simulation.id}/scenario/end`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+    } catch (error) {
+      addDebugLog(`Error ending scenario: ${error}`);
+    }
+  }, [simulation, addDebugLog]);
 
-  const handleScenarioUpdate = useCallback((phase: any, progress: number) => {
+  const handleScenarioUpdate = useCallback(async (phase: any, progress: number) => {
+    if (!simulation) return;
+    
     setScenarioPhaseData({ phase, progress });
     
     // Update market condition based on scenario
     if (phase.marketCondition !== marketCondition) {
       setMarketCondition(phase.marketCondition);
     }
-  }, [marketCondition]);
+    
+    // Send phase update to backend to affect actual simulation
+    try {
+      await fetch(`/api/simulation/${simulation.id}/scenario/update`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phase: phase,
+          progress: progress
+        })
+      });
+    } catch (error) {
+      addDebugLog(`Error updating scenario phase: ${error}`);
+    }
+  }, [simulation, marketCondition, addDebugLog]);
 
   // Create simulation with performance optimizations
   useEffect(() => {
@@ -229,7 +276,6 @@ const Dashboard: React.FC = () => {
     }
     
     volatility = (volatility / (recent.length - 1)) * 100;
-    // const vwap = totalVolume > 0 ? volumeWeightedPrice / totalVolume : lastPrice; // commented out unused variable
     
     // Enhanced condition detection
     if (volatility > 4) {
@@ -325,7 +371,7 @@ const Dashboard: React.FC = () => {
     };
   }, [simulation, convertPriceHistory]);
 
-  // Ultra-optimized WebSocket message processing with price history update
+  // Ultra-optimized WebSocket message processing
   useEffect(() => {
     if (!lastMessage || !simulation) return;
     
@@ -357,21 +403,12 @@ const Dashboard: React.FC = () => {
         
         switch (type) {
           case 'price_update':
-            // Update current price and add to price history
-            const newPricePoint = {
-              timestamp: Date.now(),
-              open: prev.currentPrice || data.price,
-              high: Math.max(prev.currentPrice || data.price, data.price),
-              low: Math.min(prev.currentPrice || data.price, data.price),
-              close: data.price,
-              volume: 1000000 // Default volume
-            };
-            
+            // Update with the full price history from backend
             updatedSim = {
               ...updatedSim,
               currentPrice: data.price,
               orderBook: data.orderBook,
-              priceHistory: [...(prev.priceHistory || []), newPricePoint].slice(-1000) // Keep last 1000 points
+              priceHistory: data.priceHistory || updatedSim.priceHistory
             };
             break;
             
@@ -888,6 +925,7 @@ const Dashboard: React.FC = () => {
 };
 
 // Error boundary components remain the same
+// Error boundary components
 const ErrorFallback: React.FC<{ componentName: string }> = ({ componentName }) => {
   return (
     <div className="flex items-center justify-center h-full w-full bg-surface rounded-lg p-4">
