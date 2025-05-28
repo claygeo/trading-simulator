@@ -1,396 +1,243 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
-import { 
-  createChart, 
-  IChartApi, 
-  Time, 
-  CandlestickData, 
-  UTCTimestamp
-} from 'lightweight-charts';
-import { Trade } from '../types';
+import React, { useEffect, useRef, useState } from 'react';
+
+interface Candle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
 
 interface PriceChartProps {
-  interval?: '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
-  priceHistory: {
-    time: number;
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-    volume?: number;
-  }[];
-  currentPrice: number;
-  trades?: Trade[];
-  scenarioData?: {
-    phase: any;
-    progress: number;
-  } | null;
+  candles?: Candle[];
+  currentPrice?: number;
+  symbol?: string;
 }
 
 const PriceChart: React.FC<PriceChartProps> = ({ 
-  interval = '1h',
-  priceHistory, 
-  currentPrice, 
-  trades = [],
-  scenarioData
+  candles = [], 
+  currentPrice = 0,
+  symbol = 'BTC/USDT'
 }) => {
-  const chartContainerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const candlestickSeriesRef = useRef<any>(null);
-  const volumeSeriesRef = useRef<any>(null);
-  const [isInitialized, setIsInitialized] = useState(false);
-  const hasDataRef = useRef(false);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
-  // Interval to seconds mapping
-  const intervalToSeconds = {
-    '1m': 60,
-    '5m': 300,
-    '15m': 900,
-    '1h': 3600,
-    '4h': 14400,
-    '1d': 86400
-  };
-
-  // Format time based on interval
-  const formatTime = (timestamp: number): string => {
-    const date = new Date(timestamp * 1000);
+  // Generate sample data for 1 day (96 candles for 15-minute intervals)
+  const generateDayCandles = (): Candle[] => {
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    const candleData: Candle[] = [];
+    const basePrice = 45000;
     
-    switch(interval) {
-      case '1m':
-      case '5m':
-      case '15m':
-        return date.toLocaleTimeString('en-US', { 
-          hour: '2-digit', 
-          minute: '2-digit',
-          hour12: false 
-        });
-      case '1h':
-      case '4h':
-        return date.toLocaleTimeString('en-US', { 
-          hour: '2-digit', 
-          minute: '2-digit',
-          hour12: false 
-        }) + '\n' + date.toLocaleDateString('en-US', { 
-          month: 'short', 
-          day: 'numeric' 
-        });
-      case '1d':
-        return date.toLocaleDateString('en-US', { 
-          month: 'short', 
-          day: 'numeric',
-          year: '2-digit'
-        });
-      default:
-        return date.toLocaleTimeString('en-US', { 
-          hour: '2-digit', 
-          minute: '2-digit',
-          hour12: false 
-        });
-    }
-  };
-
-  // Convert price history to candlestick data with proper time intervals
-  const candlestickData = useMemo(() => {
-    if (!priceHistory || priceHistory.length === 0) return [];
-
-    // First, ensure the input data is sorted
-    const sortedHistory = [...priceHistory].sort((a, b) => a.time - b.time);
-
-    const intervalSeconds = intervalToSeconds[interval];
-    const aggregatedData: { [key: number]: CandlestickData } = {};
-
-    sortedHistory.forEach(point => {
-      // Convert milliseconds to seconds for lightweight-charts
-      const pointTimeInSeconds = Math.floor(point.time / 1000);
-      // Round timestamp to nearest interval
-      const intervalTime = Math.floor(pointTimeInSeconds / intervalSeconds) * intervalSeconds;
+    for (let i = 0; i < 96; i++) {
+      const time = startOfDay.getTime() + (i * 15 * 60 * 1000); // 15-minute intervals
+      const volatility = 0.002;
+      const trend = Math.sin(i / 20) * 500; // Daily trend
+      const randomWalk = (Math.random() - 0.5) * basePrice * volatility;
       
-      if (!aggregatedData[intervalTime]) {
-        aggregatedData[intervalTime] = {
-          time: intervalTime as UTCTimestamp,
-          open: point.open,
-          high: point.high,
-          low: point.low,
-          close: point.close
-        };
-      } else {
-        // Update existing candle
-        aggregatedData[intervalTime].high = Math.max(aggregatedData[intervalTime].high, point.high);
-        aggregatedData[intervalTime].low = Math.min(aggregatedData[intervalTime].low, point.low);
-        aggregatedData[intervalTime].close = point.close;
-      }
-    });
-
-    // Convert to array and ensure proper sorting
-    const sortedData = Object.values(aggregatedData)
-      .sort((a, b) => (a.time as number) - (b.time as number))
-      .filter((candle, index, array) => {
-        // Remove any duplicates
-        if (index === 0) return true;
-        return (candle.time as number) > (array[index - 1].time as number);
+      const open = i === 0 ? basePrice : candleData[i - 1].close;
+      const close = open + randomWalk + trend / 50;
+      const high = Math.max(open, close) + Math.random() * 50;
+      const low = Math.min(open, close) - Math.random() * 50;
+      const volume = Math.random() * 1000000 + 500000;
+      
+      candleData.push({
+        time,
+        open,
+        high,
+        low,
+        close,
+        volume
       });
-
-    return sortedData;
-  }, [priceHistory, interval]);
-
-  // Volume data
-  const volumeData = useMemo(() => {
-    return candlestickData.map(candle => ({
-      time: candle.time,
-      value: Math.random() * 1000000 + 100000, // Simulated volume
-      color: candle.close >= candle.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
-    }));
-  }, [candlestickData]);
-
-  // Initialize chart
-  useEffect(() => {
-    if (!chartContainerRef.current) return;
-    if (isInitialized) return;
-    if (candlestickData.length === 0) return;
-
-    console.log('Initializing chart...');
-
-    const chart = createChart(chartContainerRef.current, {
-      width: chartContainerRef.current.clientWidth,
-      height: chartContainerRef.current.clientHeight,
-      layout: {
-        background: { color: '#131722' },
-        textColor: '#d9d9d9',
-      },
-      grid: {
-        vertLines: { color: 'rgba(42, 46, 57, 0.5)' },
-        horzLines: { color: 'rgba(42, 46, 57, 0.5)' },
-      },
-      crosshair: {
-        mode: 1,
-        vertLine: {
-          width: 1,
-          color: '#758696',
-          style: 3,
-        },
-        horzLine: {
-          width: 1,
-          color: '#758696',
-          style: 3,
-        },
-      },
-      rightPriceScale: {
-        borderColor: '#2a2e39',
-        scaleMargins: {
-          top: 0.1,
-          bottom: 0.25,
-        },
-      },
-      timeScale: {
-        borderColor: '#2a2e39',
-        timeVisible: true,
-        secondsVisible: false,
-        tickMarkFormatter: (time: Time) => {
-          const timestamp = typeof time === 'string' ? parseInt(time) : time as number;
-          return formatTime(timestamp);
-        },
-        fixRightEdge: true,
-        fixLeftEdge: false,
-        rightBarStaysOnScroll: true,
-        rightOffset: 12,
-        minBarSpacing: 3,
-      },
-    });
-
-    // Add candlestick series
-    const candlestickSeries = chart.addCandlestickSeries({
-      upColor: '#26a69a',
-      downColor: '#ef5350',
-      borderVisible: false,
-      wickUpColor: '#26a69a',
-      wickDownColor: '#ef5350',
-      priceFormat: {
-        type: 'price',
-        precision: 2,
-        minMove: 0.01,
-      },
-    });
-
-    // Add volume series
-    const volumeSeries = chart.addHistogramSeries({
-      color: '#26a69a',
-      priceFormat: {
-        type: 'volume',
-      },
-      priceScaleId: '',
-    });
+    }
     
-    // Set the price scale margins after adding the series
-    chart.priceScale('').applyOptions({
-      scaleMargins: {
-        top: 0.8,
-        bottom: 0,
-      },
+    return candleData;
+  };
+
+  const [chartCandles] = useState<Candle[]>(candles.length > 0 ? candles : generateDayCandles());
+
+  useEffect(() => {
+    const updateDimensions = () => {
+      if (canvasRef.current && canvasRef.current.parentElement) {
+        const parent = canvasRef.current.parentElement;
+        const width = parent.clientWidth;
+        const height = parent.clientHeight;
+        setDimensions({ width, height });
+      }
+    };
+
+    updateDimensions();
+    window.addEventListener('resize', updateDimensions);
+    return () => window.removeEventListener('resize', updateDimensions);
+  }, []);
+
+  useEffect(() => {
+    if (!canvasRef.current || chartCandles.length === 0) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Set canvas size
+    canvas.width = dimensions.width;
+    canvas.height = dimensions.height;
+
+    // Clear canvas
+    ctx.fillStyle = '#0B1929';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Calculate chart dimensions
+    const padding = { top: 20, right: 80, bottom: 40, left: 10 };
+    const chartWidth = canvas.width - padding.left - padding.right;
+    const chartHeight = canvas.height - padding.top - padding.bottom;
+
+    // Find price range
+    let minPrice = Infinity;
+    let maxPrice = -Infinity;
+    
+    chartCandles.forEach(candle => {
+      minPrice = Math.min(minPrice, candle.low);
+      maxPrice = Math.max(maxPrice, candle.high);
     });
 
-    chartRef.current = chart;
-    candlestickSeriesRef.current = candlestickSeries;
-    volumeSeriesRef.current = volumeSeries;
-    hasDataRef.current = true;
+    // Add padding to price range
+    const priceRange = maxPrice - minPrice;
+    const pricePadding = priceRange * 0.1;
+    minPrice -= pricePadding;
+    maxPrice += pricePadding;
 
-    setIsInitialized(true);
-
-    return () => {
-      console.log('Cleaning up chart...');
-      chart.remove();
-      chartRef.current = null;
-      candlestickSeriesRef.current = null;
-      volumeSeriesRef.current = null;
-      hasDataRef.current = false;
-      setIsInitialized(false);
-    };
-  }, []); // Empty dependency array - only run once on mount
-
-  // Update chart data when candlestick data changes
-  useEffect(() => {
-    if (!isInitialized) return;
-    if (!candlestickSeriesRef.current || !volumeSeriesRef.current) return;
-    if (candlestickData.length === 0) return;
-
-    try {
-      candlestickSeriesRef.current.setData(candlestickData);
-      volumeSeriesRef.current.setData(volumeData);
-
-      // Auto-scroll to the latest data
-      if (chartRef.current) {
-        const timeScale = chartRef.current.timeScale();
-        const lastCandle = candlestickData[candlestickData.length - 1];
-        const candlesToShow = Math.min(100, candlestickData.length);
-        const firstVisibleCandle = candlestickData[Math.max(0, candlestickData.length - candlesToShow)];
-        
-        const rightPadding = intervalToSeconds[interval] * 10;
-        const to = (lastCandle.time as number) + rightPadding;
-        
-        timeScale.setVisibleRange({
-          from: firstVisibleCandle.time,
-          to: to as Time,
-        });
-      }
-    } catch (error) {
-      console.error('Error updating chart data:', error);
-    }
-  }, [candlestickData, volumeData, interval, isInitialized]);
-
-  // Handle real-time price updates separately
-  useEffect(() => {
-    if (!isInitialized) return;
-    if (!candlestickSeriesRef.current || !volumeSeriesRef.current) return;
-    if (candlestickData.length === 0) return;
-
-    const lastCandle = candlestickData[candlestickData.length - 1];
-    if (!lastCandle) return;
-
-    const currentTime = Math.floor(Date.now() / 1000);
-    const intervalSeconds = intervalToSeconds[interval];
-    const currentIntervalTime = Math.floor(currentTime / intervalSeconds) * intervalSeconds;
-
-    // Only update if we're in the same interval as the last candle
-    if (currentIntervalTime === (lastCandle.time as number)) {
-      const updatedCandle: CandlestickData = {
-        time: currentIntervalTime as UTCTimestamp,
-        open: lastCandle.open,
-        high: Math.max(lastCandle.high, currentPrice),
-        low: Math.min(lastCandle.low, currentPrice),
-        close: currentPrice
-      };
-
-      try {
-        candlestickSeriesRef.current.update(updatedCandle);
-        
-        volumeSeriesRef.current.update({
-          time: currentIntervalTime as UTCTimestamp,
-          value: Math.random() * 1000000 + 100000,
-          color: currentPrice >= lastCandle.open ? 'rgba(38, 166, 154, 0.5)' : 'rgba(239, 83, 80, 0.5)'
-        });
-      } catch (error) {
-        console.error('Error updating real-time data:', error);
-      }
-    }
-  }, [currentPrice, interval, isInitialized]); // Removed candlestickData dependency
-
-  // Handle window resize
-  useEffect(() => {
-    if (!chartRef.current || !chartContainerRef.current) return;
-
-    const handleResize = () => {
-      if (chartContainerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({
-          width: chartContainerRef.current.clientWidth,
-          height: chartContainerRef.current.clientHeight,
-        });
-      }
+    // Calculate scales
+    const priceScale = (price: number) => {
+      return padding.top + chartHeight - ((price - minPrice) / (maxPrice - minPrice)) * chartHeight;
     };
 
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [isInitialized]);
+    const timeScale = (index: number) => {
+      return padding.left + (index / (chartCandles.length - 1)) * chartWidth;
+    };
 
-  // Add trade markers
-  useEffect(() => {
-    if (!isInitialized) return;
-    if (!candlestickSeriesRef.current) return;
-    if (!trades || trades.length === 0) {
-      candlestickSeriesRef.current.setMarkers([]);
-      return;
+    // Draw grid lines and time labels
+    ctx.strokeStyle = '#1E2A3A';
+    ctx.lineWidth = 1;
+    ctx.font = '11px sans-serif';
+    ctx.fillStyle = '#64748B';
+
+    // Time grid lines and labels
+    const hoursToShow = [0, 3, 6, 9, 12, 15, 18, 21]; // Every 3 hours
+    
+    hoursToShow.forEach(hour => {
+      const candleIndex = hour * 4; // 4 candles per hour (15-min intervals)
+      if (candleIndex < chartCandles.length) {
+        const x = timeScale(candleIndex);
+        
+        // Draw vertical grid line
+        ctx.beginPath();
+        ctx.moveTo(x, padding.top);
+        ctx.lineTo(x, canvas.height - padding.bottom);
+        ctx.stroke();
+        
+        // Draw time label
+        const timeLabel = `${hour.toString().padStart(2, '0')}:00`;
+        ctx.textAlign = 'center';
+        ctx.fillText(timeLabel, x, canvas.height - padding.bottom + 20);
+      }
+    });
+
+    // Price grid lines
+    const priceSteps = 5;
+    const priceStepSize = (maxPrice - minPrice) / priceSteps;
+    
+    ctx.textAlign = 'right';
+    for (let i = 0; i <= priceSteps; i++) {
+      const price = minPrice + (i * priceStepSize);
+      const y = priceScale(price);
+      
+      // Draw horizontal grid line
+      ctx.beginPath();
+      ctx.moveTo(padding.left, y);
+      ctx.lineTo(canvas.width - padding.right, y);
+      ctx.stroke();
+      
+      // Draw price label
+      ctx.fillText(price.toFixed(2), canvas.width - 10, y + 4);
     }
 
-    try {
-      const sortedTrades = [...trades]
-        .sort((a, b) => a.timestamp - b.timestamp)
-        .slice(-50);
+    // Draw candles
+    const candleWidth = Math.max(1, (chartWidth / chartCandles.length) * 0.8);
+    const candleSpacing = chartWidth / chartCandles.length;
 
-      const markers = sortedTrades.map(trade => ({
-        time: Math.floor(trade.timestamp / 1000) as UTCTimestamp,
-        position: trade.action === 'buy' ? 'belowBar' : 'aboveBar',
-        color: trade.action === 'buy' ? '#26a69a' : '#ef5350',
-        shape: trade.action === 'buy' ? 'arrowUp' : 'arrowDown',
-        text: trade.action === 'buy' ? 'B' : 'S',
-        size: 1
-      }));
+    chartCandles.forEach((candle, index) => {
+      const x = timeScale(index);
+      const openY = priceScale(candle.open);
+      const closeY = priceScale(candle.close);
+      const highY = priceScale(candle.high);
+      const lowY = priceScale(candle.low);
 
-      candlestickSeriesRef.current.setMarkers(markers as any);
-    } catch (error) {
-      console.error('Error setting trade markers:', error);
+      const isGreen = candle.close >= candle.open;
+      ctx.strokeStyle = isGreen ? '#00E676' : '#FF5252';
+      ctx.fillStyle = isGreen ? '#00E676' : '#FF5252';
+
+      // Draw wick
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, highY);
+      ctx.lineTo(x, lowY);
+      ctx.stroke();
+
+      // Draw body
+      const bodyHeight = Math.abs(closeY - openY);
+      const bodyY = Math.min(openY, closeY);
+      
+      if (bodyHeight > 1) {
+        ctx.fillRect(x - candleWidth / 2, bodyY, candleWidth, bodyHeight);
+      } else {
+        // Draw a line for very small bodies
+        ctx.beginPath();
+        ctx.moveTo(x - candleWidth / 2, bodyY);
+        ctx.lineTo(x + candleWidth / 2, bodyY);
+        ctx.stroke();
+      }
+    });
+
+    // Draw current price line if provided
+    if (currentPrice > 0 && currentPrice >= minPrice && currentPrice <= maxPrice) {
+      const priceY = priceScale(currentPrice);
+      
+      ctx.strokeStyle = '#FFC107';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 5]);
+      
+      ctx.beginPath();
+      ctx.moveTo(padding.left, priceY);
+      ctx.lineTo(canvas.width - padding.right, priceY);
+      ctx.stroke();
+      
+      ctx.setLineDash([]);
+      
+      // Price label
+      ctx.fillStyle = '#FFC107';
+      ctx.fillRect(canvas.width - padding.right + 5, priceY - 10, 70, 20);
+      ctx.fillStyle = '#000';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(currentPrice.toFixed(2), canvas.width - padding.right + 8, priceY + 4);
     }
-  }, [trades, isInitialized]);
 
-  // Loading state
-  if (candlestickData.length === 0) {
-    return (
-      <div className="w-full h-full flex items-center justify-center bg-[#131722] text-gray-400">
-        <div className="text-center">
-          <div className="text-lg mb-2">No data available</div>
-          <div className="text-sm">Start the simulation to see price data</div>
-        </div>
-      </div>
-    );
-  }
+    // Draw title
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'left';
+    ctx.fillText(`${symbol} - 1D Chart`, padding.left, 15);
+
+  }, [chartCandles, currentPrice, dimensions, symbol]);
 
   return (
-    <div className="relative w-full h-full">
-      <div ref={chartContainerRef} className="w-full h-full" />
-      
-      {/* Interval indicator */}
-      <div className="absolute top-2 left-2 bg-black bg-opacity-50 text-white px-2 py-1 rounded text-xs">
-        {interval.toUpperCase()}
-      </div>
-      
-      {/* Current price overlay */}
-      <div className="absolute top-2 right-2 bg-black bg-opacity-50 text-white px-3 py-1 rounded">
-        <span className="text-sm font-mono">${currentPrice.toFixed(2)}</span>
-      </div>
-      
-      {/* Scenario indicator */}
-      {scenarioData && (
-        <div className="absolute top-12 right-2 bg-purple-600 bg-opacity-80 text-white px-2 py-1 rounded text-xs">
-          <div>Phase: {scenarioData.phase.name}</div>
-          <div>Progress: {(scenarioData.progress * 100).toFixed(0)}%</div>
-        </div>
-      )}
+    <div className="w-full h-full bg-gray-900 rounded-lg p-2">
+      <canvas 
+        ref={canvasRef}
+        className="w-full h-full"
+        style={{ display: 'block' }}
+      />
     </div>
   );
 };
