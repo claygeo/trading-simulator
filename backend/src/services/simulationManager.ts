@@ -1,4 +1,4 @@
-// backend/src/services/simulationManager.ts - Complete Fixed File with Realistic Candle Generation
+// backend/src/services/simulationManager.ts - Complete Fixed File with Realistic Candle Generation and Ultra-High Performance
 import { v4 as uuidv4 } from 'uuid';
 import {
   SimulationState,
@@ -23,6 +23,9 @@ class SimulationManager {
   private simulationSpeeds: Map<string, number> = new Map();
   private clients: Set<WebSocket> = new Set();
   private baseUpdateInterval: number = 1000; // 1 second base interval
+  private highFrequencyMode: boolean = false;
+  private batchedUpdates: any[] = [];
+  private lastBatchTime: number = 0;
   
   constructor() {}
   
@@ -52,6 +55,29 @@ class SimulationManager {
         client.send(message);
       }
     });
+  }
+  
+  // Add method for ultra-fast simulation mode
+  enableHighFrequencyMode(simulationId: string): void {
+    const simulation = this.simulations.get(simulationId);
+    if (!simulation) return;
+    
+    this.highFrequencyMode = true;
+    console.log('High-frequency trading mode enabled');
+    
+    // Adjust market parameters for HFT
+    simulation.marketConditions.volatility *= 1.5; // Increase volatility
+    simulation.marketConditions.volume *= 2; // Double the volume
+    
+    this.simulations.set(simulationId, simulation);
+  }
+  
+  // Add method to handle ludicrous speed (100x)
+  enableLudicrousMode(simulationId: string): void {
+    this.enableHighFrequencyMode(simulationId);
+    this.setSimulationSpeed(simulationId, 100);
+    
+    console.log('🚀 LUDICROUS MODE ACTIVATED - 100x SPEED');
   }
   
   async createSimulation(parameters: Partial<SimulationParameters> = {}): Promise<SimulationState> {
@@ -522,7 +548,7 @@ class SimulationManager {
     return Array.from(this.simulations.values());
   }
   
-  // Updated for proper speed settings
+  // Enhanced setSimulationSpeed to support ultra-fast speeds
   setSimulationSpeed(id: string, speed: number): void {
     const simulation = this.simulations.get(id);
     
@@ -530,8 +556,9 @@ class SimulationManager {
       throw new Error(`Simulation with ID ${id} not found`);
     }
     
-    // Allow speeds from 1x to 10x
-    const validSpeed = Math.max(1, Math.min(10, speed));
+    // Allow speeds from 1x to 100x for HFT mode
+    const maxSpeed = this.highFrequencyMode ? 100 : 10;
+    const validSpeed = Math.max(1, Math.min(maxSpeed, speed));
     
     // Store the new speed
     this.simulationSpeeds.set(id, validSpeed);
@@ -549,17 +576,33 @@ class SimulationManager {
       }
       
       // Calculate the new interval based on speed
-      const updateInterval = Math.floor(this.baseUpdateInterval / validSpeed);
+      let updateInterval: number;
+      
+      if (validSpeed <= 10) {
+        // Normal mode: 1000ms / speed
+        updateInterval = Math.floor(this.baseUpdateInterval / validSpeed);
+      } else if (validSpeed <= 50) {
+        // Fast mode: 50ms minimum interval
+        updateInterval = Math.max(50, Math.floor(1000 / validSpeed));
+      } else {
+        // Ultra-fast mode: 10ms minimum interval
+        updateInterval = Math.max(10, Math.floor(1000 / validSpeed));
+      }
       
       // Set up a new interval with the updated speed
       const newInterval = setInterval(() => {
-        this.advanceSimulation(id);
+        if (validSpeed > 50) {
+          // Batch updates for ultra-high speeds
+          this.advanceSimulationBatched(id);
+        } else {
+          this.advanceSimulation(id);
+        }
       }, updateInterval);
       
       this.simulationIntervals.set(id, newInterval);
     }
     
-    console.log(`Simulation ${id} speed set to ${validSpeed}x`);
+    console.log(`Simulation ${id} speed set to ${validSpeed}x (interval: ${Math.floor(1000 / validSpeed)}ms)`);
   }
   
   // Fixed for proper pausing functionality
@@ -583,14 +626,30 @@ class SimulationManager {
     const speed = this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor;
     
     // Calculate the interval based on speed
-    const updateInterval = Math.floor(this.baseUpdateInterval / speed);
+    let updateInterval: number;
+    
+    if (speed <= 10) {
+      // Normal mode: 1000ms / speed
+      updateInterval = Math.floor(this.baseUpdateInterval / speed);
+    } else if (speed <= 50) {
+      // Fast mode: 50ms minimum interval
+      updateInterval = Math.max(50, Math.floor(1000 / speed));
+    } else {
+      // Ultra-fast mode: 10ms minimum interval
+      updateInterval = Math.max(10, Math.floor(1000 / speed));
+    }
     
     console.log(`Starting simulation ${id} with speed ${speed}x (interval ${updateInterval}ms)`);
     console.log(`Resuming from price: $${simulation.currentPrice.toFixed(2)}`);
     
     // Set up the simulation interval
     const interval = setInterval(() => {
-      this.advanceSimulation(id);
+      if (speed > 50) {
+        // Batch updates for ultra-high speeds
+        this.advanceSimulationBatched(id);
+      } else {
+        this.advanceSimulation(id);
+      }
     }, updateInterval);
     
     this.simulationIntervals.set(id, interval);
@@ -805,6 +864,171 @@ class SimulationManager {
     
     // Save the updated simulation state
     this.simulations.set(id, simulation);
+  }
+  
+  // New batched simulation advancement for ultra-high speeds
+  private advanceSimulationBatched(id: string): void {
+    const simulation = this.simulations.get(id);
+    
+    if (!simulation || !simulation.isRunning || simulation.isPaused) {
+      return;
+    }
+    
+    const now = performance.now();
+    const timeSinceLastBatch = now - this.lastBatchTime;
+    
+    // Batch multiple updates together
+    if (timeSinceLastBatch < 16) { // 60 FPS limit
+      // Queue the update
+      this.batchedUpdates.push({ id, time: now });
+      return;
+    }
+    
+    // Process all batched updates
+    const speed = this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor;
+    const updates = Math.max(1, Math.floor(timeSinceLastBatch / 10)); // Process multiple time steps
+    
+    for (let i = 0; i < updates; i++) {
+      const timeStep = 60 * 1000 * speed / updates; // Distribute time steps
+      simulation.currentTime += timeStep;
+      
+      if (simulation.currentTime >= simulation.endTime) {
+        this.pauseSimulation(id);
+        return;
+      }
+      
+      // Update price with reduced volatility for stability at high speeds
+      const volatilityFactor = Math.max(0.1, 1 / Math.sqrt(speed));
+      this.updatePriceHighFrequency(simulation, volatilityFactor);
+    }
+    
+    // Process trader actions in batch
+    this.processTraderActionsBatch(simulation, updates);
+    
+    // Update order book once per batch
+    this.updateOrderBook(simulation);
+    
+    // Broadcast consolidated update
+    this.broadcastEvent(id, {
+      type: 'price_update',
+      timestamp: simulation.currentTime,
+      data: {
+        price: simulation.currentPrice,
+        orderBook: simulation.orderBook,
+        priceHistory: simulation.priceHistory,
+        batchSize: updates
+      }
+    });
+    
+    this.lastBatchTime = now;
+    this.batchedUpdates = [];
+    
+    // Save the updated simulation state
+    this.simulations.set(id, simulation);
+  }
+  
+  // High-frequency price update with stability controls
+  private updatePriceHighFrequency(simulation: SimulationState, volatilityFactor: number): void {
+    const { marketConditions, currentPrice } = simulation;
+    const activeScenario = (simulation as any).activeScenario;
+    
+    // Reduced base volatility for high-frequency updates
+    let baseVolatility = marketConditions.volatility * 0.3 * volatilityFactor;
+    
+    // Random walk model with trend bias
+    let trendFactor = 0;
+    
+    // Apply scenario effects if active
+    if (activeScenario && activeScenario.phase) {
+      const { priceAction } = activeScenario;
+      
+      switch (priceAction.type) {
+        case 'crash':
+          trendFactor = -0.005 * priceAction.intensity * volatilityFactor;
+          baseVolatility = marketConditions.volatility * priceAction.volatility * volatilityFactor;
+          break;
+        
+        case 'pump':
+          trendFactor = 0.005 * priceAction.intensity * volatilityFactor;
+          baseVolatility = marketConditions.volatility * priceAction.volatility * volatilityFactor;
+          break;
+        
+        default:
+          // Reduced factors for other types
+          trendFactor *= volatilityFactor;
+          baseVolatility *= volatilityFactor;
+      }
+    } else {
+      if (marketConditions.trend === 'bullish') trendFactor = 0.00005;
+      else if (marketConditions.trend === 'bearish') trendFactor = -0.00005;
+    }
+    
+    // Smaller random component for stability
+    const randomFactor = (Math.random() - 0.5) * baseVolatility;
+    
+    // Calculate price change
+    const priceChange = currentPrice * (trendFactor + randomFactor);
+    const newPrice = currentPrice + priceChange;
+    
+    // Update the current price with bounds
+    simulation.currentPrice = Math.max(1.00, Math.min(10000.00, newPrice));
+    
+    // Update candles (same as before)
+    const lastCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
+    const candleInterval = 15 * 60 * 1000;
+    const currentCandlePeriod = Math.floor(simulation.currentTime / candleInterval);
+    const lastCandlePeriod = Math.floor(lastCandle.timestamp / candleInterval);
+    
+    if (currentCandlePeriod > lastCandlePeriod) {
+      simulation.priceHistory.push({
+        timestamp: currentCandlePeriod * candleInterval,
+        open: simulation.currentPrice,
+        high: simulation.currentPrice,
+        low: simulation.currentPrice,
+        close: simulation.currentPrice,
+        volume: 0
+      });
+      
+      if (simulation.priceHistory.length > 250) {
+        simulation.priceHistory.shift();
+      }
+    } else {
+      const currentCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
+      currentCandle.close = simulation.currentPrice;
+      currentCandle.high = Math.max(currentCandle.high, simulation.currentPrice);
+      currentCandle.low = Math.min(currentCandle.low, simulation.currentPrice);
+      simulation.priceHistory[simulation.priceHistory.length - 1] = currentCandle;
+    }
+  }
+  
+  // Batch process trader actions for efficiency
+  private processTraderActionsBatch(simulation: SimulationState, batchSize: number): void {
+    // Increase action probability based on batch size
+    const actionMultiplier = Math.min(batchSize, 10);
+    
+    // Sample a subset of traders for efficiency
+    const traderSample = this.getRandomTraderSample(simulation.traders, Math.min(50, simulation.traders.length));
+    
+    traderSample.forEach((trader: TraderProfile) => {
+      const { tradingFrequency } = trader;
+      
+      // Adjusted probability for batch processing
+      const actionProbability = tradingFrequency * 0.05 * actionMultiplier;
+      
+      if (Math.random() < actionProbability) {
+        this.processTraderDecision(simulation, trader);
+      }
+    });
+  }
+  
+  // Efficient random sampling
+  private getRandomTraderSample(traders: TraderProfile[], sampleSize: number): TraderProfile[] {
+    const shuffled = [...traders];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled.slice(0, sampleSize);
   }
   
   private updatePrice(simulation: SimulationState): void {
