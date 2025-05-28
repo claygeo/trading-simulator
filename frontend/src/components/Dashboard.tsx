@@ -921,8 +921,7 @@ const Dashboard: React.FC = () => {
           gridColumn: '2 / 3', 
           gridRow: '1 / 2', 
           position: 'relative', 
-          overflow: 'hidden',
-          minHeight: '400px'
+          overflow: 'hidden'
         }} className="bg-[#0B1426] rounded-lg shadow-lg">
           <div className="h-full w-full" style={{ 
             position: 'absolute', 
