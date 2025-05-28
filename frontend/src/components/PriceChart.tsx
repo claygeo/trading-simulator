@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 
 interface Candle {
   time: number;
@@ -11,12 +11,12 @@ interface Candle {
 
 interface ChartPricePoint {
   time: number;
+  timestamp?: number;
   open: number;
   high: number;
   low: number;
   close: number;
   volume?: number;
-  price?: number; // Added for compatibility
 }
 
 interface Trade {
@@ -26,9 +26,21 @@ interface Trade {
   quantity?: number;
   side?: 'buy' | 'sell';
   timestamp: number;
-  // Additional fields from your types
   trader?: any;
   tokenAmount?: number;
+}
+
+// Define market condition type
+type MarketCondition = 'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash';
+
+interface ScenarioPhase {
+  name: string;
+  marketCondition: MarketCondition;
+}
+
+interface ScenarioData {
+  phase: ScenarioPhase;
+  progress?: number;
 }
 
 interface PriceChartProps {
@@ -36,293 +48,506 @@ interface PriceChartProps {
   priceHistory?: ChartPricePoint[];
   currentPrice?: number;
   trades?: Trade[];
-  scenarioData?: any;
+  scenarioData?: ScenarioData;
   candles?: Candle[];
   symbol?: string;
 }
 
 const PriceChart: React.FC<PriceChartProps> = ({ 
-  interval = '15m',
   priceHistory = [],
   currentPrice = 0,
   trades = [],
   scenarioData,
-  candles = [], 
   symbol = 'BTC/USDT'
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const animationRef = useRef<number | null>(null);
+  
+  // Interactive chart state
+  const [chartOffset, setChartOffset] = useState(0); // Horizontal offset for panning
+  const [zoomLevel, setZoomLevel] = useState(1); // Zoom level (1 = default)
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [hoveredCandle, setHoveredCandle] = useState<number | null>(null);
+  const [crosshair, setCrosshair] = useState<{ x: number; y: number } | null>(null);
 
-  // Convert priceHistory to candles if no candles provided
-  const convertPriceHistoryToCandles = (history: ChartPricePoint[]): Candle[] => {
-    if (history.length === 0) return [];
-    
-    const candles: Candle[] = [];
-    const candleInterval = 15 * 60 * 1000; // 15 minutes in milliseconds
-    
-    // Group price points into candles
-    let currentCandle: Candle | null = null;
-    let candleStartTime = Math.floor(history[0].time / candleInterval) * candleInterval;
-    
-    history.forEach(point => {
-      const pointCandleTime = Math.floor(point.time / candleInterval) * candleInterval;
-      
-      if (pointCandleTime !== candleStartTime || !currentCandle) {
-        // Save previous candle if exists
-        if (currentCandle) {
-          candles.push(currentCandle);
-        }
-        
-        // Start new candle
-        currentCandle = {
-          time: pointCandleTime,
-          open: point.price,
-          high: point.price,
-          low: point.price,
-          close: point.price,
-          volume: point.volume || 0
-        };
-        candleStartTime = pointCandleTime;
-      } else {
-        // Update current candle
-        currentCandle.high = Math.max(currentCandle.high, point.price);
-        currentCandle.low = Math.min(currentCandle.low, point.price);
-        currentCandle.close = point.price;
-        currentCandle.volume += point.volume || 0;
-      }
-    });
-    
-    // Don't forget the last candle
-    if (currentCandle) {
-      candles.push(currentCandle);
+  // Process candles - now we're using 15-minute candles directly from the backend
+  const chartCandles = useMemo(() => {
+    if (!priceHistory || priceHistory.length === 0) {
+      console.log('No price history provided to chart');
+      return [];
     }
-    
-    return candles;
-  };
 
-  // Generate sample data for 1 day (96 candles for 15-minute intervals)
-  const generateDayCandles = (): Candle[] => {
-    const now = new Date();
-    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-    const candleData: Candle[] = [];
-    const basePrice = 45000;
-    
-    for (let i = 0; i < 96; i++) {
-      const time = startOfDay.getTime() + (i * 15 * 60 * 1000); // 15-minute intervals
-      const volatility = 0.002;
-      const trend = Math.sin(i / 20) * 500; // Daily trend
-      const randomWalk = (Math.random() - 0.5) * basePrice * volatility;
-      
-      const open = i === 0 ? basePrice : candleData[i - 1].close;
-      const close = open + randomWalk + trend / 50;
-      const high = Math.max(open, close) + Math.random() * 50;
-      const low = Math.min(open, close) - Math.random() * 50;
-      const volume = Math.random() * 1000000 + 500000;
-      
-      candleData.push({
-        time,
-        open,
-        high,
-        low,
-        close,
-        volume
-      });
-    }
-    
-    return candleData;
-  };
+    // Convert price history points to candles if needed
+    return priceHistory.map(point => ({
+      time: point.timestamp || point.time,
+      open: point.open,
+      high: point.high,
+      low: point.low,
+      close: point.close,
+      volume: point.volume || 0
+    }));
+  }, [priceHistory]);
 
-  const [chartCandles] = useState<Candle[]>(() => {
-    // Priority: candles prop > converted priceHistory > generated sample data
-    if (candles.length > 0) {
-      return candles;
-    } else if (priceHistory.length > 0) {
-      return convertPriceHistoryToCandles(priceHistory);
-    } else {
-      return generateDayCandles();
-    }
-  });
-
+  // Update dimensions
   useEffect(() => {
     const updateDimensions = () => {
-      if (canvasRef.current && canvasRef.current.parentElement) {
-        const parent = canvasRef.current.parentElement;
-        const width = parent.clientWidth;
-        const height = parent.clientHeight;
-        setDimensions({ width, height });
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        setDimensions({
+          width: Math.floor(rect.width),
+          height: Math.floor(rect.height)
+        });
       }
     };
 
     updateDimensions();
-    window.addEventListener('resize', updateDimensions);
-    return () => window.removeEventListener('resize', updateDimensions);
+    
+    const resizeObserver = new ResizeObserver(updateDimensions);
+    if (containerRef.current) {
+      resizeObserver.observe(containerRef.current);
+    }
+
+    return () => {
+      resizeObserver.disconnect();
+    };
   }, []);
 
+  // Mouse event handlers
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setIsDragging(true);
+    setDragStart({ x: e.clientX - chartOffset, y: e.clientY });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    if (isDragging) {
+      const newOffset = e.clientX - dragStart.x;
+      setChartOffset(newOffset);
+    } else {
+      // Update crosshair
+      setCrosshair({ x, y });
+      
+      // Check if hovering over a candle
+      const padding = { top: 40, right: 60, bottom: 40, left: 10 };
+      const chartWidth = dimensions.width - padding.left - padding.right;
+      const candleWidth = (chartWidth / chartCandles.length) * zoomLevel;
+      
+      const adjustedX = x - padding.left + (-chartOffset * zoomLevel);
+      const candleIndex = Math.floor(adjustedX / candleWidth);
+      
+      if (candleIndex >= 0 && candleIndex < chartCandles.length) {
+        setHoveredCandle(candleIndex);
+      } else {
+        setHoveredCandle(null);
+      }
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const handleMouseLeave = () => {
+    setIsDragging(false);
+    setCrosshair(null);
+    setHoveredCandle(null);
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    
+    // Zoom with mouse wheel
+    const zoomSpeed = 0.001;
+    const delta = e.deltaY * -zoomSpeed;
+    const newZoom = Math.max(0.5, Math.min(3, zoomLevel + delta));
+    
+    // Zoom towards mouse position
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (rect) {
+      const mouseX = e.clientX - rect.left;
+      const centerX = dimensions.width / 2;
+      const offsetAdjustment = (mouseX - centerX) * (newZoom - zoomLevel) * 0.5;
+      setChartOffset(chartOffset - offsetAdjustment);
+    }
+    
+    setZoomLevel(newZoom);
+  };
+
+  // Draw chart
   useEffect(() => {
-    if (!canvasRef.current || chartCandles.length === 0) return;
+    if (!canvasRef.current || chartCandles.length === 0 || dimensions.width === 0 || dimensions.height === 0) {
+      return;
+    }
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Set canvas size
-    canvas.width = dimensions.width;
-    canvas.height = dimensions.height;
-
-    // Clear canvas
-    ctx.fillStyle = '#0B1929';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Calculate chart dimensions
-    const padding = { top: 20, right: 80, bottom: 40, left: 10 };
-    const chartWidth = canvas.width - padding.left - padding.right;
-    const chartHeight = canvas.height - padding.top - padding.bottom;
-
-    // Find price range
-    let minPrice = Infinity;
-    let maxPrice = -Infinity;
-    
-    chartCandles.forEach(candle => {
-      minPrice = Math.min(minPrice, candle.low);
-      maxPrice = Math.max(maxPrice, candle.high);
-    });
-
-    // Add padding to price range
-    const priceRange = maxPrice - minPrice;
-    const pricePadding = priceRange * 0.1;
-    minPrice -= pricePadding;
-    maxPrice += pricePadding;
-
-    // Calculate scales
-    const priceScale = (price: number) => {
-      return padding.top + chartHeight - ((price - minPrice) / (maxPrice - minPrice)) * chartHeight;
-    };
-
-    const timeScale = (index: number) => {
-      return padding.left + (index / (chartCandles.length - 1)) * chartWidth;
-    };
-
-    // Draw grid lines and time labels
-    ctx.strokeStyle = '#1E2A3A';
-    ctx.lineWidth = 1;
-    ctx.font = '11px sans-serif';
-    ctx.fillStyle = '#64748B';
-
-    // Time grid lines and labels
-    const hoursToShow = [0, 3, 6, 9, 12, 15, 18, 21]; // Every 3 hours
-    
-    hoursToShow.forEach(hour => {
-      const candleIndex = hour * 4; // 4 candles per hour (15-min intervals)
-      if (candleIndex < chartCandles.length) {
-        const x = timeScale(candleIndex);
-        
-        // Draw vertical grid line
-        ctx.beginPath();
-        ctx.moveTo(x, padding.top);
-        ctx.lineTo(x, canvas.height - padding.bottom);
-        ctx.stroke();
-        
-        // Draw time label
-        const timeLabel = `${hour.toString().padStart(2, '0')}:00`;
-        ctx.textAlign = 'center';
-        ctx.fillText(timeLabel, x, canvas.height - padding.bottom + 20);
-      }
-    });
-
-    // Price grid lines
-    const priceSteps = 5;
-    const priceStepSize = (maxPrice - minPrice) / priceSteps;
-    
-    ctx.textAlign = 'right';
-    for (let i = 0; i <= priceSteps; i++) {
-      const price = minPrice + (i * priceStepSize);
-      const y = priceScale(price);
-      
-      // Draw horizontal grid line
-      ctx.beginPath();
-      ctx.moveTo(padding.left, y);
-      ctx.lineTo(canvas.width - padding.right, y);
-      ctx.stroke();
-      
-      // Draw price label
-      ctx.fillText(price.toFixed(2), canvas.width - 10, y + 4);
+    // Cancel previous animation
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
     }
 
-    // Draw candles
-    const candleWidth = Math.max(1, (chartWidth / chartCandles.length) * 0.8);
+    const draw = () => {
+      // Set canvas size
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = dimensions.width * dpr;
+      canvas.height = dimensions.height * dpr;
+      canvas.style.width = `${dimensions.width}px`;
+      canvas.style.height = `${dimensions.height}px`;
+      ctx.scale(dpr, dpr);
 
-    chartCandles.forEach((candle, index) => {
-      const x = timeScale(index);
-      const openY = priceScale(candle.open);
-      const closeY = priceScale(candle.close);
-      const highY = priceScale(candle.high);
-      const lowY = priceScale(candle.low);
+      // Clear canvas
+      ctx.fillStyle = '#0B1426';
+      ctx.fillRect(0, 0, dimensions.width, dimensions.height);
 
-      const isGreen = candle.close >= candle.open;
-      ctx.strokeStyle = isGreen ? '#00E676' : '#FF5252';
-      ctx.fillStyle = isGreen ? '#00E676' : '#FF5252';
+      // Layout
+      const padding = {
+        top: 40,
+        right: 60,
+        bottom: 40,
+        left: 10
+      };
 
-      // Draw wick
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x, highY);
-      ctx.lineTo(x, lowY);
-      ctx.stroke();
+      const chartWidth = dimensions.width - padding.left - padding.right;
+      const chartHeight = dimensions.height - padding.top - padding.bottom;
 
-      // Draw body
-      const bodyHeight = Math.abs(closeY - openY);
-      const bodyY = Math.min(openY, closeY);
-      
-      if (bodyHeight > 1) {
-        ctx.fillRect(x - candleWidth / 2, bodyY, candleWidth, bodyHeight);
-      } else {
-        // Draw a line for very small bodies
-        ctx.beginPath();
-        ctx.moveTo(x - candleWidth / 2, bodyY);
-        ctx.lineTo(x + candleWidth / 2, bodyY);
-        ctx.stroke();
+      if (chartWidth <= 0 || chartHeight <= 0) return;
+
+      // Calculate visible candles based on zoom and offset
+      const candleWidth = (chartWidth / chartCandles.length) * zoomLevel;
+      const visibleStartIndex = Math.max(0, Math.floor(-chartOffset / candleWidth));
+      const visibleEndIndex = Math.min(chartCandles.length, Math.ceil((chartWidth - chartOffset) / candleWidth));
+      const visibleCandles = chartCandles.slice(visibleStartIndex, visibleEndIndex);
+
+      // Calculate price range for visible candles
+      let minPrice = Infinity;
+      let maxPrice = -Infinity;
+
+      visibleCandles.forEach(candle => {
+        minPrice = Math.min(minPrice, candle.low);
+        maxPrice = Math.max(maxPrice, candle.high);
+      });
+
+      if (!isFinite(minPrice) || !isFinite(maxPrice)) {
+        minPrice = 100;
+        maxPrice = 150;
       }
-    });
 
-    // Draw current price line if provided
-    if (currentPrice > 0 && currentPrice >= minPrice && currentPrice <= maxPrice) {
-      const priceY = priceScale(currentPrice);
-      
-      ctx.strokeStyle = '#FFC107';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([5, 5]);
-      
+      // Add padding to price range
+      const pricePadding = (maxPrice - minPrice) * 0.1;
+      minPrice -= pricePadding;
+      maxPrice += pricePadding;
+
+      // Helper functions
+      const priceToY = (price: number) => {
+        const ratio = (price - minPrice) / (maxPrice - minPrice);
+        return padding.top + chartHeight * (1 - ratio);
+      };
+
+      const indexToX = (index: number) => {
+        return padding.left + (index * candleWidth) + chartOffset;
+      };
+
+      // Set up clipping region for chart area
+      ctx.save();
       ctx.beginPath();
-      ctx.moveTo(padding.left, priceY);
-      ctx.lineTo(canvas.width - padding.right, priceY);
-      ctx.stroke();
-      
+      ctx.rect(padding.left, padding.top, chartWidth, chartHeight);
+      ctx.clip();
+
+      // Draw grid
+      ctx.strokeStyle = '#1C2951';
+      ctx.lineWidth = 0.5;
       ctx.setLineDash([]);
+
+      // Horizontal grid lines (price)
+      const priceSteps = 5;
+      for (let i = 0; i <= priceSteps; i++) {
+        const price = minPrice + (i / priceSteps) * (maxPrice - minPrice);
+        const y = priceToY(price);
+
+        ctx.beginPath();
+        ctx.moveTo(padding.left, y);
+        ctx.lineTo(dimensions.width - padding.right, y);
+        ctx.stroke();
+      }
+
+      // Vertical grid lines (time) - only for visible candles
+      const timeSteps = Math.min(6, visibleCandles.length - 1);
+      const stepSize = Math.max(1, Math.floor(visibleCandles.length / timeSteps));
       
-      // Price label
-      ctx.fillStyle = '#FFC107';
-      ctx.fillRect(canvas.width - padding.right + 5, priceY - 10, 70, 20);
-      ctx.fillStyle = '#000';
-      ctx.font = 'bold 12px sans-serif';
+      for (let i = 0; i <= timeSteps; i++) {
+        const candleIndex = Math.min(i * stepSize, visibleCandles.length - 1);
+        const globalIndex = visibleStartIndex + candleIndex;
+        const x = indexToX(globalIndex);
+
+        if (x >= padding.left && x <= dimensions.width - padding.right) {
+          ctx.beginPath();
+          ctx.moveTo(x, padding.top);
+          ctx.lineTo(x, dimensions.height - padding.bottom);
+          ctx.stroke();
+        }
+      }
+
+      // Draw candles
+      const effectiveCandleWidth = Math.max(3, Math.min(candleWidth * 0.8, 15));
+
+      chartCandles.forEach((candle, index) => {
+        const x = indexToX(index);
+        
+        // Skip candles outside visible area
+        if (x < padding.left - effectiveCandleWidth || x > dimensions.width - padding.right + effectiveCandleWidth) {
+          return;
+        }
+
+        const openY = priceToY(candle.open);
+        const closeY = priceToY(candle.close);
+        const highY = priceToY(candle.high);
+        const lowY = priceToY(candle.low);
+
+        const isGreen = candle.close >= candle.open;
+        const color = isGreen ? '#22C55E' : '#EF4444';
+
+        // Highlight hovered candle
+        if (index === hoveredCandle) {
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
+          ctx.fillRect(x - effectiveCandleWidth / 2 - 2, padding.top, effectiveCandleWidth + 4, chartHeight);
+        }
+
+        // Draw wick
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, highY);
+        ctx.lineTo(x, lowY);
+        ctx.stroke();
+
+        // Draw body
+        const bodyHeight = Math.abs(closeY - openY);
+        const bodyY = Math.min(openY, closeY);
+
+        if (bodyHeight < 1) {
+          // Draw line for doji
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(x - effectiveCandleWidth / 2, bodyY);
+          ctx.lineTo(x + effectiveCandleWidth / 2, bodyY);
+          ctx.stroke();
+        } else {
+          // Draw rectangle for body
+          ctx.fillStyle = color;
+          ctx.fillRect(x - effectiveCandleWidth / 2, bodyY, effectiveCandleWidth, bodyHeight);
+        }
+      });
+
+      // Restore clipping
+      ctx.restore();
+
+      // Draw price labels
+      for (let i = 0; i <= priceSteps; i++) {
+        const price = minPrice + (i / priceSteps) * (maxPrice - minPrice);
+        const y = priceToY(price);
+
+        ctx.fillStyle = '#6B7280';
+        ctx.font = '11px -apple-system, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(price.toFixed(2), dimensions.width - 5, y + 3);
+      }
+
+      // Draw time labels
+      for (let i = 0; i <= timeSteps; i++) {
+        const candleIndex = Math.min(i * stepSize, visibleCandles.length - 1);
+        const globalIndex = visibleStartIndex + candleIndex;
+        const x = indexToX(globalIndex);
+
+        if (x >= padding.left && x <= dimensions.width - padding.right && chartCandles[globalIndex]) {
+          const date = new Date(chartCandles[globalIndex].time);
+          const hours = date.getHours().toString().padStart(2, '0');
+          const minutes = date.getMinutes().toString().padStart(2, '0');
+          const timeLabel = `${hours}:${minutes}`;
+
+          ctx.fillStyle = '#6B7280';
+          ctx.font = '11px -apple-system, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(timeLabel, x, dimensions.height - padding.bottom + 20);
+        }
+      }
+
+      // Draw crosshair if hovering
+      if (crosshair && !isDragging) {
+        ctx.setLineDash([5, 5]);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.lineWidth = 1;
+
+        // Vertical line
+        ctx.beginPath();
+        ctx.moveTo(crosshair.x, padding.top);
+        ctx.lineTo(crosshair.x, dimensions.height - padding.bottom);
+        ctx.stroke();
+
+        // Horizontal line
+        ctx.beginPath();
+        ctx.moveTo(padding.left, crosshair.y);
+        ctx.lineTo(dimensions.width - padding.right, crosshair.y);
+        ctx.stroke();
+
+        ctx.setLineDash([]);
+
+        // Show price at crosshair
+        const price = minPrice + ((dimensions.height - padding.bottom - crosshair.y) / chartHeight) * (maxPrice - minPrice);
+        
+        ctx.fillStyle = '#1F2937';
+        ctx.fillRect(dimensions.width - padding.right + 5, crosshair.y - 10, 55, 20);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '12px -apple-system, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(`$${price.toFixed(2)}`, dimensions.width - padding.right + 8, crosshair.y + 3);
+      }
+
+      // Draw candle details if hovering
+      if (hoveredCandle !== null && chartCandles[hoveredCandle]) {
+        const candle = chartCandles[hoveredCandle];
+        const date = new Date(candle.time);
+        const dateStr = date.toLocaleString();
+        
+        // Draw tooltip background
+        ctx.fillStyle = 'rgba(17, 24, 39, 0.95)';
+        ctx.strokeStyle = '#374151';
+        ctx.lineWidth = 1;
+        const tooltipX = 80;
+        const tooltipY = 60;
+        const tooltipWidth = 200;
+        const tooltipHeight = 120;
+        
+        ctx.fillRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight);
+        ctx.strokeRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight);
+        
+        // Draw tooltip content
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '12px -apple-system, sans-serif';
+        ctx.textAlign = 'left';
+        
+        const lineHeight = 18;
+        let y = tooltipY + 20;
+        
+        ctx.fillText(dateStr, tooltipX + 10, y);
+        y += lineHeight;
+        
+        ctx.fillText(`Open: $${candle.open.toFixed(2)}`, tooltipX + 10, y);
+        y += lineHeight;
+        
+        ctx.fillText(`High: $${candle.high.toFixed(2)}`, tooltipX + 10, y);
+        y += lineHeight;
+        
+        ctx.fillText(`Low: $${candle.low.toFixed(2)}`, tooltipX + 10, y);
+        y += lineHeight;
+        
+        ctx.fillText(`Close: $${candle.close.toFixed(2)}`, tooltipX + 10, y);
+        y += lineHeight;
+        
+        ctx.fillText(`Volume: ${candle.volume.toFixed(0)}`, tooltipX + 10, y);
+      }
+
+      // Draw title
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = 'bold 16px -apple-system, sans-serif';
       ctx.textAlign = 'left';
-      ctx.fillText(currentPrice.toFixed(2), canvas.width - padding.right + 8, priceY + 4);
-    }
+      ctx.fillText(`${symbol} - 15M`, padding.left, 25);
 
-    // Draw title
-    ctx.font = 'bold 16px sans-serif';
-    ctx.fillStyle = '#FFFFFF';
-    ctx.textAlign = 'left';
-    ctx.fillText(`${symbol} - 1D Chart`, padding.left, 15);
+      // Draw current price and change
+      if (currentPrice && chartCandles.length > 0) {
+        const lastCandle = chartCandles[chartCandles.length - 1];
+        const firstVisibleCandle = visibleCandles[0] || chartCandles[0];
+        const priceChange = ((lastCandle.close - firstVisibleCandle.open) / firstVisibleCandle.open) * 100;
+        const changeColor = priceChange >= 0 ? '#22C55E' : '#EF4444';
+        
+        ctx.fillStyle = changeColor;
+        ctx.font = '14px -apple-system, sans-serif';
+        ctx.fillText(
+          `$${lastCandle.close.toFixed(2)} (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%)`,
+          padding.left + 120,
+          25
+        );
+      }
 
-  }, [chartCandles, currentPrice, dimensions, symbol]);
+      // Draw zoom level indicator
+      ctx.fillStyle = '#6B7280';
+      ctx.font = '12px -apple-system, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(`Zoom: ${(zoomLevel * 100).toFixed(0)}%`, dimensions.width - padding.right - 100, 25);
+
+      // Draw market scenario indicator if active
+      if (scenarioData && scenarioData.phase) {
+        const phase = scenarioData.phase;
+        const progress = scenarioData.progress || 0;
+        
+        // Scenario indicator
+        ctx.fillStyle = '#8B5CF6';
+        ctx.font = '12px -apple-system, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(
+          `📊 ${phase.name} (${Math.round(progress * 100)}%)`,
+          dimensions.width - padding.right,
+          25
+        );
+        
+        // Market condition badge
+        const conditionColors: Record<MarketCondition, string> = {
+          bullish: '#22C55E',
+          bearish: '#EF4444',
+          volatile: '#F59E0B',
+          calm: '#3B82F6',
+          building: '#6366F1',
+          crash: '#DC2626'
+        };
+        
+        const conditionColor = conditionColors[phase.marketCondition] || '#6B7280';
+        ctx.fillStyle = conditionColor;
+        ctx.fillRect(dimensions.width - padding.right - 80, 35, 80, 20);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 10px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(phase.marketCondition.toUpperCase(), dimensions.width - padding.right - 40, 48);
+      }
+    };
+
+    animationRef.current = requestAnimationFrame(draw);
+
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [chartCandles, currentPrice, dimensions, symbol, scenarioData, chartOffset, zoomLevel, hoveredCandle, crosshair, isDragging]);
 
   return (
-    <div className="w-full h-full bg-gray-900 rounded-lg p-2">
-      <canvas 
+    <div 
+      ref={containerRef}
+      className="w-full h-full bg-[#0B1426] rounded-lg overflow-hidden relative"
+      style={{ minHeight: '400px' }}
+    >
+      <canvas
         ref={canvasRef}
-        className="w-full h-full"
+        className="w-full h-full cursor-crosshair"
         style={{ display: 'block' }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseLeave}
+        onWheel={handleWheel}
       />
+      <div className="absolute bottom-2 left-2 text-xs text-gray-500">
+        <span className="mr-4">Drag to pan</span>
+        <span>Scroll to zoom</span>
+      </div>
     </div>
   );
 };
