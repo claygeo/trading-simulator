@@ -11,16 +11,24 @@ interface Candle {
 
 interface ChartPricePoint {
   time: number;
-  price: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
   volume?: number;
+  price?: number; // Added for compatibility
 }
 
 interface Trade {
-  id: string;
+  id?: string;
   price: number;
-  amount: number;
-  side: 'buy' | 'sell';
+  amount?: number;
+  quantity?: number;
+  side?: 'buy' | 'sell';
   timestamp: number;
+  // Additional fields from your types
+  trader?: any;
+  tokenAmount?: number;
 }
 
 interface PriceChartProps {
@@ -242,7 +250,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
     // Draw candles
     const candleWidth = Math.max(1, (chartWidth / chartCandles.length) * 0.8);
-    const candleSpacing = chartWidth / chartCandles.length;
 
     chartCandles.forEach((candle, index) => {
       const x = timeScale(index);
