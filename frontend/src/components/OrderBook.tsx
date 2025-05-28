@@ -85,125 +85,128 @@ const OrderBookComponent: React.FC<OrderBookProps> = ({ orderBook }) => {
   }, [orderBook, bids, asks]);
   
   return (
-    <div className="bg-surface p-3 rounded-lg shadow-lg h-full overflow-hidden flex flex-col">
-      <div className="flex justify-between items-center mb-2">
-        <h2 className="text-sm font-semibold text-text-primary">Order Book</h2>
-        <div className="text-xs bg-panel px-2 py-1 rounded">
-          <span className="text-text-secondary">Spread: </span>
-          <span className="font-medium text-text-primary">
-            {formatPrice(spread)} ({spreadPercentage.toFixed(2)}%)
-          </span>
-        </div>
-      </div>
-      
-      <div className="grid grid-cols-3 text-xs text-text-secondary py-1 border-b border-border">
+    <div className="bg-surface p-2 rounded-lg shadow-lg h-full overflow-hidden flex flex-col">
+      <div className="grid grid-cols-3 text-[10px] text-text-secondary py-1 border-b border-border">
         <div className="text-left">Price</div>
         <div className="text-right">Amount</div>
         <div className="text-right">Total</div>
       </div>
       
-      {/* Sell orders (asks) - Best price at bottom */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
-        <div className="flex flex-col-reverse">
-          {asksWithDepth.map((ask, index) => {
-            const depthPercent = maxQuantity > 0 ? (ask.quantity / maxQuantity) * 100 : 0;
-            const flashKey = `ask-${ask.price}`;
-            const isFlashing = flashingPrices.get(flashKey);
-            
-            return (
-              <div 
-                key={`ask-${index}`} 
-                className="relative group hover:bg-surface-light transition-colors duration-200"
-              >
-                {/* Subtle depth bar */}
-                <div 
-                  className="absolute inset-0 bg-red-500 opacity-[0.08] transition-all duration-500"
-                  style={{ 
-                    width: `${depthPercent}%`,
-                    maxWidth: '100%'
-                  }}
-                />
+      {/* Container for both sells and buys with fixed heights */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Sell orders (asks) - Fixed height for 10 orders */}
+        <div className="flex-1 overflow-hidden">
+          <div className="h-full overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
+            <div className="flex flex-col-reverse">
+              {asksWithDepth.map((ask, index) => {
+                const depthPercent = maxQuantity > 0 ? (ask.quantity / maxQuantity) * 100 : 0;
+                const flashKey = `ask-${ask.price}`;
+                const isFlashing = flashingPrices.get(flashKey);
                 
-                {/* Flash overlay */}
-                {isFlashing && (
+                return (
                   <div 
-                    className={`absolute inset-0 ${
-                      isFlashing === 'up' ? 'bg-green-400' : 'bg-red-400'
-                    } opacity-20 animate-pulse`}
+                    key={`ask-${index}`} 
+                    className="relative group hover:bg-surface-light transition-colors duration-200"
+                  >
+                    {/* Subtle depth bar */}
+                    <div 
+                      className="absolute inset-0 bg-red-500 opacity-[0.08] transition-all duration-500"
+                      style={{ 
+                        width: `${depthPercent}%`,
+                        maxWidth: '100%'
+                      }}
+                    />
+                    
+                    {/* Flash overlay */}
+                    {isFlashing && (
+                      <div 
+                        className={`absolute inset-0 ${
+                          isFlashing === 'up' ? 'bg-green-400' : 'bg-red-400'
+                        } opacity-20 animate-pulse`}
+                      />
+                    )}
+                    
+                    <div className="grid grid-cols-3 text-[10px] py-0.5 relative z-10">
+                      <div className="text-left text-red-400 font-mono pl-1">
+                        {formatPrice(ask.price)}
+                      </div>
+                      <div className="text-right text-text-primary font-mono">
+                        {formatQuantity(ask.quantity)}
+                      </div>
+                      <div className="text-right text-text-secondary font-mono pr-1">
+                        {formatQuantity(ask.depth)}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+        
+        {/* Current Price / Mid Market with Spread */}
+        <div className="flex items-center justify-between py-1 px-2 border-y border-border bg-panel">
+          <div className="text-[10px] text-text-secondary">
+            <span>Spread: </span>
+            <span className="font-medium text-text-primary">
+              {formatPrice(spread)} ({spreadPercentage.toFixed(2)}%)
+            </span>
+          </div>
+          <span className="text-xs font-bold text-text-primary">
+            ${(((asks[0]?.price || 0) + (bids[0]?.price || 0)) / 2).toFixed(2)}
+          </span>
+        </div>
+        
+        {/* Buy orders (bids) - Fixed height for 10 orders */}
+        <div className="flex-1 overflow-hidden">
+          <div className="h-full overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
+            {bidsWithDepth.map((bid, index) => {
+              const depthPercent = maxQuantity > 0 ? (bid.quantity / maxQuantity) * 100 : 0;
+              const flashKey = `bid-${bid.price}`;
+              const isFlashing = flashingPrices.get(flashKey);
+              
+              return (
+                <div 
+                  key={`bid-${index}`} 
+                  className="relative group hover:bg-surface-light transition-colors duration-200"
+                >
+                  {/* Subtle depth bar */}
+                  <div 
+                    className="absolute inset-0 bg-green-500 opacity-[0.08] transition-all duration-500"
+                    style={{ 
+                      width: `${depthPercent}%`,
+                      maxWidth: '100%'
+                    }}
                   />
-                )}
-                
-                <div className="grid grid-cols-3 text-xs py-1 relative z-10">
-                  <div className="text-left text-red-400 font-mono pl-1">
-                    {formatPrice(ask.price)}
-                  </div>
-                  <div className="text-right text-text-primary font-mono">
-                    {formatQuantity(ask.quantity)}
-                  </div>
-                  <div className="text-right text-text-secondary font-mono pr-1">
-                    {formatQuantity(ask.depth)}
+                  
+                  {/* Flash overlay */}
+                  {isFlashing && (
+                    <div 
+                      className={`absolute inset-0 ${
+                        isFlashing === 'up' ? 'bg-green-400' : 'bg-red-400'
+                      } opacity-20 animate-pulse`}
+                    />
+                  )}
+                  
+                  <div className="grid grid-cols-3 text-[10px] py-0.5 relative z-10">
+                    <div className="text-left text-green-400 font-mono pl-1">
+                      {formatPrice(bid.price)}
+                    </div>
+                    <div className="text-right text-text-primary font-mono">
+                      {formatQuantity(bid.quantity)}
+                    </div>
+                    <div className="text-right text-text-secondary font-mono pr-1">
+                      {formatQuantity(bid.depth)}
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </div>
       
-      {/* Current Price / Mid Market */}
-      <div className="flex items-center justify-center py-2 border-y border-border bg-panel">
-        <span className="text-sm font-bold text-text-primary">
-          ${(((asks[0]?.price || 0) + (bids[0]?.price || 0)) / 2).toFixed(2)}
-        </span>
-      </div>
-      
-      {/* Buy orders (bids) */}
-      <div className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
-        {bidsWithDepth.map((bid, index) => {
-          const depthPercent = maxQuantity > 0 ? (bid.quantity / maxQuantity) * 100 : 0;
-          const flashKey = `bid-${bid.price}`;
-          const isFlashing = flashingPrices.get(flashKey);
-          
-          return (
-            <div 
-              key={`bid-${index}`} 
-              className="relative group hover:bg-surface-light transition-colors duration-200"
-            >
-              {/* Subtle depth bar */}
-              <div 
-                className="absolute inset-0 bg-green-500 opacity-[0.08] transition-all duration-500"
-                style={{ 
-                  width: `${depthPercent}%`,
-                  maxWidth: '100%'
-                }}
-              />
-              
-              {/* Flash overlay */}
-              {isFlashing && (
-                <div 
-                  className={`absolute inset-0 ${
-                    isFlashing === 'up' ? 'bg-green-400' : 'bg-red-400'
-                  } opacity-20 animate-pulse`}
-                />
-              )}
-              
-              <div className="grid grid-cols-3 text-xs py-1 relative z-10">
-                <div className="text-left text-green-400 font-mono pl-1">
-                  {formatPrice(bid.price)}
-                </div>
-                <div className="text-right text-text-primary font-mono">
-                  {formatQuantity(bid.quantity)}
-                </div>
-                <div className="text-right text-text-secondary font-mono pr-1">
-                  {formatQuantity(bid.depth)}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      
-      <div className="text-[10px] text-text-muted text-right mt-1">
+      <div className="text-[9px] text-text-muted text-right mt-0.5">
         {new Date(orderBook.lastUpdateTime).toLocaleTimeString()}
       </div>
     </div>
