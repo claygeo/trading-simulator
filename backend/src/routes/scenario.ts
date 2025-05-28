@@ -74,4 +74,25 @@ router.post('/simulation/:id/scenario/end', async (req: Request, res: Response) 
   }
 });
 
+// Enable high-frequency trading mode endpoint
+router.post('/simulation/:id/enable-hft', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  
+  try {
+    simulationManager.enableHighFrequencyMode(id);
+    
+    res.json({ 
+      success: true, 
+      message: 'High-frequency trading mode enabled',
+      simulationId: id 
+    });
+  } catch (error) {
+    console.error(`Error enabling HFT mode for simulation ${id}:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Failed to enable HFT mode' 
+    });
+  }
+});
+
 export default router;
