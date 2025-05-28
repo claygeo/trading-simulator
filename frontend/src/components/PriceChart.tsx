@@ -62,7 +62,8 @@ interface PriceChartProps {
   scenarioData?: ScenarioData;
   candles?: Candle[];
   symbol?: string;
-  dynamicView?: boolean; // Enable dynamic view selection
+  dynamicView?: boolean;
+  enableAccurateTooltip?: boolean;
 }
 
 const PriceChart: React.FC<PriceChartProps> = ({ 
@@ -71,7 +72,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
   trades = [],
   scenarioData,
   symbol = 'BTC/USDT',
-  dynamicView = true // Default to dynamic view
+  dynamicView = true,
+  enableAccurateTooltip = true
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -86,7 +88,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const [hoveredCandle, setHoveredCandle] = useState<number | null>(null);
   const [crosshair, setCrosshair] = useState<{ x: number; y: number } | null>(null);
   
-  // Dynamic timeframe state - simplified, always auto
+  // Dynamic timeframe state
   const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>('15m');
 
   // Timeframe configurations
@@ -177,7 +179,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
     
     if (!priceHistory || priceHistory.length < 2) return '15m';
     
-    // Get price statistics
     const prices = priceHistory.map(p => p.close);
     const avgPrice = prices.reduce((sum, p) => sum + p, 0) / prices.length;
     const minPrice = Math.min(...prices);
@@ -185,7 +186,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const priceRange = maxPrice - minPrice;
     const volatility = (priceRange / avgPrice) * 100;
     
-    // Calculate price movement frequency
     let significantMoves = 0;
     for (let i = 1; i < prices.length; i++) {
       const change = Math.abs((prices[i] - prices[i-1]) / prices[i-1]) * 100;
@@ -193,29 +193,23 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }
     const moveFrequency = significantMoves / prices.length;
     
-    // Decision matrix for timeframe selection
     if (avgPrice < 1) {
-      // Micro-cap tokens (penny stocks)
       if (volatility > 20) return '1m';
       if (volatility > 10) return '5m';
       return '15m';
     } else if (avgPrice < 10) {
-      // Small-cap tokens
       if (volatility > 15) return '5m';
       if (volatility > 8) return '15m';
       return '30m';
     } else if (avgPrice < 100) {
-      // Mid-cap tokens
       if (volatility > 10) return '15m';
       if (volatility > 5) return '30m';
       return '1h';
     } else if (avgPrice < 1000) {
-      // Large-cap tokens
       if (volatility > 8) return '30m';
       if (volatility > 4) return '1h';
       return '4h';
     } else {
-      // Mega-cap tokens (BTC, ETH)
       if (volatility > 5) return '1h';
       if (volatility > 2) return '4h';
       return '1d';
@@ -227,7 +221,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const range = maxPrice - minPrice;
     const avgPrice = (minPrice + maxPrice) / 2;
     
-    // Determine decimal places based on price magnitude
     let decimals = 2;
     if (avgPrice < 0.01) decimals = 6;
     else if (avgPrice < 0.1) decimals = 5;
@@ -237,12 +230,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
     else if (avgPrice < 1000) decimals = 1;
     else decimals = 0;
     
-    // Calculate grid step size
     let stepSize = 1;
     const targetSteps = 5;
     const rawStep = range / targetSteps;
     
-    // Round to nice numbers
     const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
     const normalized = rawStep / magnitude;
     
@@ -263,7 +254,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const timeframe = determineOptimalTimeframe;
     const config = timeframeConfigs[timeframe];
     
-    // Group price history into candles based on timeframe
     const candleMap = new Map<number, Candle>();
     const intervalMs = config.minutes * 60 * 1000;
     
@@ -316,7 +306,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     };
   }, []);
 
-  // Mouse event handlers
+  // Mouse event handlers with accurate candle detection
   const handleMouseDown = (e: React.MouseEvent) => {
     setIsDragging(true);
     setDragStart({ x: e.clientX - chartOffset, y: e.clientY });
@@ -337,12 +327,23 @@ const PriceChart: React.FC<PriceChartProps> = ({
       
       const padding = { top: 60, right: 80, bottom: 40, left: 10 };
       const chartWidth = dimensions.width - padding.left - padding.right;
-      const candleWidth = (chartWidth / chartCandles.length) * zoomLevel;
       
-      const adjustedX = x - padding.left + (-chartOffset * zoomLevel);
-      const candleIndex = Math.floor(adjustedX / candleWidth);
+      // Calculate visible candles based on zoom and offset
+      const totalWidth = chartWidth * zoomLevel;
+      const candleWidth = totalWidth / chartCandles.length;
       
-      if (candleIndex >= 0 && candleIndex < chartCandles.length) {
+      // Calculate which candle is under the mouse
+      const mouseChartX = x - padding.left - chartOffset;
+      const candleIndex = Math.floor(mouseChartX / candleWidth);
+      
+      // Validate the candle index and ensure mouse is within chart area
+      if (enableAccurateTooltip && 
+          candleIndex >= 0 && 
+          candleIndex < chartCandles.length && 
+          x >= padding.left && 
+          x <= dimensions.width - padding.right &&
+          y >= padding.top &&
+          y <= dimensions.height - padding.bottom) {
         setHoveredCandle(candleIndex);
       } else {
         setHoveredCandle(null);
@@ -415,7 +416,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
       if (chartWidth <= 0 || chartHeight <= 0) return;
 
-      const candleWidth = (chartWidth / chartCandles.length) * zoomLevel;
+      const totalWidth = chartWidth * zoomLevel;
+      const candleWidth = totalWidth / chartCandles.length;
       const visibleStartIndex = Math.max(0, Math.floor(-chartOffset / candleWidth));
       const visibleEndIndex = Math.min(chartCandles.length, Math.ceil((chartWidth - chartOffset) / candleWidth));
       const visibleCandles = chartCandles.slice(visibleStartIndex, visibleEndIndex);
@@ -437,7 +439,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
       minPrice -= pricePadding;
       maxPrice += pricePadding;
 
-      // Get price scale configuration
       const { decimals, stepSize } = calculatePriceScale(minPrice, maxPrice);
 
       const priceToY = (price: number) => {
@@ -459,7 +460,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       ctx.lineWidth = 0.5;
       ctx.setLineDash([]);
 
-      // Dynamic horizontal grid lines
+      // Horizontal grid lines
       const gridStart = Math.ceil(minPrice / stepSize) * stepSize;
       for (let price = gridStart; price <= maxPrice; price += stepSize) {
         const y = priceToY(price);
@@ -506,11 +507,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
         const isGreen = candle.close >= candle.open;
         const color = isGreen ? '#22C55E' : '#EF4444';
 
+        // Highlight hovered candle
         if (index === hoveredCandle) {
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
-          ctx.fillRect(x - effectiveCandleWidth / 2 - 2, padding.top, effectiveCandleWidth + 4, chartHeight);
+          ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+          ctx.fillRect(x - effectiveCandleWidth / 2 - 5, padding.top, effectiveCandleWidth + 10, chartHeight);
         }
 
+        // Draw wick
         ctx.strokeStyle = color;
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -518,6 +521,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         ctx.lineTo(x, lowY);
         ctx.stroke();
 
+        // Draw body
         const bodyHeight = Math.abs(closeY - openY);
         const bodyY = Math.min(openY, closeY);
 
@@ -535,12 +539,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
       ctx.restore();
 
-      // Draw dynamic price labels
+      // Format price function
       const formatPrice = (price: number) => {
         if (decimals === 0) return price.toFixed(0);
         return price.toFixed(decimals);
       };
 
+      // Draw price labels
       for (let price = gridStart; price <= maxPrice; price += stepSize) {
         const y = priceToY(price);
         ctx.fillStyle = '#6B7280';
@@ -572,11 +577,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
         ctx.lineWidth = 1;
 
+        // Vertical line
         ctx.beginPath();
         ctx.moveTo(crosshair.x, padding.top);
         ctx.lineTo(crosshair.x, dimensions.height - padding.bottom);
         ctx.stroke();
 
+        // Horizontal line
         ctx.beginPath();
         ctx.moveTo(padding.left, crosshair.y);
         ctx.lineTo(dimensions.width - padding.right, crosshair.y);
@@ -584,6 +591,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
         ctx.setLineDash([]);
 
+        // Price label at crosshair
         const price = minPrice + ((dimensions.height - padding.bottom - crosshair.y) / chartHeight) * (maxPrice - minPrice);
         
         ctx.fillStyle = '#1F2937';
@@ -594,23 +602,66 @@ const PriceChart: React.FC<PriceChartProps> = ({
         ctx.fillText(formatPrice(price), dimensions.width - padding.right + 8, crosshair.y + 3);
       }
 
-      // Draw candle tooltip
-      if (hoveredCandle !== null && chartCandles[hoveredCandle]) {
+      // Draw accurate candle tooltip
+      if (hoveredCandle !== null && chartCandles[hoveredCandle] && enableAccurateTooltip) {
         const candle = chartCandles[hoveredCandle];
         const date = new Date(candle.time);
         const dateStr = date.toLocaleString();
         
+        // Calculate tooltip position based on mouse position
+        const tooltipWidth = 220;
+        const tooltipHeight = 140;
+        const tooltipPadding = 10;
+        
+        // Position tooltip near the mouse
+        let tooltipX = crosshair ? crosshair.x + 20 : 100;
+        let tooltipY = crosshair ? crosshair.y - tooltipHeight / 2 : 100;
+        
+        // Keep tooltip within bounds
+        if (tooltipX + tooltipWidth > dimensions.width - padding.right) {
+          tooltipX = crosshair ? crosshair.x - tooltipWidth - 20 : dimensions.width - tooltipWidth - padding.right - tooltipPadding;
+        }
+        if (tooltipY < padding.top) {
+          tooltipY = padding.top + tooltipPadding;
+        }
+        if (tooltipY + tooltipHeight > dimensions.height - padding.bottom) {
+          tooltipY = dimensions.height - padding.bottom - tooltipHeight - tooltipPadding;
+        }
+        
+        // Draw tooltip with shadow
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+        ctx.shadowBlur = 10;
+        ctx.shadowOffsetX = 2;
+        ctx.shadowOffsetY = 2;
+        
         ctx.fillStyle = 'rgba(17, 24, 39, 0.95)';
         ctx.strokeStyle = '#374151';
         ctx.lineWidth = 1;
-        const tooltipX = 80;
-        const tooltipY = 80;
-        const tooltipWidth = 220;
-        const tooltipHeight = 140;
         
-        ctx.fillRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight);
-        ctx.strokeRect(tooltipX, tooltipY, tooltipWidth, tooltipHeight);
+        // Rounded rectangle for tooltip
+        const radius = 5;
+        ctx.beginPath();
+        ctx.moveTo(tooltipX + radius, tooltipY);
+        ctx.lineTo(tooltipX + tooltipWidth - radius, tooltipY);
+        ctx.quadraticCurveTo(tooltipX + tooltipWidth, tooltipY, tooltipX + tooltipWidth, tooltipY + radius);
+        ctx.lineTo(tooltipX + tooltipWidth, tooltipY + tooltipHeight - radius);
+        ctx.quadraticCurveTo(tooltipX + tooltipWidth, tooltipY + tooltipHeight, tooltipX + tooltipWidth - radius, tooltipY + tooltipHeight);
+        ctx.lineTo(tooltipX + radius, tooltipY + tooltipHeight);
+        ctx.quadraticCurveTo(tooltipX, tooltipY + tooltipHeight, tooltipX, tooltipY + tooltipHeight - radius);
+        ctx.lineTo(tooltipX, tooltipY + radius);
+        ctx.quadraticCurveTo(tooltipX, tooltipY, tooltipX + radius, tooltipY);
+        ctx.closePath();
         
+        ctx.fill();
+        ctx.stroke();
+        
+        // Reset shadow
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+        
+        // Draw tooltip content
         ctx.fillStyle = '#FFFFFF';
         ctx.font = '12px -apple-system, sans-serif';
         ctx.textAlign = 'left';
@@ -618,8 +669,15 @@ const PriceChart: React.FC<PriceChartProps> = ({
         const lineHeight = 18;
         let y = tooltipY + 20;
         
+        // Date/time
+        ctx.fillStyle = '#9CA3AF';
+        ctx.font = '11px -apple-system, sans-serif';
         ctx.fillText(dateStr, tooltipX + 10, y);
         y += lineHeight;
+        
+        // OHLC values
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '12px -apple-system, sans-serif';
         
         ctx.fillText(`Open: ${formatPrice(candle.open)}`, tooltipX + 10, y);
         y += lineHeight;
@@ -633,7 +691,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         ctx.fillText(`Close: ${formatPrice(candle.close)}`, tooltipX + 10, y);
         y += lineHeight;
         
-        ctx.fillText(`Volume: ${candle.volume.toFixed(0)}`, tooltipX + 10, y);
+        ctx.fillText(`Volume: ${candle.volume.toLocaleString()}`, tooltipX + 10, y);
         y += lineHeight;
         
         // Show percentage change
@@ -642,6 +700,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
           const change = ((candle.close - prevCandle.close) / prevCandle.close) * 100;
           const changeColor = change >= 0 ? '#22C55E' : '#EF4444';
           ctx.fillStyle = changeColor;
+          ctx.font = 'bold 12px -apple-system, sans-serif';
           ctx.fillText(`Change: ${change >= 0 ? '+' : ''}${change.toFixed(2)}%`, tooltipX + 10, y);
         }
       }
@@ -668,12 +727,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
         );
       }
 
-      // Draw subtle timeframe indicator in corner if dynamic view is enabled
+      // Draw timeframe indicator if dynamic view is enabled
       if (dynamicView) {
         const currentTf = determineOptimalTimeframe;
         const tfLabel = timeframeConfigs[currentTf].label;
         
-        // Draw in bottom right corner
         ctx.fillStyle = 'rgba(107, 114, 128, 0.3)';
         ctx.fillRect(dimensions.width - 100, dimensions.height - 30, 95, 25);
         
@@ -729,7 +787,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [chartCandles, currentPrice, dimensions, symbol, scenarioData, chartOffset, zoomLevel, hoveredCandle, crosshair, isDragging, determineOptimalTimeframe, dynamicView]);
+  }, [chartCandles, currentPrice, dimensions, symbol, scenarioData, chartOffset, zoomLevel, hoveredCandle, crosshair, isDragging, determineOptimalTimeframe, dynamicView, enableAccurateTooltip]);
 
   return (
     <div 
