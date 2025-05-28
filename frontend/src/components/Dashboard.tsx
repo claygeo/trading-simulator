@@ -33,7 +33,6 @@ const Dashboard: React.FC = () => {
   const [elapsedTime, setElapsedTime] = useState<string>("00:00:00");
   const [debugInfo, setDebugInfo] = useState<string[]>([]);
   const [showDebugInfo, setShowDebugInfo] = useState<boolean>(false);
-  const [chartInterval, setChartInterval] = useState<'1m' | '5m' | '15m' | '1h' | '4h' | '1d'>('1h');
   
   // Performance monitoring state
   const [showPerformanceMonitor, setShowPerformanceMonitor] = useState<boolean>(false);
@@ -715,23 +714,6 @@ const Dashboard: React.FC = () => {
               </button>
             </div>
             
-            {/* Chart Interval Selector */}
-            <div className="ml-4 flex items-center space-x-2">
-              <span className="text-xs text-text-secondary">Interval:</span>
-              <select 
-                value={chartInterval}
-                onChange={(e) => setChartInterval(e.target.value as any)}
-                className="text-xs bg-surface-variant text-text-primary px-2 py-0.5 rounded border border-border"
-              >
-                <option value="1m">1m</option>
-                <option value="5m">5m</option>
-                <option value="15m">15m</option>
-                <option value="1h">1h</option>
-                <option value="4h">4h</option>
-                <option value="1d">1d</option>
-              </select>
-            </div>
-            
             {/* Market condition indicator */}
             <div className="ml-4 flex items-center space-x-2">
               <span className="text-xs text-text-secondary">Market:</span>
@@ -809,7 +791,6 @@ const Dashboard: React.FC = () => {
               onError={(error) => handleComponentError("Price Chart", error)}
             >
               <PriceChart 
-                interval={chartInterval}
                 priceHistory={safeData.priceHistory} 
                 currentPrice={safeData.currentPrice} 
                 trades={safeData.recentTrades}
