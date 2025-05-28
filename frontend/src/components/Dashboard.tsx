@@ -663,14 +663,14 @@ const Dashboard: React.FC = () => {
             
             {/* Ultra-low latency indicator */}
             {isHighFrequencyMode && (
-              <div className="ml-2 text-xs bg-green-600 text-white px-2 py-1 rounded animate-pulse">
+              <div className="ml-2 text-xs text-green-400 px-2 py-1">
                 HFT MODE
               </div>
             )}
             
             {/* Market scenario indicator */}
             {currentScenario && (
-              <div className="ml-2 text-xs bg-purple-600 text-white px-2 py-1 rounded animate-pulse">
+              <div className="ml-2 text-xs text-purple-400 px-2 py-1">
                 📈 {currentScenario.name}
               </div>
             )}
@@ -712,8 +712,8 @@ const Dashboard: React.FC = () => {
             
             <button 
               onClick={() => setShowPerformanceMonitor(!showPerformanceMonitor)}
-              className={`text-xs px-2 py-0.5 rounded transition ${
-                showPerformanceMonitor ? 'bg-blue-600 text-white' : 'bg-surface-variant text-text-muted hover:bg-panel'
+              className={`text-xs px-2 py-0.5 transition ${
+                showPerformanceMonitor ? 'text-blue-400' : 'text-text-muted hover:text-text-secondary'
               }`}
             >
               Perf
@@ -721,8 +721,8 @@ const Dashboard: React.FC = () => {
             
             <button 
               onClick={() => setShowTransactionProcessor(!showTransactionProcessor)}
-              className={`text-xs px-2 py-0.5 rounded transition ${
-                showTransactionProcessor ? 'bg-green-600 text-white' : 'bg-surface-variant text-text-muted hover:bg-panel'
+              className={`text-xs px-2 py-0.5 transition ${
+                showTransactionProcessor ? 'text-green-400' : 'text-text-muted hover:text-text-secondary'
               }`}
             >
               TXN
@@ -731,7 +731,7 @@ const Dashboard: React.FC = () => {
             {process.env.NODE_ENV !== 'production' && (
               <button 
                 onClick={toggleDebugInfo}
-                className="text-xs bg-surface-variant text-text-muted px-2 py-0.5 rounded"
+                className="text-xs text-text-muted hover:text-text-secondary px-2 py-0.5 transition"
               >
                 {showDebugInfo ? 'Hide Debug' : 'Debug'}
               </button>
@@ -746,67 +746,72 @@ const Dashboard: React.FC = () => {
             <div className="flex space-x-1">
               <button
                 onClick={() => handleSpeedChange('slow')}
-                className={`px-2 py-0.5 text-xs rounded transition ${
-                  simulationSpeed === 2 ? 'bg-accent text-white' : 'bg-surface-variant text-text-muted hover:bg-panel'
+                className={`px-2 py-0.5 text-xs transition ${
+                  simulationSpeed === 2 ? 'text-accent font-semibold' : 'text-text-muted hover:text-text-secondary'
                 }`}
               >
                 Slow
               </button>
+              <span className="text-text-muted">·</span>
               <button
                 onClick={() => handleSpeedChange('medium')}
-                className={`px-2 py-0.5 text-xs rounded transition ${
-                  simulationSpeed === 3 ? 'bg-accent text-white' : 'bg-surface-variant text-text-muted hover:bg-panel'
+                className={`px-2 py-0.5 text-xs transition ${
+                  simulationSpeed === 3 ? 'text-accent font-semibold' : 'text-text-muted hover:text-text-secondary'
                 }`}
               >
                 Medium
               </button>
+              <span className="text-text-muted">·</span>
               <button
                 onClick={() => handleSpeedChange('fast')}
-                className={`px-2 py-0.5 text-xs rounded transition ${
-                  simulationSpeed === 6 ? 'bg-accent text-white' : 'bg-surface-variant text-text-muted hover:bg-panel'
+                className={`px-2 py-0.5 text-xs transition ${
+                  simulationSpeed === 6 ? 'text-accent font-semibold' : 'text-text-muted hover:text-text-secondary'
                 }`}
               >
                 Fast
               </button>
+              <span className="text-text-muted">·</span>
               <button
                 onClick={() => handleSpeedChange('ludicrous')}
-                className={`px-2 py-0.5 text-xs rounded transition ${
-                  simulationSpeed === 10 ? 'bg-red-600 text-white animate-pulse' : 'bg-red-500 text-white hover:bg-red-600'
+                className={`px-2 py-0.5 text-xs transition ${
+                  simulationSpeed === 10 ? 'text-accent font-semibold' : 'text-text-muted hover:text-text-secondary'
                 }`}
                 title="Ultra-high frequency trading mode"
               >
-                🚀 Ludicrous
+                Ludicrous
               </button>
+              <span className="text-text-muted">·</span>
               <button
                 onClick={() => handleSpeedChange('ultra')}
-                className={`px-2 py-0.5 text-xs rounded transition ${
-                  simulationSpeed === 50 ? 'bg-purple-600 text-white animate-pulse' : 'bg-purple-500 text-white hover:bg-purple-600'
+                className={`px-2 py-0.5 text-xs transition ${
+                  simulationSpeed === 50 ? 'text-accent font-semibold' : 'text-text-muted hover:text-text-secondary'
                 }`}
                 title="50x speed - Ultra mode"
               >
-                ⚡ Ultra
+                Ultra
               </button>
+              <span className="text-text-muted">·</span>
               <button
                 onClick={() => handleSpeedChange('quantum')}
-                className={`px-2 py-0.5 text-xs rounded transition ${
-                  simulationSpeed === 100 ? 'bg-cyan-600 text-white animate-pulse animate-bounce' : 'bg-cyan-500 text-white hover:bg-cyan-600'
+                className={`px-2 py-0.5 text-xs transition ${
+                  simulationSpeed === 100 ? 'text-accent font-semibold' : 'text-text-muted hover:text-text-secondary'
                 }`}
                 title="100x speed - Quantum mode"
               >
-                🌌 Quantum
+                Quantum
               </button>
             </div>
             
             {/* Market condition indicator */}
             <div className="ml-4 flex items-center space-x-2">
               <span className="text-xs text-text-secondary">Market:</span>
-              <span className={`text-xs px-2 py-0.5 rounded font-medium ${
-                marketCondition === 'bullish' ? 'bg-green-600 text-white' :
-                marketCondition === 'bearish' ? 'bg-red-600 text-white' :
-                marketCondition === 'volatile' ? 'bg-orange-600 text-white' :
-                marketCondition === 'crash' ? 'bg-red-800 text-white animate-pulse' :
-                marketCondition === 'building' ? 'bg-blue-600 text-white' :
-                'bg-gray-600 text-white'
+              <span className={`text-xs font-medium ${
+                marketCondition === 'bullish' ? 'text-green-400' :
+                marketCondition === 'bearish' ? 'text-red-400' :
+                marketCondition === 'volatile' ? 'text-orange-400' :
+                marketCondition === 'crash' ? 'text-red-600' :
+                marketCondition === 'building' ? 'text-blue-400' :
+                'text-gray-400'
               }`}>
                 {marketCondition.toUpperCase()}
               </span>
