@@ -1,4 +1,4 @@
-// Updated DynamicMusicPlayer.tsx - Fixed audio issues with Web Audio API and fallback tracks
+// Fixed DynamicMusicPlayer.tsx - Using real classical music instead of generated tones
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 
 interface DynamicMusicPlayerProps {
@@ -12,7 +12,6 @@ interface AudioTrack {
   composer: string;
   url: string;
   condition: 'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash';
-  type: 'generated' | 'file';
 }
 
 const DynamicMusicPlayer: React.FC<DynamicMusicPlayerProps> = ({ 
@@ -20,7 +19,7 @@ const DynamicMusicPlayer: React.FC<DynamicMusicPlayerProps> = ({
   marketCondition,
   onToggle
 }) => {
-  const [volume, setVolume] = useState<number>(0.5);
+  const [volume, setVolume] = useState<number>(0.3);
   const [currentTrack, setCurrentTrack] = useState<AudioTrack | null>(null);
   const [isTransitioning, setIsTransitioning] = useState<boolean>(false);
   const [isMiniPlayerOpen, setIsMiniPlayerOpen] = useState<boolean>(true);
@@ -28,175 +27,99 @@ const DynamicMusicPlayer: React.FC<DynamicMusicPlayerProps> = ({
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [audioError, setAudioError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
   
   // For drag functionality
-  const [position, setPosition] = useState({ x: 16, y: window.innerHeight - 64 });
+  const [position, setPosition] = useState({ x: 16, y: window.innerHeight - 200 });
   const dragRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef<boolean>(false);
   const dragOffset = useRef({ x: 0, y: 0 });
   
-  // Web Audio API references
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const gainNodeRef = useRef<GainNode | null>(null);
-  const oscillatorRef = useRef<OscillatorNode | null>(null);
+  // Audio element reference
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const fadeIntervalRef = useRef<number | null>(null);
   
-  // Load saved volume from memory (not localStorage)
-  useEffect(() => {
-    // Default volume, no localStorage access
-    setVolume(0.3); // Start with lower volume
-  }, []);
-  
-  // Music tracks with both generated and file-based options
+  // Classical music tracks from public domain sources
   const musicTracks = useMemo<AudioTrack[]>(() => [
     {
-      name: "Upward Harmony",
-      composer: "Generated",
-      url: "generated-bullish",
-      condition: "bullish" as const,
-      type: "generated" as const
+      name: "Spring - Allegro",
+      composer: "Vivaldi",
+      url: "https://upload.wikimedia.org/wikipedia/commons/8/8f/Vivaldi_Spring_mvt_1_Allegro_-_John_Harrison_violin.ogg",
+      condition: "bullish" as const
     },
     {
-      name: "Descending Tones",
-      composer: "Generated", 
-      url: "generated-bearish",
-      condition: "bearish" as const,
-      type: "generated" as const
+      name: "Moonlight Sonata - 1st Movement",
+      composer: "Beethoven",
+      url: "https://upload.wikimedia.org/wikipedia/commons/6/6b/Moonlight_Sonata_-_1st_Movement_-_Opus_27_Nr._2_-_Ludwig_van_Beethoven.ogg",
+      condition: "bearish" as const
     },
     {
-      name: "Chaotic Rhythms",
-      composer: "Generated",
-      url: "generated-volatile", 
-      condition: "volatile" as const,
-      type: "generated" as const
+      name: "Flight of the Bumblebee",
+      composer: "Rimsky-Korsakov",
+      url: "https://upload.wikimedia.org/wikipedia/commons/a/a5/Rimsky-Korsakov_-_Flight_of_the_Bumblebee.ogg",
+      condition: "volatile" as const
     },
     {
-      name: "Peaceful Ambience",
-      composer: "Generated",
-      url: "generated-calm",
-      condition: "calm" as const,
-      type: "generated" as const
+      name: "Clair de Lune",
+      composer: "Debussy",
+      url: "https://upload.wikimedia.org/wikipedia/commons/5/5b/Claude_Debussy_-_Clair_de_lune.ogg",
+      condition: "calm" as const
     },
     {
-      name: "Rising Tension",
-      composer: "Generated",
-      url: "generated-building",
-      condition: "building" as const,
-      type: "generated" as const
+      name: "In the Hall of the Mountain King",
+      composer: "Grieg",
+      url: "https://upload.wikimedia.org/wikipedia/commons/0/05/Grieg_-_In_the_Hall_of_the_Mountain_King.ogg",
+      condition: "building" as const
     },
     {
-      name: "Emergency Alert",
-      composer: "Generated",
-      url: "generated-crash",
-      condition: "crash" as const,
-      type: "generated" as const
+      name: "Dies Irae",
+      composer: "Verdi",
+      url: "https://upload.wikimedia.org/wikipedia/commons/2/29/Giuseppe_Verdi_-_Requiem_-_02_Dies_Irae.ogg",
+      condition: "crash" as const
     }
   ], []);
   
-  // Initialize Web Audio API
-  const initAudioContext = useCallback(() => {
-    if (!audioContextRef.current) {
-      try {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-        gainNodeRef.current = audioContextRef.current.createGain();
-        gainNodeRef.current.connect(audioContextRef.current.destination);
-        gainNodeRef.current.gain.value = volume;
+  // Initialize audio element
+  useEffect(() => {
+    if (!audioRef.current) {
+      audioRef.current = new Audio();
+      audioRef.current.loop = true;
+      audioRef.current.volume = volume;
+      
+      // Add event listeners
+      audioRef.current.addEventListener('loadstart', () => {
+        setIsLoading(true);
         setAudioError(null);
-      } catch (error) {
-        console.error('Failed to initialize audio context:', error);
-        setAudioError('Audio not supported in this browser');
-      }
-    }
-  }, [volume]);
-  
-  // Generate different types of audio based on market condition
-  const generateAudio = useCallback((condition: string) => {
-    if (!audioContextRef.current || !gainNodeRef.current) return;
-    
-    // Stop any existing oscillator
-    if (oscillatorRef.current) {
-      try {
-        oscillatorRef.current.stop();
-      } catch (e) {
-        // Oscillator may already be stopped
-      }
-    }
-    
-    const audioContext = audioContextRef.current;
-    const gainNode = gainNodeRef.current;
-    
-    // Create new oscillator
-    const oscillator = audioContext.createOscillator();
-    oscillatorRef.current = oscillator;
-    
-    // Configure oscillator based on market condition
-    switch (condition) {
-      case 'bullish':
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(220, audioContext.currentTime); // A3
-        oscillator.frequency.exponentialRampToValueAtTime(440, audioContext.currentTime + 2); // A4
-        break;
-        
-      case 'bearish':
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(440, audioContext.currentTime); // A4
-        oscillator.frequency.exponentialRampToValueAtTime(220, audioContext.currentTime + 2); // A3
-        break;
-        
-      case 'volatile':
-        oscillator.type = 'square';
-        oscillator.frequency.setValueAtTime(330, audioContext.currentTime);
-        // Create rapid frequency changes
-        for (let i = 0; i < 10; i++) {
-          const time = audioContext.currentTime + (i * 0.2);
-          const freq = 200 + Math.random() * 400;
-          oscillator.frequency.setValueAtTime(freq, time);
+      });
+      
+      audioRef.current.addEventListener('canplaythrough', () => {
+        setIsLoading(false);
+        setAudioError(null);
+      });
+      
+      audioRef.current.addEventListener('error', (e) => {
+        setIsLoading(false);
+        console.error('Audio error:', e);
+        setAudioError('Failed to load audio. Check your internet connection.');
+      });
+      
+      audioRef.current.addEventListener('ended', () => {
+        // Loop is enabled, but just in case
+        if (enabled && audioRef.current) {
+          audioRef.current.play().catch(console.error);
         }
-        break;
-        
-      case 'calm':
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(174, audioContext.currentTime); // Low, soothing frequency
-        break;
-        
-      case 'building':
-        oscillator.type = 'triangle';
-        oscillator.frequency.setValueAtTime(220, audioContext.currentTime);
-        oscillator.frequency.exponentialRampToValueAtTime(880, audioContext.currentTime + 4); // Build up over 4 seconds
-        break;
-        
-      case 'crash':
-        oscillator.type = 'sawtooth';
-        oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
-        oscillator.frequency.exponentialRampToValueAtTime(110, audioContext.currentTime + 1); // Rapid drop
-        break;
-        
-      default:
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(261.63, audioContext.currentTime); // Middle C
+      });
     }
     
-    // Connect and start
-    oscillator.connect(gainNode);
-    oscillator.start();
-    
-    // Stop after a reasonable duration and loop
-    oscillator.stop(audioContext.currentTime + 4);
-    
-    // Set up looping
-    oscillator.onended = () => {
-      if (enabled && currentTrack?.condition === condition) {
-        // Restart after a brief pause
-        setTimeout(() => {
-          if (enabled && currentTrack?.condition === condition) {
-            generateAudio(condition);
-          }
-        }, 500);
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
       }
     };
-  }, [enabled, currentTrack, volume]);
+  }, []);
   
+  // Fade out audio
   const fadeOutAudio = useCallback((callback: () => void) => {
     setIsTransitioning(true);
     
@@ -204,35 +127,32 @@ const DynamicMusicPlayer: React.FC<DynamicMusicPlayerProps> = ({
       clearInterval(fadeIntervalRef.current);
     }
     
-    if (!gainNodeRef.current) {
+    if (!audioRef.current) {
       callback();
       setIsTransitioning(false);
       return;
     }
     
-    const startVolume = gainNodeRef.current.gain.value;
-    const fadeStep = startVolume / 10;
+    const startVolume = audioRef.current.volume;
+    const fadeStep = startVolume / 20;
     
     fadeIntervalRef.current = window.setInterval(() => {
-      if (gainNodeRef.current) {
-        if (gainNodeRef.current.gain.value - fadeStep <= 0) {
-          gainNodeRef.current.gain.value = 0;
+      if (audioRef.current) {
+        if (audioRef.current.volume - fadeStep <= 0) {
+          audioRef.current.volume = 0;
+          audioRef.current.pause();
           clearInterval(fadeIntervalRef.current!);
           fadeIntervalRef.current = null;
           callback();
           setIsTransitioning(false);
         } else {
-          gainNodeRef.current.gain.value -= fadeStep;
+          audioRef.current.volume -= fadeStep;
         }
-      } else {
-        clearInterval(fadeIntervalRef.current!);
-        fadeIntervalRef.current = null;
-        callback();
-        setIsTransitioning(false);
       }
     }, 50);
   }, []);
   
+  // Fade in audio
   const fadeInAudio = useCallback(() => {
     setIsTransitioning(true);
     
@@ -240,46 +160,56 @@ const DynamicMusicPlayer: React.FC<DynamicMusicPlayerProps> = ({
       clearInterval(fadeIntervalRef.current);
     }
     
-    if (!gainNodeRef.current) {
+    if (!audioRef.current) {
       setIsTransitioning(false);
       return;
     }
     
-    gainNodeRef.current.gain.value = 0;
-    const targetVolume = volume;
-    const fadeStep = targetVolume / 10;
-    
-    fadeIntervalRef.current = window.setInterval(() => {
-      if (gainNodeRef.current) {
-        if (gainNodeRef.current.gain.value + fadeStep >= targetVolume) {
-          gainNodeRef.current.gain.value = targetVolume;
-          clearInterval(fadeIntervalRef.current!);
-          fadeIntervalRef.current = null;
-          setIsTransitioning(false);
-        } else {
-          gainNodeRef.current.gain.value += fadeStep;
+    audioRef.current.volume = 0;
+    audioRef.current.play().then(() => {
+      setIsPlaying(true);
+      
+      const targetVolume = volume;
+      const fadeStep = targetVolume / 20;
+      
+      fadeIntervalRef.current = window.setInterval(() => {
+        if (audioRef.current) {
+          if (audioRef.current.volume + fadeStep >= targetVolume) {
+            audioRef.current.volume = targetVolume;
+            clearInterval(fadeIntervalRef.current!);
+            fadeIntervalRef.current = null;
+            setIsTransitioning(false);
+          } else {
+            audioRef.current.volume += fadeStep;
+          }
         }
-      } else {
-        clearInterval(fadeIntervalRef.current!);
-        fadeIntervalRef.current = null;
-        setIsTransitioning(false);
-      }
-    }, 50);
+      }, 50);
+    }).catch(err => {
+      console.error('Failed to play audio:', err);
+      setAudioError('Click play to start audio');
+      setIsTransitioning(false);
+    });
   }, [volume]);
   
+  // Transition to new track
   const transitionToTrack = useCallback((newTrack: AudioTrack) => {
     fadeOutAudio(() => {
       setCurrentTrack(newTrack);
       
-      if (enabled && newTrack.type === 'generated') {
-        setTimeout(() => {
-          generateAudio(newTrack.condition);
+      if (audioRef.current && enabled) {
+        audioRef.current.src = newTrack.url;
+        audioRef.current.load();
+        
+        // Wait for audio to be ready before fading in
+        const canPlayHandler = () => {
           fadeInAudio();
-          setIsPlaying(true);
-        }, 100);
+          audioRef.current?.removeEventListener('canplaythrough', canPlayHandler);
+        };
+        
+        audioRef.current.addEventListener('canplaythrough', canPlayHandler);
       }
     });
-  }, [enabled, fadeInAudio, fadeOutAudio, generateAudio]);
+  }, [enabled, fadeInAudio, fadeOutAudio]);
   
   // Setup drag handlers
   useEffect(() => {
@@ -326,81 +256,44 @@ const DynamicMusicPlayer: React.FC<DynamicMusicPlayerProps> = ({
     };
   }, [position]);
   
-  // Clean up when component unmounts
+  // Handle enabled state changes
   useEffect(() => {
-    return () => {
-      if (fadeIntervalRef.current) {
-        clearInterval(fadeIntervalRef.current);
-      }
+    if (enabled && audioRef.current) {
+      const trackForCondition = musicTracks.find(track => track.condition === marketCondition) || musicTracks[3];
       
-      if (oscillatorRef.current) {
-        try {
-          oscillatorRef.current.stop();
-        } catch (e) {
-          // May already be stopped
-        }
-      }
-      
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
-      }
-    };
-  }, []);
-  
-  // Handle changes in the enabled state
-  useEffect(() => {
-    if (enabled) {
-      setIsVisible(true);
-      setIsMiniPlayerOpen(true);
-      initAudioContext();
-    }
-    
-    if (enabled && audioContextRef.current) {
-      // Resume audio context if it's suspended (browser autoplay policy)
-      if (audioContextRef.current.state === 'suspended') {
-        audioContextRef.current.resume().then(() => {
-          console.log('Audio context resumed');
+      if (!currentTrack || currentTrack.condition !== marketCondition) {
+        transitionToTrack(trackForCondition);
+      } else if (!audioRef.current.src || audioRef.current.paused) {
+        // Resume playing if paused
+        audioRef.current.play().then(() => {
+          setIsPlaying(true);
         }).catch(err => {
-          console.error('Failed to resume audio context:', err);
-          setAudioError('Click to enable audio');
+          console.error('Failed to resume audio:', err);
+          setAudioError('Click play to start audio');
         });
       }
-      
-      const trackForCondition = musicTracks.find(track => track.condition === marketCondition) || musicTracks[3];
-      setCurrentTrack(trackForCondition);
-      
-      if (trackForCondition.type === 'generated') {
-        generateAudio(trackForCondition.condition);
-        setIsPlaying(true);
-      }
-    } else {
-      // Stop audio when disabled
-      if (oscillatorRef.current) {
-        try {
-          oscillatorRef.current.stop();
-        } catch (e) {
-          // May already be stopped
-        }
-      }
-      setIsPlaying(false);
+    } else if (!enabled && audioRef.current && !audioRef.current.paused) {
+      fadeOutAudio(() => {
+        setIsPlaying(false);
+      });
     }
-  }, [enabled, initAudioContext, marketCondition, musicTracks, generateAudio]);
+  }, [enabled, marketCondition, musicTracks, currentTrack, transitionToTrack, fadeOutAudio]);
   
-  // Handle changes in the market condition
+  // Handle market condition changes
   useEffect(() => {
-    if (!enabled || !audioContextRef.current || isTransitioning) return;
+    if (!enabled || isTransitioning) return;
     
     const trackForCondition = musicTracks.find(track => track.condition === marketCondition);
     
-    if (trackForCondition && (!currentTrack || currentTrack.condition !== marketCondition)) {
+    if (trackForCondition && currentTrack && currentTrack.condition !== marketCondition) {
       transitionToTrack(trackForCondition);
     }
   }, [marketCondition, enabled, isTransitioning, currentTrack, musicTracks, transitionToTrack]);
   
   // Handle volume changes
   useEffect(() => {
-    if (gainNodeRef.current) {
-      gainNodeRef.current.gain.value = volume;
+    if (audioRef.current) {
+      audioRef.current.volume = volume;
     }
   }, [volume]);
   
@@ -409,38 +302,22 @@ const DynamicMusicPlayer: React.FC<DynamicMusicPlayerProps> = ({
     setVolume(newVolume);
   };
   
-  const handleHide = () => {
-    setIsMiniPlayerOpen(false);
-    setIsVisible(false);
-  };
-  
-  const handleMouseEnter = () => {
-    setIsHovered(true);
-  };
-  
-  const handleMouseLeave = () => {
-    setIsHovered(false);
-  };
-  
-  // Handle manual play/pause
   const handlePlayPause = useCallback(() => {
-    if (!audioContextRef.current) {
-      initAudioContext();
-      return;
-    }
+    if (!audioRef.current) return;
     
-    if (audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume().then(() => {
+    if (audioRef.current.paused) {
+      audioRef.current.play().then(() => {
+        setIsPlaying(true);
         setAudioError(null);
-        onToggle();
+        if (!enabled) onToggle();
       }).catch(err => {
-        console.error('Failed to resume audio context:', err);
-        setAudioError('Audio context error');
+        console.error('Failed to play audio:', err);
+        setAudioError('Audio playback failed');
       });
     } else {
       onToggle();
     }
-  }, [initAudioContext, onToggle]);
+  }, [enabled, onToggle]);
   
   if (!isVisible) {
     return (
@@ -456,8 +333,6 @@ const DynamicMusicPlayer: React.FC<DynamicMusicPlayerProps> = ({
     );
   }
   
-  const containerOpacity = isHovered ? 1 : 0.7;
-  
   return (
     <div 
       ref={dragRef}
@@ -465,116 +340,84 @@ const DynamicMusicPlayer: React.FC<DynamicMusicPlayerProps> = ({
       style={{ 
         left: `${position.x}px`, 
         top: `${position.y}px`,
-        opacity: containerOpacity 
+        opacity: isHovered ? 1 : 0.8
       }}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
-      {!isMiniPlayerOpen && enabled && currentTrack && (
-        <div className="bg-surface p-3 rounded-lg shadow-lg border border-accent">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center cursor-pointer" onClick={() => setIsMiniPlayerOpen(true)}>
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mr-2">
-                <circle cx="5.5" cy="17.5" r="2.5"></circle>
-                <circle cx="17.5" cy="15.5" r="2.5"></circle>
-                <path d="M18 3a3 3 0 0 0-3 3v13.5"></path>
-                <path d="M8 5.5v12a3 3 0 0 1-3 3 3 3 0 0 1-3-3 3 3 0 0 1 3-3h11.5"></path>
-              </svg>
-              <span className="text-text-primary">{currentTrack.name}</span>
-            </div>
-            <button 
-              className="ml-2 text-text-muted hover:text-text-primary p-1"
-              onClick={handleHide}
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
-            </button>
-          </div>
-        </div>
-      )}
-      
-      {isMiniPlayerOpen && (
-        <div className="bg-surface p-4 rounded-lg shadow-lg border border-accent">
-          <div className="flex justify-between items-center mb-2">
-            <h3 className="font-medium">Dynamic Audio</h3>
-            <div className="flex items-center">
-              <button 
-                className="text-text-muted hover:text-text-primary p-1"
-                onClick={() => setIsMiniPlayerOpen(false)}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="19" y1="12" x2="5" y2="12"></line>
-                </svg>
-              </button>
-              <button 
-                className="text-text-muted hover:text-text-primary p-1"
-                onClick={handleHide}
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-              </button>
-            </div>
-          </div>
-          
-          {audioError && (
-            <div className="mb-2 text-xs text-warning bg-warning/10 p-2 rounded">
-              {audioError}
-            </div>
-          )}
-          
-          {currentTrack && (
-            <div className="mb-2">
-              <div className="text-text-primary font-medium">{currentTrack.name}</div>
-              <div className="text-text-secondary text-sm">{currentTrack.composer}</div>
-              <div className="text-text-muted text-xs mt-1 capitalize">
-                Market mood: {currentTrack.condition}
-              </div>
-            </div>
-          )}
-          
-          <div className="flex items-center space-x-2 mt-2">
-            <button 
-              className="p-1 rounded-full bg-accent hover:bg-accent-hover text-white"
-              onClick={handlePlayPause}
-            >
-              {enabled && isPlaying ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect x="6" y="4" width="4" height="16"></rect>
-                  <rect x="14" y="4" width="4" height="16"></rect>
-                </svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polygon points="5 3 19 12 5 21 5 3"></polygon>
-                </svg>
-              )}
-            </button>
-            
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+      <div className="bg-surface p-4 rounded-lg shadow-lg border border-accent">
+        <div className="flex justify-between items-center mb-2">
+          <h3 className="font-medium">Dynamic Music</h3>
+          <button 
+            className="text-text-muted hover:text-text-primary p-1"
+            onClick={() => setIsVisible(false)}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
             </svg>
-            
-            <input
-              type="range"
-              min="0"
-              max="1"
-              step="0.01"
-              value={volume}
-              onChange={handleVolumeChange}
-              className="w-24 h-1 bg-surface-variant rounded-lg appearance-none cursor-pointer"
-            />
-            
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
-            </svg>
-          </div>
+          </button>
         </div>
-      )}
+        
+        {audioError && (
+          <div className="mb-2 text-xs text-warning bg-warning/10 p-2 rounded">
+            {audioError}
+          </div>
+        )}
+        
+        {isLoading && (
+          <div className="mb-2 text-xs text-info">
+            Loading music...
+          </div>
+        )}
+        
+        {currentTrack && (
+          <div className="mb-3">
+            <div className="text-text-primary font-medium">{currentTrack.name}</div>
+            <div className="text-text-secondary text-sm">{currentTrack.composer}</div>
+            <div className="text-text-muted text-xs mt-1 capitalize">
+              Market: {marketCondition}
+            </div>
+          </div>
+        )}
+        
+        <div className="flex items-center space-x-2">
+          <button 
+            className="p-2 rounded-full bg-accent hover:bg-accent-hover text-white disabled:opacity-50"
+            onClick={handlePlayPause}
+            disabled={isLoading}
+          >
+            {enabled && isPlaying ? (
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="6" y="4" width="4" height="16"></rect>
+                <rect x="14" y="4" width="4" height="16"></rect>
+              </svg>
+            ) : (
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polygon points="5 3 19 12 5 21 5 3"></polygon>
+              </svg>
+            )}
+          </button>
+          
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+          </svg>
+          
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={volume}
+            onChange={handleVolumeChange}
+            className="w-24 h-1 bg-surface-variant rounded-lg appearance-none cursor-pointer"
+          />
+          
+          <span className="text-xs text-text-muted">
+            {Math.round(volume * 100)}%
+          </span>
+        </div>
+      </div>
     </div>
   );
 };
