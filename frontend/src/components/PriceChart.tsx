@@ -735,7 +735,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
     <div 
       ref={containerRef}
       className="w-full h-full bg-[#0B1426] rounded-lg overflow-hidden relative"
-      style={{ minHeight: '400px' }}
     >
       <canvas
         ref={canvasRef}
