@@ -1,4 +1,4 @@
-// Updated Dashboard.tsx with Dynamic Price Chart Integration
+// Updated Dashboard.tsx with Ultra High Performance Fixes
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -60,6 +60,16 @@ const Dashboard: React.FC = () => {
   const batchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   
+  // CRITICAL FIX: Add message queue and batch processing
+  const messageQueueRef = useRef<any[]>([]);
+  const processingMessageBatch = useRef<boolean>(false);
+  const batchProcessIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // CRITICAL FIX: Limit data retention to prevent memory leaks
+  const MAX_PRICE_HISTORY = 1000; // Keep only last 1000 candles
+  const MAX_RECENT_TRADES = 100; // Keep only last 100 trades
+  const MAX_DEBUG_LOGS = 20; // Keep only last 20 debug logs
+  
   // Optimized refs for minimal re-renders
   const lastProcessedMessageRef = useRef<string | null>(null);
   const performanceStatsRef = useRef({
@@ -67,7 +77,9 @@ const Dashboard: React.FC = () => {
     fastTrades: 0, // < 5ms
     mediumTrades: 0, // 5-15ms
     slowTrades: 0, // > 15ms
-    averageLatency: 0
+    averageLatency: 0,
+    droppedMessages: 0,
+    batchesProcessed: 0
   });
 
   const { isConnected, lastMessage, setPauseState } = useWebSocket(
@@ -78,7 +90,7 @@ const Dashboard: React.FC = () => {
   // Ultra-fast debug logging with circular buffer
   const addDebugLog = useCallback((message: string) => {
     setDebugInfo(prev => {
-      const newLogs = [...prev.slice(-9), `${Date.now()}: ${message}`];
+      const newLogs = [...prev.slice(-MAX_DEBUG_LOGS + 1), `${Date.now()}: ${message}`];
       return newLogs;
     });
     // Console logging is optional in high-frequency mode
@@ -87,7 +99,7 @@ const Dashboard: React.FC = () => {
     }
   }, [isHighFrequencyMode]);
 
-  // Batch update mechanism for high-frequency updates
+  // CRITICAL FIX: Enhanced batch update mechanism with Web Workers consideration
   const batchUpdate = useCallback((updateFn: () => void) => {
     updateBatchRef.current.push(updateFn);
     
@@ -95,20 +107,117 @@ const Dashboard: React.FC = () => {
       batchTimeoutRef.current = setTimeout(() => {
         const startTime = performance.now();
         
-        // Execute all batched updates in a single frame
-        updateBatchRef.current.forEach(fn => fn());
-        updateBatchRef.current = [];
-        batchTimeoutRef.current = null;
-        
-        const executionTime = performance.now() - startTime;
-        
-        // Track batch execution performance
-        if (executionTime > 5) {
-          addDebugLog(`Batch update took ${executionTime.toFixed(2)}ms (above 5ms threshold)`);
-        }
+        // Use requestAnimationFrame for smoother updates
+        requestAnimationFrame(() => {
+          // Execute all batched updates in a single frame
+          updateBatchRef.current.forEach(fn => fn());
+          updateBatchRef.current = [];
+          batchTimeoutRef.current = null;
+          
+          const executionTime = performance.now() - startTime;
+          
+          // Track batch execution performance
+          if (executionTime > 16.67) { // More than one frame (60fps)
+            addDebugLog(`Batch update took ${executionTime.toFixed(2)}ms (above frame budget)`);
+          }
+        });
       }, 0); // Next tick for immediate processing
     }
   }, [addDebugLog]);
+
+  // CRITICAL FIX: Process message queue in batches
+  const processMessageBatch = useCallback(() => {
+    if (processingMessageBatch.current || messageQueueRef.current.length === 0) {
+      return;
+    }
+    
+    processingMessageBatch.current = true;
+    const startTime = performance.now();
+    
+    // Process up to 50 messages per batch in HFT/Quantum mode
+    const batchSize = isHighFrequencyMode ? 50 : 20;
+    const messagesToProcess = messageQueueRef.current.splice(0, batchSize);
+    
+    // If queue is getting too large, drop old messages
+    if (messageQueueRef.current.length > 1000) {
+      const dropped = messageQueueRef.current.length - 500;
+      messageQueueRef.current = messageQueueRef.current.slice(-500);
+      performanceStatsRef.current.droppedMessages += dropped;
+      addDebugLog(`Dropped ${dropped} messages to prevent overflow`);
+    }
+    
+    batchUpdate(() => {
+      setSimulation(prev => {
+        if (!prev) return prev;
+        
+        let updatedSim = { ...prev };
+        
+        // Process all messages in batch
+        messagesToProcess.forEach(message => {
+          const { event } = message;
+          const { type, data } = event;
+          
+          switch (type) {
+            case 'price_update':
+              // CRITICAL: Limit price history size
+              const newPriceHistory = data.priceHistory || updatedSim.priceHistory;
+              if (newPriceHistory.length > MAX_PRICE_HISTORY) {
+                data.priceHistory = newPriceHistory.slice(-MAX_PRICE_HISTORY);
+              }
+              
+              updatedSim = {
+                ...updatedSim,
+                currentPrice: data.price,
+                orderBook: data.orderBook,
+                priceHistory: data.priceHistory || updatedSim.priceHistory
+              };
+              break;
+              
+            case 'trade':
+              // CRITICAL: Limit recent trades size
+              const updatedTrades = [data, ...updatedSim.recentTrades.slice(0, MAX_RECENT_TRADES - 1)];
+              updatedSim = {
+                ...updatedSim,
+                recentTrades: updatedTrades
+              };
+              break;
+              
+            case 'position_open':
+              updatedSim = {
+                ...updatedSim,
+                activePositions: [...updatedSim.activePositions, data]
+              };
+              break;
+              
+            case 'position_close':
+              updatedSim = {
+                ...updatedSim,
+                activePositions: updatedSim.activePositions.filter(
+                  pos => pos.trader.walletAddress !== data.trader.walletAddress
+                ),
+                // Limit closed positions to prevent memory leak
+                closedPositions: [...updatedSim.closedPositions.slice(-99), data]
+              };
+              break;
+              
+            default:
+              break;
+          }
+        });
+        
+        return updatedSim;
+      });
+    });
+    
+    const processingTime = performance.now() - startTime;
+    performanceStatsRef.current.batchesProcessed++;
+    
+    if (processingTime > 10) {
+      addDebugLog(`Batch processing (${messagesToProcess.length} msgs) took ${processingTime.toFixed(2)}ms`);
+    }
+    
+    processingMessageBatch.current = false;
+  }, [isHighFrequencyMode, batchUpdate, addDebugLog]);
 
   // Ultra-fast trade execution tracking
   const trackTradeExecution = useCallback((executionTime: number) => {
@@ -135,14 +244,13 @@ const Dashboard: React.FC = () => {
     });
   }, []);
 
-  // Market Scenario Engine callbacks - FIXED to actually affect the simulation
+  // Market Scenario Engine callbacks
   const handleScenarioStart = useCallback(async (scenario: MarketScenario) => {
     if (!simulation) return;
     
     setCurrentScenario(scenario);
     addDebugLog(`Market scenario started: ${scenario.name}`);
     
-    // Apply initial trader behavior modifiers via API
     try {
       const response = await fetch(`/api/simulation/${simulation.id}/scenario/start`, {
         method: 'POST',
@@ -167,7 +275,6 @@ const Dashboard: React.FC = () => {
     setScenarioPhaseData(null);
     addDebugLog('Market scenario ended');
     
-    // Clear scenario effects via API
     try {
       await fetch(`/api/simulation/${simulation.id}/scenario/end`, {
         method: 'POST',
@@ -183,12 +290,10 @@ const Dashboard: React.FC = () => {
     
     setScenarioPhaseData({ phase, progress });
     
-    // Update market condition based on scenario
     if (phase.marketCondition !== marketCondition) {
       setMarketCondition(phase.marketCondition);
     }
     
-    // Send phase update to backend to affect actual simulation
     try {
       await fetch(`/api/simulation/${simulation.id}/scenario/update`, {
         method: 'POST',
@@ -238,14 +343,12 @@ const Dashboard: React.FC = () => {
           } else {
             setSimulation(simulationResponse.data);
             
-            // Set token symbol based on initial price
             const initialPrice = simulationResponse.data.currentPrice || 100;
             setTokenSymbol(determineTokenSymbol(initialPrice));
             
             const totalInitTime = performance.now() - initStartTime;
             addDebugLog(`Full initialization completed in ${totalInitTime.toFixed(2)}ms`);
             
-            // Enable high-frequency mode if initialization was fast
             if (totalInitTime < 100) {
               setIsHighFrequencyMode(true);
               addDebugLog("High-frequency mode enabled (sub-100ms init)");
@@ -264,39 +367,50 @@ const Dashboard: React.FC = () => {
     initSimulation();
   }, [addDebugLog, determineTokenSymbol]);
 
+  // CRITICAL FIX: Start batch processing interval
+  useEffect(() => {
+    if (simulation?.isRunning && !simulation?.isPaused) {
+      // Process messages more frequently in HFT/Quantum modes
+      const interval = simulationSpeed >= 50 ? 16 : simulationSpeed >= 10 ? 50 : 100;
+      
+      batchProcessIntervalRef.current = setInterval(() => {
+        processMessageBatch();
+      }, interval);
+    } else {
+      if (batchProcessIntervalRef.current) {
+        clearInterval(batchProcessIntervalRef.current);
+        batchProcessIntervalRef.current = null;
+      }
+    }
+    
+    return () => {
+      if (batchProcessIntervalRef.current) {
+        clearInterval(batchProcessIntervalRef.current);
+      }
+    };
+  }, [simulation?.isRunning, simulation?.isPaused, simulationSpeed, processMessageBatch]);
+
   // Enhanced market condition detection with scenario integration
   const determineMarketCondition = useCallback((simulation: Simulation): 'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash' => {
-    // If scenario is active, prioritize scenario-driven market condition
     if (currentScenario && scenarioPhaseData) {
       return scenarioPhaseData.phase.marketCondition;
     }
 
     if (!simulation?.priceHistory?.length) return 'calm';
     
-    // Enhanced analysis for more realistic detection
-    const recent = simulation.priceHistory.slice(-10); // Use more data points when not in scenario
+    const recent = simulation.priceHistory.slice(-10);
     const firstPrice = recent[0].close;
     const lastPrice = simulation.currentPrice;
     const percentChange = ((lastPrice - firstPrice) / firstPrice) * 100;
     
-    // Calculate volatility with better algorithm
     let volatility = 0;
-    let volumeWeightedPrice = 0;
-    let totalVolume = 0;
-    
     for (let i = 1; i < recent.length; i++) {
       const change = Math.abs((recent[i].close - recent[i-1].close) / recent[i-1].close);
       volatility += change;
-      
-      // Add volume consideration if available
-      const volume = 1; // Default volume, could be enhanced with real volume data
-      volumeWeightedPrice += recent[i].close * volume;
-      totalVolume += volume;
     }
     
     volatility = (volatility / (recent.length - 1)) * 100;
     
-    // Enhanced condition detection
     if (volatility > 4) {
       if (percentChange < -8) return 'crash';
       if (percentChange > 8) return 'volatile';
@@ -306,7 +420,6 @@ const Dashboard: React.FC = () => {
     if (percentChange > 5) return 'bullish';
     if (percentChange < -3) return 'bearish';
     
-    // Check for building momentum
     const recentChange = ((recent[recent.length-1].close - recent[recent.length-3].close) / recent[recent.length-3].close) * 100;
     if (recentChange > 2 && percentChange > 0) return 'building';
     
@@ -320,7 +433,6 @@ const Dashboard: React.FC = () => {
         setSimulationStartTime(Date.now());
       }
       
-      // Use more efficient timer for high-frequency mode
       const updateInterval = isHighFrequencyMode ? 100 : 1000;
       
       timerRef.current = setInterval(() => {
@@ -345,7 +457,7 @@ const Dashboard: React.FC = () => {
     };
   }, [simulation?.isRunning, simulation?.isPaused, simulationStartTime, isHighFrequencyMode]);
 
-  // Convert price history to chart format - simplified
+  // Convert price history to chart format
   const convertPriceHistory = useCallback((priceHistory: SimulationPricePoint[]): ChartPricePoint[] => {
     if (!priceHistory || priceHistory.length === 0) return [];
     
@@ -371,11 +483,9 @@ const Dashboard: React.FC = () => {
       currentPrice: 0,
     };
     
-    // Sort price history to ensure chronological order
     const sortedPriceHistory = simulation.priceHistory ? 
       [...simulation.priceHistory].sort((a, b) => a.timestamp - b.timestamp) : [];
     
-    // Don't sort recent trades - simulation manager maintains correct order (newest first)
     const sortedRecentTrades = simulation.recentTrades || [];
     
     return {
@@ -389,102 +499,27 @@ const Dashboard: React.FC = () => {
     };
   }, [simulation, convertPriceHistory]);
 
-  // Ultra-optimized WebSocket message processing
+  // CRITICAL FIX: Queue messages instead of processing immediately
   useEffect(() => {
     if (!lastMessage || !simulation) return;
     
-    const messageStartTime = performance.now();
     const { simulationId, event } = lastMessage;
     
     if (simulationId !== simulation.id) return;
     
+    // Queue the message for batch processing
+    messageQueueRef.current.push(lastMessage);
+    
     // Increment message count for performance tracking
     setWsMessageCount(prev => prev + 1);
     
-    const messageId = `${simulationId}-${event.type}-${event.timestamp}`;
-    if (messageId === lastProcessedMessageRef.current) return;
-    lastProcessedMessageRef.current = messageId;
-    
-    const { type, data } = event;
-    
-    // Start trade execution timing
-    if (type === 'trade') {
+    // Track trade execution if it's a trade
+    if (event.type === 'trade') {
       tradeStartTimeRef.current = performance.now();
     }
     
-    // Batch the simulation update for better performance
-    batchUpdate(() => {
-      setSimulation(prev => {
-        if (!prev) return prev;
-        
-        let updatedSim = { ...prev };
-        
-        switch (type) {
-          case 'price_update':
-            // Update with the full price history from backend
-            updatedSim = {
-              ...updatedSim,
-              currentPrice: data.price,
-              orderBook: data.orderBook,
-              priceHistory: data.priceHistory || updatedSim.priceHistory
-            };
-            
-            // Update token symbol if price changes significantly
-            const newSymbol = determineTokenSymbol(data.price);
-            if (newSymbol !== tokenSymbol) {
-              setTokenSymbol(newSymbol);
-              addDebugLog(`Token symbol changed to ${newSymbol} (price: $${data.price.toFixed(6)})`);
-            }
-            break;
-            
-          case 'trade':
-            // Ultra-fast trade processing
-            const tradeProcessingTime = performance.now() - tradeStartTimeRef.current;
-            trackTradeExecution(tradeProcessingTime);
-            
-            // Optimized trade array update
-            const updatedTrades = [data, ...updatedSim.recentTrades.slice(0, 49)]; // Reduced from 99
-            updatedSim = {
-              ...updatedSim,
-              recentTrades: updatedTrades
-            };
-            
-            addDebugLog(`Trade executed in ${tradeProcessingTime.toFixed(2)}ms`);
-            break;
-            
-          case 'position_open':
-            updatedSim = {
-              ...updatedSim,
-              activePositions: [...updatedSim.activePositions, data]
-            };
-            break;
-            
-          case 'position_close':
-            updatedSim = {
-              ...updatedSim,
-              activePositions: updatedSim.activePositions.filter(
-                pos => pos.trader.walletAddress !== data.trader.walletAddress
-              ),
-              closedPositions: [...updatedSim.closedPositions, data]
-            };
-            break;
-            
-          default:
-            break;
-        }
-        
-        return updatedSim;
-      });
-    });
-    
-    // Track total message processing time
-    const totalMessageTime = performance.now() - messageStartTime;
-    if (totalMessageTime > 10) {
-      addDebugLog(`Message processing took ${totalMessageTime.toFixed(2)}ms (above 10ms threshold)`);
-    }
-    
-    // Update market condition less frequently for performance
-    if (Math.random() < 0.1) { // Only 10% of the time
+    // Update market condition less frequently
+    if (Math.random() < 0.05) { // Only 5% of the time
       const newCondition = determineMarketCondition(simulation);
       if (newCondition !== marketCondition) {
         setMarketCondition(newCondition);
@@ -492,7 +527,7 @@ const Dashboard: React.FC = () => {
       }
     }
     
-  }, [lastMessage, simulation, marketCondition, determineMarketCondition, addDebugLog, batchUpdate, trackTradeExecution, tokenSymbol, determineTokenSymbol]);
+  }, [lastMessage, simulation, marketCondition, determineMarketCondition, addDebugLog]);
 
   // Updated handleSpeedChange method with Ultra and Quantum modes
   const handleSpeedChange = useCallback(async (speedOption: 'slow' | 'medium' | 'fast' | 'ludicrous' | 'ultra' | 'quantum') => {
@@ -501,19 +536,17 @@ const Dashboard: React.FC = () => {
       'medium': 3, 
       'fast': 6,
       'ludicrous': 10,
-      'ultra': 50,     // New ultra-fast mode
-      'quantum': 100   // New quantum mode - maximum speed
+      'ultra': 50,
+      'quantum': 100
     };
     
     const speedValue = speedMap[speedOption];
     setSimulationSpeed(speedValue);
     
-    // Enable high-frequency mode for speeds above 10x
     if (speedOption === 'ultra' || speedOption === 'quantum') {
       setIsHighFrequencyMode(true);
       addDebugLog(`${speedOption.toUpperCase()} MODE ACTIVATED - ${speedValue}x speed`);
       
-      // Enable HFT mode in simulation manager
       if (simulation) {
         try {
           await fetch(`/api/simulation/${simulation.id}/enable-hft`, {
@@ -547,7 +580,7 @@ const Dashboard: React.FC = () => {
     try {
       await SimulationApi.startSimulation(simulation.id);
       setSimulation(prev => prev ? { ...prev, isRunning: true, isPaused: false } : prev);
-      setPauseState(false); // Notify WebSocket
+      setPauseState(false);
       
       if (!simulationStartTime) {
         setSimulationStartTime(Date.now());
@@ -567,7 +600,7 @@ const Dashboard: React.FC = () => {
     try {
       await SimulationApi.pauseSimulation(simulation.id);
       setSimulation(prev => prev ? { ...prev, isPaused: true } : prev);
-      setPauseState(true); // Notify WebSocket
+      setPauseState(true);
       addDebugLog("Simulation paused");
     } catch (error) {
       console.error('Failed to pause simulation:', error);
@@ -579,6 +612,9 @@ const Dashboard: React.FC = () => {
     
     const resetStartTime = performance.now();
     try {
+      // Clear message queue
+      messageQueueRef.current = [];
+      
       await SimulationApi.resetSimulation(simulation.id);
       const response = await SimulationApi.getSimulation(simulation.id);
       
@@ -591,11 +627,9 @@ const Dashboard: React.FC = () => {
         setWsMessageCount(0);
         setAudioEnabled(false);
         
-        // Reset token symbol
         const resetPrice = response.data.currentPrice || 100;
         setTokenSymbol(determineTokenSymbol(resetPrice));
         
-        // Reset performance stats
         setTradeExecutionTimes([]);
         setAverageExecutionTime(0);
         performanceStatsRef.current = {
@@ -603,10 +637,11 @@ const Dashboard: React.FC = () => {
           fastTrades: 0,
           mediumTrades: 0,
           slowTrades: 0,
-          averageLatency: 0
+          averageLatency: 0,
+          droppedMessages: 0,
+          batchesProcessed: 0
         };
         
-        // Reset scenario state
         setCurrentScenario(null);
         setScenarioPhaseData(null);
         
@@ -645,7 +680,7 @@ const Dashboard: React.FC = () => {
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
           </svg>
-          <span className="mt-4 block text-xl">Initializing realistic market simulation...</span>
+          <span className="mt-4 block text-xl">Initializing ultra-high-performance simulation...</span>
         </div>
       </div>
     );
@@ -687,7 +722,7 @@ const Dashboard: React.FC = () => {
       <div className="flex flex-col mb-2 bg-surface rounded-md shadow-sm">
         <div className="flex justify-between items-center h-10 p-2">
           <div className="flex items-center">
-            <h1 className="text-base font-bold mr-2">Realistic Market Simulation</h1>
+            <h1 className="text-base font-bold mr-2">Ultra Performance Market Simulation</h1>
             <div className="ml-2 text-xs bg-panel px-2 py-1 rounded">
               <span className="text-text-secondary mr-1">{tokenSymbol}:</span>
               <span className="text-text-primary font-medium">${safeData.currentPrice < 1 ? safeData.currentPrice.toFixed(6) : safeData.currentPrice.toFixed(2)}</span>
@@ -706,6 +741,13 @@ const Dashboard: React.FC = () => {
             {currentScenario && (
               <div className="ml-2 text-xs text-purple-400 px-2 py-1">
                 📈 {currentScenario.name}
+              </div>
+            )}
+            
+            {/* Queue size indicator */}
+            {messageQueueRef.current.length > 0 && (
+              <div className="ml-2 text-xs text-yellow-400 px-2 py-1">
+                Queue: {messageQueueRef.current.length}
               </div>
             )}
           </div>
@@ -728,6 +770,12 @@ const Dashboard: React.FC = () => {
                 </span>
               </div>
             )}
+            
+            {/* Performance stats */}
+            <div className="text-xs bg-panel px-2 py-1 rounded">
+              <span className="text-text-secondary">Batches:</span>
+              <span className="ml-1 font-mono text-text-primary">{performanceStatsRef.current.batchesProcessed}</span>
+            </div>
             
             <div className="cursor-pointer" onClick={toggleAudio}>
               {audioEnabled ? (
@@ -889,11 +937,11 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
       
-      {/* Main dashboard grid */}
+      {/* Main dashboard grid - Updated with larger price chart */}
       <div style={{ 
         display: 'grid', 
         gridTemplateColumns: '3fr 9fr', 
-        gridTemplateRows: '2fr 3fr', 
+        gridTemplateRows: '3fr 2fr', // Changed from '2fr 3fr' to make chart taller
         gap: '8px',
         height: 'calc(100vh - 85px)',
         overflow: 'hidden'
@@ -998,11 +1046,12 @@ const Dashboard: React.FC = () => {
       {showDebugInfo && process.env.NODE_ENV !== 'production' && (
         <div className="absolute bottom-2 right-2 z-20 bg-black bg-opacity-90 text-white p-3 rounded text-xs max-w-md max-h-40 overflow-auto">
           <div className="flex justify-between items-center mb-2">
-            <span className="font-bold">Realistic Market Debug</span>
+            <span className="font-bold">Ultra Performance Debug</span>
             <div className="flex space-x-2 text-[10px]">
               <span className="text-green-400">Fast: {performanceStatsRef.current.fastTrades}</span>
               <span className="text-yellow-400">Med: {performanceStatsRef.current.mediumTrades}</span>
               <span className="text-red-400">Slow: {performanceStatsRef.current.slowTrades}</span>
+              <span className="text-orange-400">Dropped: {performanceStatsRef.current.droppedMessages}</span>
               {currentScenario && (
                 <span className="text-purple-400">Scenario: {currentScenario.name}</span>
               )}
@@ -1020,7 +1069,6 @@ const Dashboard: React.FC = () => {
 };
 
 // Error boundary components remain the same
-// Error boundary components
 const ErrorFallback: React.FC<{ componentName: string }> = ({ componentName }) => {
   return (
     <div className="flex items-center justify-center h-full w-full bg-surface rounded-lg p-4">
