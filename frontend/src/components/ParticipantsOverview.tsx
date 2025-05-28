@@ -231,14 +231,14 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
   
   if (traders.length === 0) {
     return (
-      <div className="bg-surface p-3 rounded-lg shadow-lg">
-        <div className="flex justify-between items-center mb-2">
-          <h2 className="text-lg font-semibold text-text-primary">Participants</h2>
-          <span className="text-text-secondary text-xs">
+      <div className="bg-surface p-2 rounded-lg shadow-lg">
+        <div className="flex justify-between items-center mb-1">
+          <h2 className="text-sm font-semibold text-text-primary">Participants</h2>
+          <span className="text-text-secondary text-[10px]">
             Waiting for trader data...
           </span>
         </div>
-        <div className="flex items-center justify-center h-32 text-text-muted">
+        <div className="flex items-center justify-center h-32 text-text-muted text-xs">
           <p>No traders available yet. Please wait for data to load.</p>
         </div>
       </div>
@@ -246,16 +246,16 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
   }
   
   return (
-    <div className="bg-surface p-3 rounded-lg shadow-lg h-full overflow-hidden">
-      <div className="flex justify-between items-center mb-2">
-        <h2 className="text-base font-semibold text-text-primary">Participants</h2>
+    <div className="bg-surface p-2 rounded-lg shadow-lg h-full overflow-hidden">
+      <div className="flex justify-between items-center mb-1">
+        <h2 className="text-xs font-semibold text-text-primary">Participants</h2>
         <div className="flex items-center">
-          <span className="text-text-secondary text-xs mr-2">
+          <span className="text-text-secondary text-[10px] mr-2">
             {traders.length} traders | {activePositions.length} active
           </span>
           <button 
             onClick={() => setIsExpandedView(!isExpandedView)}
-            className="text-accent text-xs hover:text-accent-hover focus:outline-none"
+            className="text-accent text-[10px] hover:text-accent-hover focus:outline-none"
           >
             {isExpandedView ? 'Collapse' : 'Expand'}
           </button>
@@ -263,19 +263,19 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
       </div>
       
       {/* Main Participants Table */}
-      <div className="overflow-y-auto h-[calc(100%-32px)] scrollbar-thin">
+      <div className="overflow-y-auto h-[calc(100%-24px)] scrollbar-thin">
         <table className="min-w-full">
           <thead className="sticky top-0 bg-surface z-10">
-            <tr className="text-xs border-b border-border">
-              <th className="py-1 px-2 text-left text-text-secondary font-medium">#</th>
-              <th className="py-1 px-2 text-left text-text-secondary font-medium">Trader</th>
-              <th className="py-1 px-2 text-right text-text-secondary font-medium">Size</th>
-              <th className="py-1 px-2 text-right text-text-secondary font-medium">Entry</th>
-              <th className="py-1 px-2 text-right text-text-secondary font-medium">Liq.</th>
-              <th className="py-1 px-2 text-right text-text-secondary font-medium">Margin</th>
-              <th className="py-1 px-2 text-right text-text-secondary font-medium">Unreal.</th>
-              <th className="py-1 px-2 text-right text-text-secondary font-medium">Real.</th>
-              <th className="py-1 px-2 text-right text-text-secondary font-medium">Total</th>
+            <tr className="text-[10px] border-b border-border">
+              <th className="py-0.5 px-1 text-left text-text-secondary font-medium">#</th>
+              <th className="py-0.5 px-1 text-left text-text-secondary font-medium">Trader</th>
+              <th className="py-0.5 px-1 text-right text-text-secondary font-medium">Size</th>
+              <th className="py-0.5 px-1 text-right text-text-secondary font-medium">Entry</th>
+              <th className="py-0.5 px-1 text-right text-text-secondary font-medium">Liq.</th>
+              <th className="py-0.5 px-1 text-right text-text-secondary font-medium">Margin</th>
+              <th className="py-0.5 px-1 text-right text-text-secondary font-medium">Unreal.</th>
+              <th className="py-0.5 px-1 text-right text-text-secondary font-medium">Real.</th>
+              <th className="py-0.5 px-1 text-right text-text-secondary font-medium">Total</th>
             </tr>
           </thead>
           <tbody>
@@ -288,32 +288,32 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
               
               const isTopTrader = index < 3;
               const rankIndicator = isTopTrader ? 
-                <span className={`inline-flex items-center justify-center w-4 h-4 rounded-full mr-1 text-white text-[10px] ${
+                <span className={`inline-flex items-center justify-center w-3 h-3 rounded-full mr-0.5 text-white text-[8px] ${
                   index === 0 ? 'bg-yellow-500' : 
                   index === 1 ? 'bg-gray-400' : 
                   'bg-amber-700'
                 }`}>{index + 1}</span> : 
-                <span className="text-xs text-text-muted mr-1">{index + 1}</span>;
+                <span className="text-[10px] text-text-muted mr-0.5">{index + 1}</span>;
               
               return (
                 <tr 
                   key={trader.walletAddress} 
-                  className={`text-xs border-b border-border hover:bg-panel-hover transition-colors ${
+                  className={`text-[10px] border-b border-border hover:bg-panel-hover transition-colors ${
                     isTopTrader ? 'bg-panel-hover bg-opacity-25' : ''
                   } ${
                     trader.isNearLiquidation ? 'bg-danger bg-opacity-10' : ''
                   }`}
                 >
-                  <td className="py-1 px-2 text-center">
+                  <td className="py-0.5 px-1 text-center">
                     {rankIndicator}
                   </td>
-                  <td className="py-1 px-2">
+                  <td className="py-0.5 px-1">
                     <div className="flex items-center">
                       <span className="text-text-primary">{truncateAddress(trader.walletAddress)}</span>
                       
                       {/* Position direction - only show if active */}
                       {isActive && (
-                        <span className={`ml-1 text-[9px] px-1 rounded ${
+                        <span className={`ml-0.5 text-[8px] px-0.5 rounded ${
                           positionDirection === 'LONG' ? 'bg-chart-up text-white' : 'bg-chart-down text-white'
                         }`}>
                           {positionDirection}
@@ -321,13 +321,13 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
                       )}
                     </div>
                   </td>
-                  <td className="py-1 px-2 text-right font-mono">
+                  <td className="py-0.5 px-1 text-right font-mono">
                     {positionSize}
                   </td>
-                  <td className="py-1 px-2 text-right font-mono">
+                  <td className="py-0.5 px-1 text-right font-mono">
                     {trader.entryPrice ? `$${trader.entryPrice.toFixed(2)}` : '-'}
                   </td>
-                  <td className={`py-1 px-2 text-right font-mono ${
+                  <td className={`py-0.5 px-1 text-right font-mono ${
                     trader.liquidationPrice && currentPrice > 0 && trader.activePosition && (
                       (trader.activePosition.quantity > 0 && currentPrice <= trader.liquidationPrice) ||
                       (trader.activePosition.quantity < 0 && currentPrice >= trader.liquidationPrice)
@@ -335,24 +335,24 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
                   }`}>
                     {trader.liquidationPrice ? `${trader.liquidationPrice.toFixed(2)}` : '-'}
                   </td>
-                  <td className={`py-1 px-2 text-right font-mono text-xs ${
+                  <td className={`py-0.5 px-1 text-right font-mono text-[9px] ${
                     trader.marginLevel && trader.marginLevel < 110 ? 'text-danger' : 
                     trader.marginLevel && trader.marginLevel < 150 ? 'text-warning' : 
                     'text-text-secondary'
                   }`}>
                     {trader.marginLevel ? formatPercentage(trader.marginLevel) : '-'}
                   </td>
-                  <td className={`py-1 px-2 text-right font-mono ${
+                  <td className={`py-0.5 px-1 text-right font-mono ${
                     (trader.unrealizedPnl || 0) >= 0 ? 'text-chart-up' : 'text-chart-down'
                   }`}>
                     {formatUSD(trader.unrealizedPnl)}
                   </td>
-                  <td className={`py-1 px-2 text-right font-mono ${
+                  <td className={`py-0.5 px-1 text-right font-mono ${
                     (trader.realizedPnl || 0) >= 0 ? 'text-chart-up' : 'text-chart-down'
                   }`}>
                     {formatUSD(trader.realizedPnl)}
                   </td>
-                  <td className={`py-1 px-2 text-right font-mono font-bold ${
+                  <td className={`py-0.5 px-1 text-right font-mono font-bold ${
                     (trader.totalBalance || 0) >= 0 ? 'text-chart-up' : 'text-chart-down'
                   }`}>
                     {formatUSD(trader.totalBalance)}
@@ -366,8 +366,8 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
       
       {/* Enhanced Stats */}
       {isExpandedView && (
-        <div className="mt-2 p-2 border border-border rounded bg-panel">
-          <div className="grid grid-cols-5 gap-3 text-xs">
+        <div className="mt-1 p-1 border border-border rounded bg-panel">
+          <div className="grid grid-cols-5 gap-2 text-[10px]">
             <div>
               <div className="text-text-secondary">Total Volume</div>
               <div className="font-semibold text-text-primary">
