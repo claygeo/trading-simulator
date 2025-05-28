@@ -1,4 +1,4 @@
-// Updated Dashboard.tsx with proper Market Scenario Engine Integration
+// Updated Dashboard.tsx with Dynamic Price Chart Integration
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -49,6 +49,10 @@ const Dashboard: React.FC = () => {
   const [scenarioEngineActive] = useState<boolean>(true);
   const [currentScenario, setCurrentScenario] = useState<MarketScenario | null>(null);
   const [scenarioPhaseData, setScenarioPhaseData] = useState<any>(null);
+  
+  // Dynamic chart view state
+  const [dynamicChartView, setDynamicChartView] = useState<boolean>(true);
+  const [tokenSymbol, setTokenSymbol] = useState<string>('TOKEN/USDT');
   
   // Performance timing refs
   const tradeStartTimeRef = useRef<number>(0);
@@ -199,6 +203,16 @@ const Dashboard: React.FC = () => {
     }
   }, [simulation, marketCondition, addDebugLog]);
 
+  // Determine token symbol based on price
+  const determineTokenSymbol = useCallback((price: number): string => {
+    if (price < 0.01) return 'MEME/USDT';
+    if (price < 1) return 'SHIB/USDT';
+    if (price < 10) return 'DOGE/USDT';
+    if (price < 100) return 'MATIC/USDT';
+    if (price < 1000) return 'ETH/USDT';
+    return 'BTC/USDT';
+  }, []);
+
   // Create simulation with performance optimizations
   useEffect(() => {
     const initSimulation = async () => {
@@ -223,6 +237,11 @@ const Dashboard: React.FC = () => {
             addDebugLog(`Error getting simulation: ${simulationResponse.error}`);
           } else {
             setSimulation(simulationResponse.data);
+            
+            // Set token symbol based on initial price
+            const initialPrice = simulationResponse.data.currentPrice || 100;
+            setTokenSymbol(determineTokenSymbol(initialPrice));
+            
             const totalInitTime = performance.now() - initStartTime;
             addDebugLog(`Full initialization completed in ${totalInitTime.toFixed(2)}ms`);
             
@@ -243,7 +262,7 @@ const Dashboard: React.FC = () => {
     };
     
     initSimulation();
-  }, [addDebugLog]);
+  }, [addDebugLog, determineTokenSymbol]);
 
   // Enhanced market condition detection with scenario integration
   const determineMarketCondition = useCallback((simulation: Simulation): 'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash' => {
@@ -410,6 +429,13 @@ const Dashboard: React.FC = () => {
               orderBook: data.orderBook,
               priceHistory: data.priceHistory || updatedSim.priceHistory
             };
+            
+            // Update token symbol if price changes significantly
+            const newSymbol = determineTokenSymbol(data.price);
+            if (newSymbol !== tokenSymbol) {
+              setTokenSymbol(newSymbol);
+              addDebugLog(`Token symbol changed to ${newSymbol} (price: $${data.price.toFixed(6)})`);
+            }
             break;
             
           case 'trade':
@@ -467,7 +493,7 @@ const Dashboard: React.FC = () => {
       }
     }
     
-  }, [lastMessage, simulation, marketCondition, determineMarketCondition, addDebugLog, batchUpdate, trackTradeExecution]);
+  }, [lastMessage, simulation, marketCondition, determineMarketCondition, addDebugLog, batchUpdate, trackTradeExecution, tokenSymbol, determineTokenSymbol]);
 
   // Updated handleSpeedChange method with Ultra and Quantum modes
   const handleSpeedChange = useCallback(async (speedOption: 'slow' | 'medium' | 'fast' | 'ludicrous' | 'ultra' | 'quantum') => {
@@ -566,6 +592,10 @@ const Dashboard: React.FC = () => {
         setWsMessageCount(0);
         setAudioEnabled(false);
         
+        // Reset token symbol
+        const resetPrice = response.data.currentPrice || 100;
+        setTokenSymbol(determineTokenSymbol(resetPrice));
+        
         // Reset performance stats
         setTradeExecutionTimes([]);
         setAverageExecutionTime(0);
@@ -587,7 +617,7 @@ const Dashboard: React.FC = () => {
     } catch (error) {
       console.error('Failed to reset simulation:', error);
     }
-  }, [simulation, addDebugLog]);
+  }, [simulation, addDebugLog, determineTokenSymbol]);
 
   const toggleAudio = useCallback(() => {
     setAudioEnabled(prev => !prev);
@@ -596,6 +626,11 @@ const Dashboard: React.FC = () => {
   const toggleDebugInfo = useCallback(() => {
     setShowDebugInfo(prev => !prev);
   }, []);
+
+  const toggleDynamicView = useCallback(() => {
+    setDynamicChartView(prev => !prev);
+    addDebugLog(`Dynamic chart view: ${!dynamicChartView ? 'enabled' : 'disabled'}`);
+  }, [dynamicChartView, addDebugLog]);
 
   const handleComponentError = useCallback((componentName: string, error: Error) => {
     addDebugLog(`Error in ${componentName}: ${error.message}`);
@@ -655,8 +690,8 @@ const Dashboard: React.FC = () => {
           <div className="flex items-center">
             <h1 className="text-base font-bold mr-2">Realistic Market Simulation</h1>
             <div className="ml-2 text-xs bg-panel px-2 py-1 rounded">
-              <span className="text-text-secondary mr-1">Price:</span>
-              <span className="text-text-primary font-medium">${safeData.currentPrice.toFixed(2)}</span>
+              <span className="text-text-secondary mr-1">{tokenSymbol}:</span>
+              <span className="text-text-primary font-medium">${safeData.currentPrice < 1 ? safeData.currentPrice.toFixed(6) : safeData.currentPrice.toFixed(2)}</span>
             </div>
             <div className={`ml-2 w-2 h-2 rounded-full mr-1 ${isConnected ? 'bg-success' : 'bg-danger'}`}></div>
             <span className="text-xs text-text-secondary">{isConnected ? 'Connected' : 'Disconnected'}</span>
@@ -709,6 +744,16 @@ const Dashboard: React.FC = () => {
                 </svg>
               )}
             </div>
+            
+            <button 
+              onClick={toggleDynamicView}
+              className={`text-xs px-2 py-0.5 transition ${
+                dynamicChartView ? 'text-purple-400' : 'text-text-muted hover:text-text-secondary'
+              }`}
+              title="Toggle dynamic chart view"
+            >
+              Dynamic
+            </button>
             
             <button 
               onClick={() => setShowPerformanceMonitor(!showPerformanceMonitor)}
@@ -895,6 +940,8 @@ const Dashboard: React.FC = () => {
                 currentPrice={safeData.currentPrice} 
                 trades={safeData.recentTrades}
                 scenarioData={scenarioPhaseData}
+                symbol={tokenSymbol}
+                dynamicView={dynamicChartView}
               />
             </ErrorBoundary>
           </div>
