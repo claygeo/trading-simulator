@@ -898,22 +898,32 @@ const Dashboard: React.FC = () => {
         height: 'calc(100vh - 85px)',
         overflow: 'hidden'
       }}>
-        <div style={{ gridColumn: '1 / 2', gridRow: '1 / 2', overflow: 'hidden' }}>
-          <ErrorBoundary
-            fallback={<ErrorFallback componentName="Order Book" />}
-            onError={(error) => handleComponentError("Order Book", error)}
-          >
-            <OrderBookComponent orderBook={safeData.orderBook} />
-          </ErrorBoundary>
-        </div>
-        
-        <div style={{ gridColumn: '1 / 2', gridRow: '2 / 3', overflow: 'hidden' }}>
-          <ErrorBoundary
-            fallback={<ErrorFallback componentName="Recent Trades" />}
-            onError={(error) => handleComponentError("Recent Trades", error)}
-          >
-            <RecentTrades trades={safeData.recentTrades} />
-          </ErrorBoundary>
+        {/* Left column container with its own grid */}
+        <div style={{ 
+          gridColumn: '1 / 2', 
+          gridRow: '1 / 3', 
+          display: 'grid',
+          gridTemplateRows: '3fr 1fr',
+          gap: '8px',
+          overflow: 'hidden'
+        }}>
+          <div style={{ overflow: 'hidden' }}>
+            <ErrorBoundary
+              fallback={<ErrorFallback componentName="Order Book" />}
+              onError={(error) => handleComponentError("Order Book", error)}
+            >
+              <OrderBookComponent orderBook={safeData.orderBook} />
+            </ErrorBoundary>
+          </div>
+          
+          <div style={{ overflow: 'hidden' }}>
+            <ErrorBoundary
+              fallback={<ErrorFallback componentName="Recent Trades" />}
+              onError={(error) => handleComponentError("Recent Trades", error)}
+            >
+              <RecentTrades trades={safeData.recentTrades} />
+            </ErrorBoundary>
+          </div>
         </div>
         
         <div style={{ 
