@@ -15,6 +15,7 @@ import MarketScenarioEngine, { MarketScenario } from './MarketScenarioEngine';
 // Type adapter to convert between different PricePoint formats
 interface ChartPricePoint {
   time: number;
+  timestamp?: number;
   open: number;
   high: number;
   low: number;
@@ -45,7 +46,7 @@ const Dashboard: React.FC = () => {
   const [isHighFrequencyMode, setIsHighFrequencyMode] = useState<boolean>(false);
   
   // Market Scenario Engine state
-  const [scenarioEngineActive, setScenarioEngineActive] = useState<boolean>(true);
+  const [scenarioEngineActive] = useState<boolean>(true); // removed setter
   const [currentScenario, setCurrentScenario] = useState<MarketScenario | null>(null);
   const [scenarioPhaseData, setScenarioPhaseData] = useState<any>(null);
   
@@ -228,7 +229,7 @@ const Dashboard: React.FC = () => {
     }
     
     volatility = (volatility / (recent.length - 1)) * 100;
-    const vwap = totalVolume > 0 ? volumeWeightedPrice / totalVolume : lastPrice;
+    // const vwap = totalVolume > 0 ? volumeWeightedPrice / totalVolume : lastPrice; // commented out unused variable
     
     // Enhanced condition detection
     if (volatility > 4) {
@@ -279,22 +280,19 @@ const Dashboard: React.FC = () => {
     };
   }, [simulation?.isRunning, simulation?.isPaused, simulationStartTime, isHighFrequencyMode]);
 
-  // Convert price history to chart format
+  // Convert price history to chart format - simplified
   const convertPriceHistory = useCallback((priceHistory: SimulationPricePoint[]): ChartPricePoint[] => {
     if (!priceHistory || priceHistory.length === 0) return [];
     
-    // First convert the data
-    const converted = priceHistory.map(point => ({
+    return priceHistory.map(point => ({
       time: point.timestamp,
+      timestamp: point.timestamp,
       open: point.open,
       high: point.high,
       low: point.low,
       close: point.close,
       volume: point.volume
     }));
-    
-    // Then sort by time to ensure chronological order
-    return converted.sort((a, b) => a.time - b.time);
   }, []);
 
   // Memoized safe data with minimal recalculation
@@ -327,7 +325,7 @@ const Dashboard: React.FC = () => {
     };
   }, [simulation, convertPriceHistory]);
 
-  // Ultra-optimized WebSocket message processing
+  // Ultra-optimized WebSocket message processing with price history update
   useEffect(() => {
     if (!lastMessage || !simulation) return;
     
@@ -359,10 +357,21 @@ const Dashboard: React.FC = () => {
         
         switch (type) {
           case 'price_update':
+            // Update current price and add to price history
+            const newPricePoint = {
+              timestamp: Date.now(),
+              open: prev.currentPrice || data.price,
+              high: Math.max(prev.currentPrice || data.price, data.price),
+              low: Math.min(prev.currentPrice || data.price, data.price),
+              close: data.price,
+              volume: 1000000 // Default volume
+            };
+            
             updatedSim = {
               ...updatedSim,
               currentPrice: data.price,
-              orderBook: data.orderBook
+              orderBook: data.orderBook,
+              priceHistory: [...(prev.priceHistory || []), newPricePoint].slice(-1000) // Keep last 1000 points
             };
             break;
             
@@ -620,15 +629,17 @@ const Dashboard: React.FC = () => {
             </div>
             
             {/* Average execution time display */}
-            <div className="text-xs bg-panel px-2 py-1 rounded">
-              <span className="text-text-secondary">Avg Exec:</span>
-              <span className={`ml-1 font-mono font-bold ${
-                averageExecutionTime < 5 ? 'text-green-400' : 
-                averageExecutionTime < 15 ? 'text-yellow-400' : 'text-red-400'
-              }`}>
-                {averageExecutionTime.toFixed(1)}ms
-              </span>
-            </div>
+            {tradeExecutionTimes.length > 0 && (
+              <div className="text-xs bg-panel px-2 py-1 rounded">
+                <span className="text-text-secondary">Avg Exec:</span>
+                <span className={`ml-1 font-mono font-bold ${
+                  averageExecutionTime < 5 ? 'text-green-400' : 
+                  averageExecutionTime < 15 ? 'text-yellow-400' : 'text-red-400'
+                }`}>
+                  {averageExecutionTime.toFixed(1)}ms
+                </span>
+              </div>
+            )}
             
             <div className="cursor-pointer" onClick={toggleAudio}>
               {audioEnabled ? (
@@ -784,8 +795,20 @@ const Dashboard: React.FC = () => {
           </ErrorBoundary>
         </div>
         
-        <div style={{ gridColumn: '2 / 3', gridRow: '1 / 2', position: 'relative', overflow: 'hidden' }} className="bg-[#131722] rounded-lg shadow-lg">
-          <div className="h-full" style={{ position: 'relative' }}>
+        <div style={{ 
+          gridColumn: '2 / 3', 
+          gridRow: '1 / 2', 
+          position: 'relative', 
+          overflow: 'hidden',
+          minHeight: '400px'
+        }} className="bg-[#0B1426] rounded-lg shadow-lg">
+          <div className="h-full w-full" style={{ 
+            position: 'absolute', 
+            top: 0, 
+            left: 0, 
+            right: 0, 
+            bottom: 0 
+          }}>
             <ErrorBoundary
               fallback={<ErrorFallback componentName="Price Chart" />}
               onError={(error) => handleComponentError("Price Chart", error)}
