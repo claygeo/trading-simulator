@@ -1,73 +1,84 @@
-// backend/src/routes/simulation.ts - Add or update these endpoints
+// backend/src/types/simulation.ts
+import { Trader, TraderProfile } from './traders';
 
-import { Router } from 'express';
-import { simulationManager } from '../services/simulationManager';
+export interface PricePoint {
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
 
-const router = Router();
+export interface OrderBookLevel {
+  price: number;
+  quantity: number;
+}
 
-// Pause simulation endpoint
-router.post('/simulation/:id/pause', async (req, res) => {
-  const { id } = req.params;
-  
-  try {
-    simulationManager.pauseSimulation(id);
-    
-    res.json({ 
-      success: true, 
-      message: 'Simulation paused',
-      simulationId: id 
-    });
-  } catch (error) {
-    console.error(`Error pausing simulation ${id}:`, error);
-    res.status(500).json({ 
-      success: false, 
-      error: error instanceof Error ? error.message : 'Failed to pause simulation' 
-    });
-  }
-});
+export interface OrderBook {
+  bids: OrderBookLevel[];
+  asks: OrderBookLevel[];
+  lastUpdateTime: number;
+}
 
-// Start/Resume simulation endpoint
-router.post('/simulation/:id/start', async (req, res) => {
-  const { id } = req.params;
-  
-  try {
-    simulationManager.startSimulation(id);
-    
-    res.json({ 
-      success: true, 
-      message: 'Simulation started/resumed',
-      simulationId: id 
-    });
-  } catch (error) {
-    console.error(`Error starting simulation ${id}:`, error);
-    res.status(500).json({ 
-      success: false, 
-      error: error instanceof Error ? error.message : 'Failed to start simulation' 
-    });
-  }
-});
+export interface Trade {
+  id: string;
+  timestamp: number;
+  trader: Trader;
+  action: TradeAction;
+  price: number;
+  quantity: number;
+  value: number;
+  impact: number;
+}
 
-// Set simulation speed endpoint
-router.post('/simulation/:id/speed', async (req, res) => {
-  const { id } = req.params;
-  const { speed } = req.body;
-  
-  try {
-    simulationManager.setSimulationSpeed(id, speed);
-    
-    res.json({ 
-      success: true, 
-      message: 'Simulation speed updated',
-      simulationId: id,
-      speed 
-    });
-  } catch (error) {
-    console.error(`Error setting simulation speed for ${id}:`, error);
-    res.status(500).json({ 
-      success: false, 
-      error: error instanceof Error ? error.message : 'Failed to update simulation speed' 
-    });
-  }
-});
+export type TradeAction = 'buy' | 'sell';
 
-export default router;
+export interface TraderPosition {
+  trader: Trader;
+  entryPrice: number;
+  quantity: number; // positive for long, negative for short
+  entryTime: number;
+  currentPnl: number;
+  currentPnlPercentage: number;
+}
+
+export interface SimulationParameters {
+  timeCompressionFactor: number;
+  initialPrice: number;
+  initialLiquidity: number;
+  volatilityFactor: number;
+  duration: number; // in minutes
+  scenarioType?: string;
+}
+
+export interface MarketConditions {
+  volatility: number;
+  trend: 'bullish' | 'bearish' | 'sideways';
+  volume: number;
+}
+
+export interface SimulationEvent {
+  type: string;
+  timestamp: number;
+  data: any;
+}
+
+export interface SimulationState {
+  id: string;
+  startTime: number;
+  currentTime: number;
+  endTime: number;
+  isRunning: boolean;
+  isPaused: boolean;
+  parameters: SimulationParameters;
+  marketConditions: MarketConditions;
+  priceHistory: PricePoint[];
+  currentPrice: number;
+  orderBook: OrderBook;
+  traders: TraderProfile[];
+  activePositions: TraderPosition[];
+  closedPositions: (TraderPosition & { exitPrice: number; exitTime: number })[];
+  recentTrades: Trade[];
+  traderRankings: Trader[];
+}
