@@ -32,7 +32,7 @@ export interface TraderProfile {
   entryThreshold: number;       // Price deviation triggering entry
   exitProfitThreshold: number;  // Take profit percentage
   exitLossThreshold: number;    // Stop loss percentage
-  positionSizing: number;       // 0-1 scale of aggression
+  positionSizing: 'conservative' | 'moderate' | 'aggressive';
   holdingPeriod: {
     min: number;
     max: number;
@@ -40,4 +40,8 @@ export interface TraderProfile {
   };
   tradingFrequency: number;     // 0-1 scale of activity
   sentimentSensitivity: number; // How much market sentiment affects decisions
+  strategy: 'scalper' | 'swing' | 'momentum' | 'contrarian';
+  // Additional properties for better simulation
+  stopLoss: number;
+  takeProfit: number;
 }
