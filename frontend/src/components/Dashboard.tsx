@@ -1,4 +1,4 @@
-// Updated Dashboard.tsx with Ultra High Performance Fixes
+// frontend/src/components/Dashboard.tsx - Complete version with Ultra High Performance
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -125,6 +125,31 @@ const Dashboard: React.FC = () => {
     }
   }, [addDebugLog]);
 
+  // Ultra-fast trade execution tracking
+  const trackTradeExecution = useCallback((executionTime: number) => {
+    setTradeExecutionTimes(prev => {
+      const newTimes = [...prev.slice(-99), executionTime]; // Keep last 100 trades
+      const average = newTimes.reduce((sum, time) => sum + time, 0) / newTimes.length;
+      setAverageExecutionTime(average);
+      
+      // Update performance stats
+      const stats = performanceStatsRef.current;
+      stats.totalTrades++;
+      
+      if (executionTime < 5) {
+        stats.fastTrades++;
+      } else if (executionTime < 15) {
+        stats.mediumTrades++;
+      } else {
+        stats.slowTrades++;
+      }
+      
+      stats.averageLatency = average;
+      
+      return newTimes;
+    });
+  }, []);
+
   // CRITICAL FIX: Process message queue in batches
   const processMessageBatch = useCallback(() => {
     if (processingMessageBatch.current || messageQueueRef.current.length === 0) {
@@ -180,6 +205,13 @@ const Dashboard: React.FC = () => {
                 ...updatedSim,
                 recentTrades: updatedTrades
               };
+              
+              // Track trade execution time
+              if (tradeStartTimeRef.current > 0) {
+                const executionTime = performance.now() - tradeStartTimeRef.current;
+                trackTradeExecution(executionTime);
+                tradeStartTimeRef.current = 0;
+              }
               break;
               
             case 'position_open':
@@ -200,6 +232,32 @@ const Dashboard: React.FC = () => {
               };
               break;
               
+            case 'simulation_status':
+              if (data.isRunning !== undefined) {
+                updatedSim.isRunning = data.isRunning;
+              }
+              if (data.isPaused !== undefined) {
+                updatedSim.isPaused = data.isPaused;
+              }
+              break;
+              
+            case 'batch_update':
+              // Handle batched updates from server
+              if (data.updates) {
+                if (data.updates.price) {
+                  updatedSim.currentPrice = data.updates.price.price;
+                  updatedSim.orderBook = data.updates.price.orderBook;
+                  if (data.updates.price.priceHistory) {
+                    updatedSim.priceHistory = data.updates.price.priceHistory.slice(-MAX_PRICE_HISTORY);
+                  }
+                }
+                if (data.updates.trades) {
+                  const newTrades = [...data.updates.trades, ...updatedSim.recentTrades];
+                  updatedSim.recentTrades = newTrades.slice(0, MAX_RECENT_TRADES);
+                }
+              }
+              break;
+              
             default:
               break;
           }
@@ -217,32 +275,7 @@ const Dashboard: React.FC = () => {
     }
     
     processingMessageBatch.current = false;
-  }, [isHighFrequencyMode, batchUpdate, addDebugLog]);
-
-  // Ultra-fast trade execution tracking
-  const trackTradeExecution = useCallback((executionTime: number) => {
-    setTradeExecutionTimes(prev => {
-      const newTimes = [...prev.slice(-99), executionTime]; // Keep last 100 trades
-      const average = newTimes.reduce((sum, time) => sum + time, 0) / newTimes.length;
-      setAverageExecutionTime(average);
-      
-      // Update performance stats
-      const stats = performanceStatsRef.current;
-      stats.totalTrades++;
-      
-      if (executionTime < 5) {
-        stats.fastTrades++;
-      } else if (executionTime < 15) {
-        stats.mediumTrades++;
-      } else {
-        stats.slowTrades++;
-      }
-      
-      stats.averageLatency = average;
-      
-      return newTimes;
-    });
-  }, []);
+  }, [isHighFrequencyMode, batchUpdate, addDebugLog, trackTradeExecution]);
 
   // Market Scenario Engine callbacks
   const handleScenarioStart = useCallback(async (scenario: MarketScenario) => {
@@ -365,7 +398,7 @@ const Dashboard: React.FC = () => {
     };
     
     initSimulation();
-  }, [addDebugLog, determineTokenSymbol]);
+  }, []);
 
   // CRITICAL FIX: Start batch processing interval
   useEffect(() => {
@@ -722,7 +755,7 @@ const Dashboard: React.FC = () => {
       <div className="flex flex-col mb-2 bg-surface rounded-md shadow-sm">
         <div className="flex justify-between items-center h-10 p-2">
           <div className="flex items-center">
-            <h1 className="text-base font-bold mr-2">Ultra Performance Market Simulation</h1>
+            <h1 className="text-base font-bold mr-2">Market Simulation</h1>
             <div className="ml-2 text-xs bg-panel px-2 py-1 rounded">
               <span className="text-text-secondary mr-1">{tokenSymbol}:</span>
               <span className="text-text-primary font-medium">${safeData.currentPrice < 1 ? safeData.currentPrice.toFixed(6) : safeData.currentPrice.toFixed(2)}</span>
@@ -1024,6 +1057,11 @@ const Dashboard: React.FC = () => {
         onToggle={() => setShowPerformanceMonitor(!showPerformanceMonitor)}
         wsMessageCount={wsMessageCount}
         tradeCount={safeData.recentTrades.length}
+        queueSize={messageQueueRef.current.length}
+        droppedMessages={performanceStatsRef.current.droppedMessages}
+        batchesProcessed={performanceStatsRef.current.batchesProcessed}
+        isHighFrequencyMode={isHighFrequencyMode}
+        simulationSpeed={simulationSpeed}
       />
 
       {/* Transaction Processor */}
