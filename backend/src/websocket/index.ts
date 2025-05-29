@@ -1,21 +1,42 @@
 // backend/src/websocket/index.ts
 import { WebSocket, WebSocketServer } from 'ws';
 import { simulationManager } from '../services/simulationManager';
+import { BroadcastManager } from '../services/broadcastManager';
+import { PerformanceMonitor } from '../monitoring/performanceMonitor';
 
-export function setupWebSocketServer(wss: WebSocketServer) {
+export function setupWebSocketServer(
+  wss: WebSocketServer, 
+  broadcastManager?: BroadcastManager,
+  performanceMonitor?: PerformanceMonitor
+) {
   console.log('Setting up WebSocket server...');
   
   wss.on('connection', (ws: WebSocket, req) => {
     console.log('New WebSocket connection established');
     
+    // Update connection count for monitoring
+    if (performanceMonitor) {
+      performanceMonitor.recordWebSocketConnection(wss.clients.size);
+    }
+    
     // Register the client with simulation manager
     simulationManager.registerClient(ws);
+    
+    // Register with broadcast manager if available
+    if (broadcastManager) {
+      broadcastManager.registerClient(ws);
+    }
     
     // Send welcome message
     ws.send(JSON.stringify({
       type: 'connection',
       status: 'connected',
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      features: {
+        compression: false, // Disabled for now
+        batchUpdates: true,
+        highFrequencyMode: process.env.ENABLE_HFT === 'true'
+      }
     }));
     
     ws.on('message', (data: Buffer) => {
@@ -27,7 +48,30 @@ export function setupWebSocketServer(wss: WebSocketServer) {
           case 'subscribe':
             // Handle subscription to a specific simulation
             console.log(`Client subscribed to simulation: ${message.simulationId}`);
-            // You could maintain a mapping of clients to simulations here
+            
+            // The BroadcastManager will also handle this subscription
+            // But we can send current state immediately
+            const simulation = simulationManager.getSimulation(message.simulationId);
+            if (simulation) {
+              ws.send(JSON.stringify({
+                simulationId: message.simulationId,
+                event: {
+                  type: 'simulation_state',
+                  timestamp: Date.now(),
+                  data: {
+                    isRunning: simulation.isRunning,
+                    isPaused: simulation.isPaused,
+                    currentPrice: simulation.currentPrice,
+                    priceHistory: simulation.priceHistory,
+                    orderBook: simulation.orderBook,
+                    activePositions: simulation.activePositions,
+                    recentTrades: simulation.recentTrades.slice(0, 50),
+                    traderRankings: simulation.traderRankings.slice(0, 20),
+                    speed: simulation.parameters.timeCompressionFactor
+                  }
+                }
+              }));
+            }
             break;
             
           case 'setPauseState':
@@ -59,7 +103,10 @@ export function setupWebSocketServer(wss: WebSocketServer) {
     
     ws.on('close', () => {
       console.log('WebSocket connection closed');
-      // Cleanup is handled by simulationManager.registerClient
+      if (performanceMonitor) {
+        performanceMonitor.recordWebSocketConnection(wss.clients.size);
+      }
+      // Cleanup is handled by simulationManager.registerClient and broadcastManager
     });
     
     ws.on('error', (error) => {
