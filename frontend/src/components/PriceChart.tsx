@@ -30,7 +30,6 @@ interface Trade {
   tokenAmount?: number;
 }
 
-// Define market condition type
 type MarketCondition = 'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash';
 
 interface ScenarioPhase {
@@ -43,7 +42,6 @@ interface ScenarioData {
   progress?: number;
 }
 
-// Dynamic timeframe type
 type Timeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1d';
 
 interface TimeframeConfig {
@@ -430,6 +428,12 @@ const PriceChart: React.FC<PriceChartProps> = ({
         maxPrice = Math.max(maxPrice, candle.high);
       });
 
+      // Include current price in the range
+      if (currentPrice) {
+        minPrice = Math.min(minPrice, currentPrice);
+        maxPrice = Math.max(maxPrice, currentPrice);
+      }
+
       if (!isFinite(minPrice) || !isFinite(maxPrice)) {
         minPrice = currentPrice * 0.95 || 100;
         maxPrice = currentPrice * 1.05 || 150;
@@ -536,6 +540,54 @@ const PriceChart: React.FC<PriceChartProps> = ({
           ctx.fillRect(x - effectiveCandleWidth / 2, bodyY, effectiveCandleWidth, bodyHeight);
         }
       });
+
+      // Draw current price line - thin dotted line with color based on candle direction
+      if (currentPrice && currentPrice >= minPrice && currentPrice <= maxPrice) {
+        const currentPriceY = priceToY(currentPrice);
+        
+        // Save context state
+        ctx.save();
+        
+        // Determine line color based on current candle
+        let lineColor = '#FFD700'; // Default yellow/gold for neutral
+        
+        if (chartCandles.length > 0) {
+          const lastCandle = chartCandles[chartCandles.length - 1];
+          if (lastCandle.close > lastCandle.open) {
+            lineColor = '#22C55E'; // Green for bullish candle
+          } else if (lastCandle.close < lastCandle.open) {
+            lineColor = '#EF4444'; // Red for bearish candle
+          }
+          // If close === open, it remains yellow
+        }
+        
+        // Set up the thin dotted line style
+        ctx.strokeStyle = lineColor;
+        ctx.lineWidth = 1; // Thin line
+        ctx.setLineDash([3, 3]); // Small dots: 3px dash, 3px gap
+        
+        // Draw the dotted line across the chart
+        ctx.beginPath();
+        ctx.moveTo(padding.left, currentPriceY);
+        ctx.lineTo(dimensions.width - padding.right, currentPriceY);
+        ctx.stroke();
+        
+        // Draw tiny price label on the RIGHT where line ends
+        ctx.setLineDash([]); // Reset dash pattern
+        
+        // Small background for right price label
+        ctx.fillStyle = lineColor;
+        ctx.fillRect(dimensions.width - padding.right + 5, currentPriceY - 7, 60, 14);
+        
+        // Tiny price text on the right
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '9px -apple-system, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText(currentPrice.toFixed(decimals), dimensions.width - padding.right + 8, currentPriceY + 2);
+        
+        // Restore context state
+        ctx.restore();
+      }
 
       ctx.restore();
 
