@@ -1,5 +1,7 @@
-// backend/src/services/simulationManager.ts - Complete Fixed File with Realistic Candle Generation and Ultra-High Performance
+// backend/src/services/simulationManager.ts - Fixed WebSocket broadcasting
 import { v4 as uuidv4 } from 'uuid';
+import { Worker } from 'worker_threads';
+import * as os from 'os';
 import {
   SimulationState,
   SimulationParameters,
@@ -16,6 +18,10 @@ import {
 import duneApi from '../api/duneApi';
 import traderService from './traderService';
 import { WebSocket } from 'ws';
+import { TransactionQueue } from './transactionQueue';
+import { BroadcastManager } from './broadcastManager';
+import { ObjectPool } from '../utils/objectPool';
+import { PerformanceMonitor } from '../monitoring/performanceMonitor';
 
 class SimulationManager {
   private simulations: Map<string, SimulationState> = new Map();
@@ -27,7 +33,95 @@ class SimulationManager {
   private batchedUpdates: any[] = [];
   private lastBatchTime: number = 0;
   
-  constructor() {}
+  // Performance optimization additions
+  private workerPool: Worker[] = [];
+  private transactionQueue: TransactionQueue;
+  private broadcastManager: BroadcastManager;
+  private traderIndex: Map<string, Map<string, TraderProfile>> = new Map();
+  private activePositionsIndex: Map<string, Map<string, TraderPosition>> = new Map();
+  private performanceMonitor: PerformanceMonitor;
+  
+  // Object pools for memory efficiency
+  private tradePool: ObjectPool<Trade>;
+  private positionPool: ObjectPool<TraderPosition>;
+  
+  constructor() {
+    // Initialize performance optimizations
+    this.initializeWorkerPool();
+    this.initializeObjectPools();
+    this.performanceMonitor = new PerformanceMonitor();
+    this.performanceMonitor.startMonitoring();
+  }
+  
+  private initializeWorkerPool() {
+    const numWorkers = Math.min(os.cpus().length, 8); // Cap at 8 workers
+    console.log(`Initializing ${numWorkers} worker threads for parallel processing`);
+    
+    for (let i = 0; i < numWorkers; i++) {
+      try {
+        const worker = new Worker(`${__dirname}/../workers/traderWorker.js`);
+        this.workerPool.push(worker);
+      } catch (error) {
+        console.warn(`Failed to create worker ${i}, continuing without it:`, error);
+      }
+    }
+  }
+  
+  private initializeObjectPools() {
+    // Trade object pool
+    this.tradePool = new ObjectPool<Trade>(
+      () => ({
+        id: '',
+        timestamp: 0,
+        trader: {} as Trader,
+        action: 'buy',
+        price: 0,
+        quantity: 0,
+        value: 0,
+        impact: 0
+      }),
+      (trade) => {
+        trade.id = '';
+        trade.timestamp = 0;
+        trade.trader = {} as Trader;
+        trade.action = 'buy';
+        trade.price = 0;
+        trade.quantity = 0;
+        trade.value = 0;
+        trade.impact = 0;
+      },
+      5000
+    );
+    
+    // Position object pool
+    this.positionPool = new ObjectPool<TraderPosition>(
+      () => ({
+        trader: {} as Trader,
+        entryPrice: 0,
+        quantity: 0,
+        entryTime: 0,
+        currentPnl: 0,
+        currentPnlPercentage: 0
+      }),
+      (position) => {
+        position.trader = {} as Trader;
+        position.entryPrice = 0;
+        position.quantity = 0;
+        position.entryTime = 0;
+        position.currentPnl = 0;
+        position.currentPnlPercentage = 0;
+      },
+      2000
+    );
+  }
+  
+  setBroadcastManager(broadcastManager: BroadcastManager) {
+    this.broadcastManager = broadcastManager;
+  }
+  
+  setTransactionQueue(transactionQueue: TransactionQueue) {
+    this.transactionQueue = transactionQueue;
+  }
   
   registerClient(client: WebSocket) {
     this.clients.add(client);
@@ -45,16 +139,27 @@ class SimulationManager {
       return;
     }
     
-    const message = JSON.stringify({
-      simulationId,
-      event
-    });
-    
-    this.clients.forEach(client => {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
-      }
-    });
+    // Use the new broadcast manager if available
+    if (this.broadcastManager) {
+      this.broadcastManager.queueUpdate(simulationId, event);
+    } else {
+      // Direct broadcast fallback - THIS IS THE KEY FIX
+      const message = JSON.stringify({
+        simulationId,
+        event
+      });
+      
+      // Broadcast to all connected clients
+      this.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+          try {
+            client.send(message);
+          } catch (error) {
+            console.error('Error sending to client:', error);
+          }
+        }
+      });
+    }
   }
   
   // Add method for ultra-fast simulation mode
@@ -78,6 +183,19 @@ class SimulationManager {
     this.setSimulationSpeed(simulationId, 100);
     
     console.log('🚀 LUDICROUS MODE ACTIVATED - 100x SPEED');
+  }
+  
+  // Optimized trader lookup using index
+  private getTraderByWallet(simulationId: string, walletAddress: string): TraderProfile | undefined {
+    return this.traderIndex.get(simulationId)?.get(walletAddress);
+  }
+  
+  private buildTraderIndex(simulationId: string, traders: TraderProfile[]) {
+    const index = new Map<string, TraderProfile>();
+    traders.forEach(trader => {
+      index.set(trader.trader.walletAddress, trader);
+    });
+    this.traderIndex.set(simulationId, index);
   }
   
   async createSimulation(parameters: Partial<SimulationParameters> = {}): Promise<SimulationState> {
@@ -312,6 +430,9 @@ class SimulationManager {
       traderRankings: traders.sort((a, b) => b.netPnl - a.netPnl)
     };
     
+    // Build trader index for fast lookups
+    this.buildTraderIndex(id, traderProfiles);
+    
     // Generate some initial positions and trades for realistic data display
     this.generateInitialPositionsAndTrades(simulation);
     
@@ -360,30 +481,28 @@ class SimulationManager {
         entryValue - currentValue;
       const pnlPercentage = pnl / entryValue;
       
-      // Create position
-      const position: TraderPosition = {
-        trader: trader.trader,
-        entryPrice: entryPrice,
-        quantity: positionQuantity,
-        entryTime: now - (Math.random() * 3600000), // Entered 0-60 minutes ago
-        currentPnl: pnl,
-        currentPnlPercentage: pnlPercentage
-      };
+      // Create position using object pool
+      const position = this.positionPool.acquire();
+      position.trader = trader.trader;
+      position.entryPrice = entryPrice;
+      position.quantity = positionQuantity;
+      position.entryTime = now - (Math.random() * 3600000); // Entered 0-60 minutes ago
+      position.currentPnl = pnl;
+      position.currentPnlPercentage = pnlPercentage;
       
       // Add to active positions
       simulation.activePositions.push(position);
       
-      // Create a corresponding trade record
-      const trade: Trade = {
-        id: uuidv4(),
-        timestamp: position.entryTime,
-        trader: trader.trader,
-        action: isLong ? 'buy' : 'sell',
-        price: entryPrice,
-        quantity: Math.abs(positionQuantity),
-        value: entryPrice * Math.abs(positionQuantity),
-        impact: 0.0001 * (entryPrice * Math.abs(positionQuantity)) / simulation.marketConditions.volume
-      };
+      // Create a corresponding trade record using object pool
+      const trade = this.tradePool.acquire();
+      trade.id = uuidv4();
+      trade.timestamp = position.entryTime;
+      trade.trader = trader.trader;
+      trade.action = isLong ? 'buy' : 'sell';
+      trade.price = entryPrice;
+      trade.quantity = Math.abs(positionQuantity);
+      trade.value = entryPrice * Math.abs(positionQuantity);
+      trade.impact = 0.0001 * (entryPrice * Math.abs(positionQuantity)) / simulation.marketConditions.volume;
       
       // Add to recent trades (at the beginning for most recent)
       simulation.recentTrades.unshift(trade);
@@ -430,27 +549,25 @@ class SimulationManager {
         simulation.closedPositions.push(closedPosition);
         
         // Create corresponding entry and exit trades
-        const entryTrade: Trade = {
-          id: uuidv4(),
-          timestamp: closedEntryTime,
-          trader: trader.trader,
-          action: closedIsLong ? 'buy' : 'sell',
-          price: closedEntryPrice,
-          quantity: Math.abs(closedPositionQty),
-          value: closedEntryPrice * Math.abs(closedPositionQty),
-          impact: 0.0001 * (closedEntryPrice * Math.abs(closedPositionQty)) / simulation.marketConditions.volume
-        };
+        const entryTrade = this.tradePool.acquire();
+        entryTrade.id = uuidv4();
+        entryTrade.timestamp = closedEntryTime;
+        entryTrade.trader = trader.trader;
+        entryTrade.action = closedIsLong ? 'buy' : 'sell';
+        entryTrade.price = closedEntryPrice;
+        entryTrade.quantity = Math.abs(closedPositionQty);
+        entryTrade.value = closedEntryPrice * Math.abs(closedPositionQty);
+        entryTrade.impact = 0.0001 * (closedEntryPrice * Math.abs(closedPositionQty)) / simulation.marketConditions.volume;
         
-        const exitTrade: Trade = {
-          id: uuidv4(),
-          timestamp: closedExitTime,
-          trader: trader.trader,
-          action: closedIsLong ? 'sell' : 'buy',
-          price: closedExitPrice,
-          quantity: Math.abs(closedPositionQty),
-          value: closedExitPrice * Math.abs(closedPositionQty),
-          impact: 0.0001 * (closedExitPrice * Math.abs(closedPositionQty)) / simulation.marketConditions.volume
-        };
+        const exitTrade = this.tradePool.acquire();
+        exitTrade.id = uuidv4();
+        exitTrade.timestamp = closedExitTime;
+        exitTrade.trader = trader.trader;
+        exitTrade.action = closedIsLong ? 'sell' : 'buy';
+        exitTrade.price = closedExitPrice;
+        exitTrade.quantity = Math.abs(closedPositionQty);
+        exitTrade.value = closedExitPrice * Math.abs(closedPositionQty);
+        exitTrade.impact = 0.0001 * (closedExitPrice * Math.abs(closedPositionQty)) / simulation.marketConditions.volume;
         
         // Add trades (with correct chronological ordering)
         if (simulation.recentTrades.length < 50) {
@@ -475,29 +592,7 @@ class SimulationManager {
     });
     
     // Update trader rankings based on PnL
-    // Inline the ranking update to avoid method call issues
-    const traderPnL = new Map<string, number>();
-    
-    // Calculate P&L for ranking
-    simulation.closedPositions.forEach((position: any) => {
-      const walletAddress = position.trader.walletAddress;
-      const currentPnL = traderPnL.get(walletAddress) || 0;
-      traderPnL.set(walletAddress, currentPnL + position.currentPnl);
-    });
-    
-    simulation.activePositions.forEach((position: TraderPosition) => {
-      const walletAddress = position.trader.walletAddress;
-      const currentPnL = traderPnL.get(walletAddress) || 0;
-      traderPnL.set(walletAddress, currentPnL + position.currentPnl);
-    });
-    
-    // Update trader rankings
-    simulation.traderRankings = traders
-      .map((profile: TraderProfile) => ({
-        ...profile.trader,
-        simulationPnl: traderPnL.get(profile.trader.walletAddress) || 0
-      }))
-      .sort((a: any, b: any) => (b.simulationPnl || 0) - (a.simulationPnl || 0));
+    this.updateTraderRankings(simulation);
     
     // Limit recent trades to last 100
     if (simulation.recentTrades.length > 100) {
@@ -647,6 +742,9 @@ class SimulationManager {
       if (speed > 50) {
         // Batch updates for ultra-high speeds
         this.advanceSimulationBatched(id);
+      } else if (speed > 10 && this.workerPool.length > 0) {
+        // Use parallel processing for high speeds
+        this.advanceSimulationParallel(id);
       } else {
         this.advanceSimulation(id);
       }
@@ -788,6 +886,16 @@ class SimulationManager {
       currentPrice = close;
     }
     
+    // Clear any active positions from object pool
+    simulation.activePositions.forEach(position => {
+      this.positionPool.release(position);
+    });
+    
+    // Clear recent trades from object pool
+    simulation.recentTrades.forEach(trade => {
+      this.tradePool.release(trade);
+    });
+    
     simulation.startTime = now;
     simulation.currentTime = now;
     simulation.endTime = now + (params.duration * 60 * 1000);
@@ -817,6 +925,200 @@ class SimulationManager {
     });
     
     console.log(`Simulation ${id} reset`);
+  }
+  
+  // New parallel processing method for high-speed simulations
+  private async advanceSimulationParallel(id: string): Promise<void> {
+    const simulation = this.simulations.get(id);
+    
+    if (!simulation || !simulation.isRunning || simulation.isPaused) {
+      return;
+    }
+    
+    const startTime = performance.now();
+    
+    // Get current speed
+    const speed = this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor;
+    
+    // For 15min chart, each time step should advance by 1 minute * speed factor
+    const timeStep = 60 * 1000 * speed;
+    simulation.currentTime += timeStep;
+    
+    // Check if simulation has reached its end
+    if (simulation.currentTime >= simulation.endTime) {
+      this.pauseSimulation(id);
+      return;
+    }
+    
+    // Update the price
+    this.updatePrice(simulation);
+    
+    // Process traders in parallel using worker pool
+    if (this.workerPool.length > 0) {
+      await this.processTraderActionsParallel(simulation);
+    } else {
+      // Fallback to sequential processing
+      this.processTraderActions(simulation);
+    }
+    
+    // Update the order book
+    this.updateOrderBook(simulation);
+    
+    // Only broadcast price updates if not paused
+    if (!simulation.isPaused) {
+      this.broadcastEvent(id, {
+        type: 'price_update',
+        timestamp: simulation.currentTime,
+        data: {
+          price: simulation.currentPrice,
+          orderBook: simulation.orderBook,
+          priceHistory: simulation.priceHistory
+        }
+      });
+    }
+    
+    // Track performance
+    const elapsed = performance.now() - startTime;
+    this.performanceMonitor.recordSimulationTick(elapsed);
+    
+    // Save the updated simulation state
+    this.simulations.set(id, simulation);
+  }
+  
+  // New method for parallel trader processing
+  private async processTraderActionsParallel(simulation: SimulationState): Promise<void> {
+    const traders = simulation.traders;
+    const batchSize = Math.ceil(traders.length / this.workerPool.length);
+    
+    // Create batches for each worker
+    const batches: TraderProfile[][] = [];
+    for (let i = 0; i < traders.length; i += batchSize) {
+      batches.push(traders.slice(i, i + batchSize));
+    }
+    
+    // Process batches in parallel
+    const promises = batches.map((batch, index) => {
+      if (index < this.workerPool.length) {
+        return this.processTraderBatch(batch, simulation, this.workerPool[index]);
+      }
+      return Promise.resolve([]);
+    });
+    
+    const results = await Promise.all(promises);
+    const allDecisions = results.flat();
+    
+    // Apply decisions to simulation
+    allDecisions.forEach((decision: any) => {
+      if (decision.action === 'enter') {
+        this.executeTraderEntry(simulation, decision);
+      } else if (decision.action === 'exit') {
+        this.executeTraderExit(simulation, decision);
+      }
+    });
+  }
+  
+  // Process trader batch using worker
+  private processTraderBatch(
+    traders: TraderProfile[],
+    simulation: SimulationState,
+    worker: Worker
+  ): Promise<any[]> {
+    return new Promise((resolve, reject) => {
+      const messageHandler = (result: any) => {
+        worker.off('message', messageHandler);
+        worker.off('error', errorHandler);
+        resolve(result);
+      };
+      
+      const errorHandler = (error: Error) => {
+        worker.off('message', messageHandler);
+        worker.off('error', errorHandler);
+        console.error('Worker error:', error);
+        resolve([]); // Return empty array on error
+      };
+      
+      worker.on('message', messageHandler);
+      worker.on('error', errorHandler);
+      
+      // Send work to worker
+      worker.postMessage({
+        traders: traders.map(t => ({
+          ...t,
+          trader: {
+            walletAddress: t.trader.walletAddress,
+            netPnl: t.trader.netPnl,
+            riskProfile: t.trader.riskProfile
+          }
+        })),
+        marketData: {
+          currentPrice: simulation.currentPrice,
+          priceHistory: simulation.priceHistory.slice(-10),
+          marketConditions: simulation.marketConditions,
+          currentTime: simulation.currentTime
+        },
+        activePositions: simulation.activePositions
+          .filter(p => traders.some(t => t.trader.walletAddress === p.trader.walletAddress))
+          .map(p => ({
+            walletAddress: p.trader.walletAddress,
+            entryPrice: p.entryPrice,
+            quantity: p.quantity,
+            entryTime: p.entryTime
+          }))
+      });
+    });
+  }
+  
+  // Execute trader entry decision
+  private executeTraderEntry(simulation: SimulationState, decision: any): void {
+    const traderProfile = this.getTraderByWallet(simulation.id, decision.walletAddress);
+    if (!traderProfile) return;
+    
+    const position = this.positionPool.acquire();
+    position.trader = traderProfile.trader;
+    position.entryPrice = simulation.currentPrice;
+    position.quantity = decision.quantity;
+    position.entryTime = simulation.currentTime;
+    position.currentPnl = 0;
+    position.currentPnlPercentage = 0;
+    
+    simulation.activePositions.push(position);
+    
+    const trade = this.tradePool.acquire();
+    trade.id = uuidv4();
+    trade.timestamp = simulation.currentTime;
+    trade.trader = traderProfile.trader;
+    trade.action = decision.quantity > 0 ? 'buy' : 'sell';
+    trade.price = simulation.currentPrice;
+    trade.quantity = Math.abs(decision.quantity);
+    trade.value = simulation.currentPrice * Math.abs(decision.quantity);
+    trade.impact = 0.0001 * trade.value / simulation.marketConditions.volume;
+    
+    simulation.recentTrades.unshift(trade);
+    if (simulation.recentTrades.length > 100) {
+      const removed = simulation.recentTrades.pop();
+      if (removed) this.tradePool.release(removed);
+    }
+    
+    // Queue for async processing if transaction queue is available
+    if (this.transactionQueue) {
+      this.transactionQueue.addTrade(trade);
+    }
+    
+    this.broadcastEvent(simulation.id, {
+      type: 'trade',
+      timestamp: simulation.currentTime,
+      data: trade
+    });
+  }
+  
+  // Execute trader exit decision
+  private executeTraderExit(simulation: SimulationState, decision: any): void {
+    const position = simulation.activePositions.find(
+      p => p.trader.walletAddress === decision.walletAddress
+    );
+    if (!position) return;
+    
+    this.closePosition(simulation, position);
   }
   
   private advanceSimulation(id: string): void {
@@ -849,6 +1151,9 @@ class SimulationManager {
     // Update the order book
     this.updateOrderBook(simulation);
     
+    // Update active positions PnL
+    this.updatePositionsPnL(simulation);
+    
     // Only broadcast price updates if not paused
     if (!simulation.isPaused) {
       this.broadcastEvent(id, {
@@ -857,13 +1162,32 @@ class SimulationManager {
         data: {
           price: simulation.currentPrice,
           orderBook: simulation.orderBook,
-          priceHistory: simulation.priceHistory
+          priceHistory: simulation.priceHistory,
+          activePositions: simulation.activePositions,
+          recentTrades: simulation.recentTrades.slice(0, 50), // Send last 50 trades
+          traderRankings: simulation.traderRankings.slice(0, 20) // Top 20 traders
         }
       });
     }
     
     // Save the updated simulation state
     this.simulations.set(id, simulation);
+  }
+  
+  // New method to update position PnL values
+  private updatePositionsPnL(simulation: SimulationState): void {
+    const { currentPrice } = simulation;
+    
+    simulation.activePositions.forEach(position => {
+      const isLong = position.quantity > 0;
+      const entryValue = Math.abs(position.quantity) * position.entryPrice;
+      const currentValue = Math.abs(position.quantity) * currentPrice;
+      
+      position.currentPnl = isLong ? 
+        currentValue - entryValue :
+        entryValue - currentValue;
+      position.currentPnlPercentage = position.currentPnl / entryValue;
+    });
   }
   
   // New batched simulation advancement for ultra-high speeds
@@ -908,6 +1232,9 @@ class SimulationManager {
     // Update order book once per batch
     this.updateOrderBook(simulation);
     
+    // Update positions PnL
+    this.updatePositionsPnL(simulation);
+    
     // Broadcast consolidated update
     this.broadcastEvent(id, {
       type: 'price_update',
@@ -916,6 +1243,9 @@ class SimulationManager {
         price: simulation.currentPrice,
         orderBook: simulation.orderBook,
         priceHistory: simulation.priceHistory,
+        activePositions: simulation.activePositions,
+        recentTrades: simulation.recentTrades.slice(0, 50),
+        traderRankings: simulation.traderRankings.slice(0, 20),
         batchSize: updates
       }
     });
@@ -1019,6 +1349,19 @@ class SimulationManager {
         this.processTraderDecision(simulation, trader);
       }
     });
+    
+    // Also, if we have no trades yet, force some initial trades
+    if (simulation.recentTrades.length === 0 && simulation.traders.length > 0) {
+      // Force at least 3 random traders to make trades on startup
+      const forcedTraderCount = Math.min(3, simulation.traders.length);
+      const randomTraders = [...simulation.traders].sort(() => 0.5 - Math.random()).slice(0, forcedTraderCount);
+      
+      randomTraders.forEach(trader => {
+        this.processTraderDecision(simulation, trader);
+      });
+      
+      console.log(`Forced ${forcedTraderCount} initial trades`);
+    }
   }
   
   // Efficient random sampling
@@ -1211,300 +1554,555 @@ class SimulationManager {
     }
   }
   
-  private processTraderDecision(simulation: SimulationState, traderProfile: TraderProfile): void {
-    const trader = traderProfile.trader;
-    
-    // Check if trader has active position
-    const activePosition = simulation.activePositions.find((p: TraderPosition) => p.trader.walletAddress === trader.walletAddress);
-    
-    if (activePosition) {
-      // Decide whether to exit position
-      this.processExitDecision(simulation, traderProfile, activePosition);
-    } else {
-      // Decide whether to enter position
-      this.processEntryDecision(simulation, traderProfile);
-    }
-  }
-  
-  private processEntryDecision(simulation: SimulationState, traderProfile: TraderProfile): void {
-    const { entryThreshold, positionSizing, sentimentSensitivity } = traderProfile;
-    const trader = traderProfile.trader;
-    
-    // Simplified decision model:
-    // Check recent price movement to see if it exceeds threshold
-    const recentCandles = simulation.priceHistory.slice(-5);
-    if (recentCandles.length < 2) return;
-    
-    const oldPrice = recentCandles[0].close;
-    const newPrice = simulation.currentPrice;
-    const priceChange = (newPrice - oldPrice) / oldPrice;
-    
-    // Determine market sentiment
-    const marketTrend = simulation.marketConditions.trend;
-    const sentimentBoost = marketTrend === 'bullish' ? sentimentSensitivity * 0.01 : 
-                           marketTrend === 'bearish' ? -sentimentSensitivity * 0.01 : 0;
-    
-    // Adjust threshold based on sentiment
-    const adjustedThreshold = entryThreshold * (1 - sentimentBoost) * 0.5;
-    
-    // Check if price movement exceeds threshold
-    if (Math.abs(priceChange) > adjustedThreshold) {
-      // Determine action based on price direction and trader's characteristics
-      const action: TradeAction = priceChange > 0 ? 'buy' : 'sell';
-      
-      // Calculate position size based on trader's profile
-      // For a high-priced token, position sizes should be smaller
-      const maxPositionValue = trader.totalVolume * 0.1 * positionSizing;
-      
-      // Calculate quantity based on token price (yields smaller quantity for higher-priced tokens)
-      const quantity = maxPositionValue / simulation.currentPrice;
-      
-      // Ensure position size is not zero but scale appropriately for higher token price
-      const finalQuantity = Math.max(10, quantity); // Minimum 10 tokens for higher priced token
-      
-      // Create a new position
-      const position: TraderPosition = {
-        trader: trader,
-        entryPrice: simulation.currentPrice,
-        quantity: action === 'buy' ? finalQuantity : -finalQuantity, // Negative for short positions
-        entryTime: simulation.currentTime,
-        currentPnl: 0,
-        currentPnlPercentage: 0
-      };
-      
-      // Add to active positions
-      simulation.activePositions.push(position);
-      
-      // Create a trade record
-      const trade: Trade = {
-        id: uuidv4(),
-        timestamp: simulation.currentTime,
-        trader: trader,
-        action,
-        price: simulation.currentPrice,
-        quantity: finalQuantity, // Always positive in trade record
-        value: simulation.currentPrice * finalQuantity,
-        impact: 0.0001 * (simulation.currentPrice * finalQuantity) / simulation.marketConditions.volume
-      };
-      
-      // Add to recent trades
-      simulation.recentTrades.unshift(trade);
-      if (simulation.recentTrades.length > 100) {
-        simulation.recentTrades.pop();
-      }
-      
-      // Broadcast the trade event
-      this.broadcastEvent(simulation.id, {
-        type: 'trade',
-        timestamp: simulation.currentTime,
-        data: trade
-      });
-      
-      // Broadcast position open event
-      this.broadcastEvent(simulation.id, {
-        type: 'position_open',
-        timestamp: simulation.currentTime,
-        data: position
-      });
-      
-      // Update the last candle volume with null check to fix TypeScript error
-      const lastCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
-      if (lastCandle) {
-        lastCandle.volume = (lastCandle.volume || 0) + finalQuantity;
-        simulation.priceHistory[simulation.priceHistory.length - 1] = lastCandle;
-      }
-    }
-  }
-  
-  private processExitDecision(simulation: SimulationState, traderProfile: TraderProfile, position: TraderPosition): void {
-    const { exitProfitThreshold, exitLossThreshold } = traderProfile;
-    
-    // Calculate current P&L
-    const entryValue = position.entryPrice * Math.abs(position.quantity);
-    const currentValue = simulation.currentPrice * Math.abs(position.quantity);
-    
-    // P&L calculation depends on position direction
-    const isLong = position.quantity > 0;
-    const pnl = isLong ? 
-      currentValue - entryValue : // Long position
-      entryValue - currentValue;  // Short position
-    
-    const pnlPercentage = pnl / entryValue;
-    
-    // Update position P&L
-    position.currentPnl = pnl;
-    position.currentPnlPercentage = pnlPercentage;
-    
-    // Check exit conditions
-    const shouldTakeProfit = pnlPercentage >= exitProfitThreshold;
-    const shouldCutLoss = pnlPercentage <= -exitLossThreshold;
-    
-    // Force position close more frequently
-    const forceClose = Math.random() < 0.005; // 0.5% chance to just close position
-    
-    if (shouldTakeProfit || shouldCutLoss || forceClose) {
-      // Close the position
-      this.closePosition(simulation, position);
-    }
-  }
-  
-  private closePosition(simulation: SimulationState, position: TraderPosition): void {
-    // Remove from active positions
-    simulation.activePositions = simulation.activePositions.filter(
-      (p: TraderPosition) => p.trader.walletAddress !== position.trader.walletAddress
+  private processTraderDecision(simulation: SimulationState, trader: TraderProfile): void {
+    const existingPosition = simulation.activePositions.find(
+      p => p.trader.walletAddress === trader.trader.walletAddress
     );
     
-    // Add to closed positions
-    const closedPosition = {
-      ...position,
-      exitPrice: simulation.currentPrice,
-      exitTime: simulation.currentTime
-    };
-    simulation.closedPositions.push(closedPosition);
+    if (existingPosition) {
+      // Trader has a position - decide if they should exit
+      const shouldExit = this.shouldExitPosition(simulation, trader, existingPosition);
+      
+      if (shouldExit) {
+        this.closePosition(simulation, existingPosition);
+      }
+    } else {
+      // Trader has no position - decide if they should enter
+      const shouldEnter = this.shouldEnterPosition(simulation, trader);
+      
+      if (shouldEnter) {
+        this.openPosition(simulation, trader);
+      }
+    }
+  }
+  
+  private shouldEnterPosition(simulation: SimulationState, trader: TraderProfile): boolean {
+    const { marketConditions, currentPrice, priceHistory } = simulation;
+    const { strategy } = trader;
     
-    // Create a trade record
-    const trade: Trade = {
-      id: uuidv4(),
-      timestamp: simulation.currentTime,
-      trader: position.trader,
-      action: position.quantity > 0 ? 'sell' : 'buy', // Opposite of position direction
-      price: simulation.currentPrice,
-      quantity: Math.abs(position.quantity),
-      value: simulation.currentPrice * Math.abs(position.quantity),
-      impact: 0.0001 * (simulation.currentPrice * Math.abs(position.quantity)) / simulation.marketConditions.volume
-    };
+    // Get recent price data
+    const recentPrices = priceHistory.slice(-20);
+    if (recentPrices.length < 5) return false;
+    
+    // Calculate technical indicators
+    const sma5 = this.calculateSMA(recentPrices.slice(-5));
+    const sma20 = this.calculateSMA(recentPrices);
+    const rsi = this.calculateRSI(recentPrices);
+    
+    // Strategy-based entry logic
+    switch (strategy) {
+      case 'scalper':
+        // Scalpers enter on short-term momentum
+        return Math.random() < 0.3 && marketConditions.volatility > 0.015;
+      
+      case 'swing':
+        // Swing traders look for trend reversals
+        if (marketConditions.trend === 'bullish' && currentPrice > sma5) {
+          return Math.random() < 0.4;
+        } else if (marketConditions.trend === 'bearish' && currentPrice < sma5) {
+          return Math.random() < 0.4;
+        }
+        return false;
+      
+      case 'momentum':
+        // Momentum traders follow strong trends
+        if (marketConditions.trend === 'bullish' && currentPrice > sma20 && rsi < 70) {
+          return Math.random() < 0.5;
+        } else if (marketConditions.trend === 'bearish' && currentPrice < sma20 && rsi > 30) {
+          return Math.random() < 0.5;
+        }
+        return false;
+      
+      case 'contrarian':
+        // Contrarians bet against the trend
+        if (rsi > 70 || rsi < 30) {
+          return Math.random() < 0.6;
+        }
+        return false;
+      
+      default:
+        // Default random entry
+        return Math.random() < 0.2;
+    }
+  }
+  
+  private shouldExitPosition(
+    simulation: SimulationState, 
+    trader: TraderProfile, 
+    position: TraderPosition
+  ): boolean {
+    const { currentPrice } = simulation;
+    const { strategy } = trader;
+    
+    // Calculate P&L
+    const isLong = position.quantity > 0;
+    const entryValue = Math.abs(position.quantity) * position.entryPrice;
+    const currentValue = Math.abs(position.quantity) * currentPrice;
+    const pnl = isLong ? currentValue - entryValue : entryValue - currentValue;
+    const pnlPercentage = pnl / entryValue;
+    
+    // Time in position (in milliseconds)
+    const timeInPosition = simulation.currentTime - position.entryTime;
+    const minutesInPosition = timeInPosition / (60 * 1000);
+    
+    // Strategy-based exit logic
+    switch (strategy) {
+      case 'scalper':
+        // Scalpers exit quickly with small profits/losses
+        if (pnlPercentage > 0.005 || pnlPercentage < -0.003) return true;
+        if (minutesInPosition > 30) return true;
+        return false;
+      
+      case 'swing':
+        // Swing traders hold for larger moves
+        if (pnlPercentage > 0.02 || pnlPercentage < -0.01) return true;
+        if (minutesInPosition > 180) return Math.random() < 0.3;
+        return false;
+      
+      case 'momentum':
+        // Momentum traders ride trends
+        if (pnlPercentage > 0.03 || pnlPercentage < -0.015) return true;
+        if (minutesInPosition > 120 && pnlPercentage > 0) return Math.random() < 0.2;
+        return false;
+      
+      case 'contrarian':
+        // Contrarians have wider stops
+        if (pnlPercentage > 0.015 || pnlPercentage < -0.02) return true;
+        if (minutesInPosition > 90) return Math.random() < 0.4;
+        return false;
+      
+      default:
+        // Default exit logic
+        if (pnlPercentage > 0.01 || pnlPercentage < -0.005) return true;
+        if (minutesInPosition > 60) return Math.random() < 0.5;
+        return false;
+    }
+  }
+  
+  private openPosition(simulation: SimulationState, trader: TraderProfile): void {
+    const { currentPrice, marketConditions } = simulation;
+    const { positionSizing, trader: traderData } = trader;
+    
+    // Determine position direction based on strategy and market conditions
+    let isLong = true;
+    
+    switch (trader.strategy) {
+      case 'momentum':
+        isLong = marketConditions.trend === 'bullish';
+        break;
+      case 'contrarian':
+        isLong = marketConditions.trend === 'bearish';
+        break;
+      default:
+        isLong = Math.random() > 0.5;
+    }
+    
+    // Calculate position size based on trader's sizing preference
+    const baseSize = 10000; // $10k base position
+    const sizeMultiplier = positionSizing === 'aggressive' ? 3 : positionSizing === 'moderate' ? 1.5 : 1;
+    const positionValue = baseSize * sizeMultiplier * (0.5 + Math.random());
+    const quantity = positionValue / currentPrice;
+    
+    // Apply direction
+    const positionQuantity = isLong ? quantity : -quantity;
+    
+    // Create position using object pool
+    const position = this.positionPool.acquire();
+    position.trader = traderData;
+    position.entryPrice = currentPrice;
+    position.quantity = positionQuantity;
+    position.entryTime = simulation.currentTime;
+    position.currentPnl = 0;
+    position.currentPnlPercentage = 0;
+    
+    // Add to active positions
+    simulation.activePositions.push(position);
+    
+    // Create trade record using object pool
+    const trade = this.tradePool.acquire();
+    trade.id = uuidv4();
+    trade.timestamp = simulation.currentTime;
+    trade.trader = traderData;
+    trade.action = isLong ? 'buy' : 'sell';
+    trade.price = currentPrice;
+    trade.quantity = Math.abs(positionQuantity);
+    trade.value = currentPrice * Math.abs(positionQuantity);
+    trade.impact = 0.0001 * trade.value / marketConditions.volume;
     
     // Add to recent trades
     simulation.recentTrades.unshift(trade);
     if (simulation.recentTrades.length > 100) {
-      simulation.recentTrades.pop();
+      const removed = simulation.recentTrades.pop();
+      if (removed) this.tradePool.release(removed);
     }
     
-    // Update trader rankings inline
-    const traderPnL = new Map<string, number>();
+    // Update volume on current candle
+    const currentCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
+    currentCandle.volume += Math.abs(positionQuantity);
     
-    // Add P&L from closed positions
-    simulation.closedPositions.forEach((position: any) => {
-      const walletAddress = position.trader.walletAddress;
-      const currentPnL = traderPnL.get(walletAddress) || 0;
-      traderPnL.set(walletAddress, currentPnL + position.currentPnl);
-    });
-    
-    // Add P&L from active positions
-    simulation.activePositions.forEach((position: TraderPosition) => {
-      const walletAddress = position.trader.walletAddress;
-      const currentPnL = traderPnL.get(walletAddress) || 0;
-      traderPnL.set(walletAddress, currentPnL + position.currentPnl);
-    });
-    
-    // Update trader rankings
-    simulation.traderRankings = simulation.traders
-      .map((profile: TraderProfile) => ({
-        ...profile.trader,
-        simulationPnl: traderPnL.get(profile.trader.walletAddress) || 0
-      }))
-      .sort((a: any, b: any) => (b.simulationPnl || 0) - (a.simulationPnl || 0));
-    
-    // Broadcast the trade event
+    // Broadcast trade event
     this.broadcastEvent(simulation.id, {
       type: 'trade',
       timestamp: simulation.currentTime,
       data: trade
     });
     
-    // Broadcast position close event
-    this.broadcastEvent(simulation.id, {
-      type: 'position_close',
-      timestamp: simulation.currentTime,
-      data: closedPosition
-    });
-    
-    // Update the last candle volume with null check to fix TypeScript error
-    const lastCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
-    if (lastCandle) {
-      lastCandle.volume = (lastCandle.volume || 0) + Math.abs(position.quantity);
-      simulation.priceHistory[simulation.priceHistory.length - 1] = lastCandle;
+    // Queue for async processing if transaction queue is available
+    if (this.transactionQueue) {
+      this.transactionQueue.addTrade(trade);
     }
   }
   
-  clearScenarioEffects(simulationId: string): void {
-    const simulation = this.simulations.get(simulationId);
-    if (!simulation) return;
+  private closePosition(simulation: SimulationState, position: TraderPosition): void {
+    const { currentPrice } = simulation;
+    const exitTime = simulation.currentTime;
     
-    // Reset to default market conditions
-    simulation.marketConditions.volatility = 0.02 * simulation.parameters.volatilityFactor;
-    simulation.marketConditions.volume = simulation.parameters.initialLiquidity * 0.1;
+    // Calculate final P&L
+    const isLong = position.quantity > 0;
+    const entryValue = Math.abs(position.quantity) * position.entryPrice;
+    const exitValue = Math.abs(position.quantity) * currentPrice;
+    const pnl = isLong ? exitValue - entryValue : entryValue - exitValue;
+    const pnlPercentage = pnl / entryValue;
     
-    // Clear scenario metadata
-    delete (simulation as any).activeScenario;
+    // Create exit trade using object pool
+    const trade = this.tradePool.acquire();
+    trade.id = uuidv4();
+    trade.timestamp = exitTime;
+    trade.trader = position.trader;
+    trade.action = isLong ? 'sell' : 'buy'; // Opposite of position
+    trade.price = currentPrice;
+    trade.quantity = Math.abs(position.quantity);
+    trade.value = currentPrice * Math.abs(position.quantity);
+    trade.impact = 0.0001 * trade.value / simulation.marketConditions.volume;
     
-    // Reset trader behaviors to original values
-    const traders = simulation.traders;
-    traders.forEach(traderProfile => {
-      // Recreate the profile with original values
-      // Note: This assumes traderService has a createTraderProfile method
-      // If not, we'll need to reset the values manually
-      const trader = traderProfile.trader;
-      
-      // Reset to default values based on risk profile
-      const aggressionFactor = trader.riskProfile === 'aggressive' ? 1 :
-                              trader.riskProfile === 'moderate' ? 0.7 : 0.4;
-      const successFactor = trader.winRate;
-      
-      traderProfile.entryThreshold = 0.005 + (aggressionFactor * 0.02);
-      traderProfile.exitProfitThreshold = 0.01 + (successFactor * 0.04);
-      traderProfile.exitLossThreshold = 0.005 + (aggressionFactor * 0.025);
-      traderProfile.positionSizing = 0.1 + (aggressionFactor * 0.4);
-      traderProfile.tradingFrequency = 0.2 + (aggressionFactor * 0.6);
-      traderProfile.sentimentSensitivity = 0.3 + (aggressionFactor * 0.5);
+    // Add to recent trades
+    simulation.recentTrades.unshift(trade);
+    if (simulation.recentTrades.length > 100) {
+      const removed = simulation.recentTrades.pop();
+      if (removed) this.tradePool.release(removed);
+    }
+    
+    // Move to closed positions
+    const closedPosition: TraderPosition & { exitPrice: number, exitTime: number } = {
+      ...position,
+      exitPrice: currentPrice,
+      exitTime: exitTime,
+      currentPnl: pnl,
+      currentPnlPercentage: pnlPercentage
+    };
+    
+    simulation.closedPositions.push(closedPosition);
+    
+    // Remove from active positions
+    const index = simulation.activePositions.indexOf(position);
+    if (index > -1) {
+      simulation.activePositions.splice(index, 1);
+    }
+    
+    // Release position back to pool
+    this.positionPool.release(position);
+    
+    // Update trader's PnL
+    const traderProfile = simulation.traders.find(
+      t => t.trader.walletAddress === position.trader.walletAddress
+    );
+    if (traderProfile) {
+      traderProfile.trader.netPnl = (traderProfile.trader.netPnl || 0) + pnl;
+    }
+    
+    // Update volume on current candle
+    const currentCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
+    currentCandle.volume += Math.abs(position.quantity);
+    
+    // Update trader rankings
+    this.updateTraderRankings(simulation);
+    
+    // Broadcast trade event
+    this.broadcastEvent(simulation.id, {
+      type: 'trade',
+      timestamp: exitTime,
+      data: trade
     });
     
-    this.simulations.set(simulationId, simulation);
+    // Queue for async processing if transaction queue is available
+    if (this.transactionQueue) {
+      this.transactionQueue.addTrade(trade);
+    }
   }
   
   private updateOrderBook(simulation: SimulationState): void {
-    const { currentPrice, orderBook, marketConditions } = simulation;
+    const { currentPrice, marketConditions } = simulation;
+    const { volatility } = marketConditions;
     
-    // Update timestamp
-    orderBook.lastUpdateTime = simulation.currentTime;
+    // Update bid levels
+    simulation.orderBook.bids = simulation.orderBook.bids.map((level, index) => {
+      const distance = (index + 1) * 0.0005;
+      const price = currentPrice * (1 - distance);
+      
+      // Adjust quantity based on volatility
+      const baseQuantity = 1000 - (index * 50);
+      const volatilityMultiplier = 1 + (volatility * 10);
+      const quantity = (baseQuantity * volatilityMultiplier) / price;
+      
+      return { price, quantity };
+    });
     
-    // Generate more realistic levels - vary quantity at each level
-    // to make it more dynamic
-    const generateLevel = (side: 'bids' | 'asks', basePrice: number, index: number, volatility: number): OrderBookLevel => {
-      // Adjust spread based on volatility - smaller for higher priced tokens
-      const spread = 0.0005 * (1 + volatility * 5);
-      const distanceFromMid = (index + 1) * spread;
-      const price = side === 'bids' 
-        ? basePrice * (1 - distanceFromMid)
-        : basePrice * (1 + distanceFromMid);
+    // Update ask levels
+    simulation.orderBook.asks = simulation.orderBook.asks.map((level, index) => {
+      const distance = (index + 1) * 0.0005;
+      const price = currentPrice * (1 + distance);
       
-      // Add more randomness to quantity based on volatility and market conditions
-      const volumeFactor = Math.exp(-index / 5);
-      const randomFactor = 0.5 + (Math.random() * volatility * 10);
+      // Adjust quantity based on volatility
+      const baseQuantity = 1000 - (index * 50);
+      const volatilityMultiplier = 1 + (volatility * 10);
+      const quantity = (baseQuantity * volatilityMultiplier) / price;
       
-      // Smaller quantities for high-priced token
-      const baseQuantity = (marketConditions.volume / 1000) * volumeFactor * randomFactor;
-      const quantity = baseQuantity / price; // Convert dollar value to token quantity
-      
-      return {
-        price,
-        quantity
-      };
+      return { price, quantity };
+    });
+    
+    simulation.orderBook.lastUpdateTime = simulation.currentTime;
+  }
+  
+  private updateTraderRankings(simulation: SimulationState): void {
+    // Sort traders by net PnL
+    simulation.traderRankings = [...simulation.traders]
+      .map(profile => profile.trader)
+      .sort((a, b) => (b.netPnl || 0) - (a.netPnl || 0));
+  }
+  
+  // Technical indicator calculations
+  private calculateSMA(prices: PricePoint[]): number {
+    const sum = prices.reduce((acc, price) => acc + price.close, 0);
+    return sum / prices.length;
+  }
+  
+  private calculateRSI(prices: PricePoint[], period: number = 14): number {
+    if (prices.length < period + 1) return 50; // Default neutral RSI
+    
+    const changes: number[] = [];
+    for (let i = 1; i < prices.length; i++) {
+      changes.push(prices[i].close - prices[i - 1].close);
+    }
+    
+    const gains = changes.map(c => c > 0 ? c : 0);
+    const losses = changes.map(c => c < 0 ? -c : 0);
+    
+    const avgGain = gains.slice(-period).reduce((a, b) => a + b, 0) / period;
+    const avgLoss = losses.slice(-period).reduce((a, b) => a + b, 0) / period;
+    
+    if (avgLoss === 0) return 100;
+    
+    const rs = avgGain / avgLoss;
+    const rsi = 100 - (100 / (1 + rs));
+    
+    return rsi;
+  }
+  
+  // Scenario management methods
+  applyScenario(simulationId: string, scenarioType: string): void {
+    const simulation = this.simulations.get(simulationId);
+    if (!simulation) return;
+    
+    // Define scenario parameters
+    const scenarios: Record<string, any> = {
+      'pump': {
+        duration: 30 * 60 * 1000, // 30 minutes
+        priceAction: {
+          type: 'pump',
+          intensity: 2,
+          volatility: 3,
+          direction: 'up'
+        }
+      },
+      'dump': {
+        duration: 20 * 60 * 1000, // 20 minutes
+        priceAction: {
+          type: 'crash',
+          intensity: 2.5,
+          volatility: 4,
+          direction: 'down'
+        }
+      },
+      'whale_accumulation': {
+        duration: 60 * 60 * 1000, // 1 hour
+        priceAction: {
+          type: 'accumulation',
+          intensity: 1,
+          volatility: 0.5,
+          direction: 'sideways'
+        }
+      },
+      'volatility_spike': {
+        duration: 15 * 60 * 1000, // 15 minutes
+        priceAction: {
+          type: 'consolidation',
+          intensity: 1,
+          volatility: 5,
+          direction: 'sideways'
+        }
+      }
     };
     
-    // Create new bids and asks with more variation
-    const bidBasePrice = currentPrice * 0.9998; // Tight spread
-    const askBasePrice = currentPrice * 1.0002; // Tight spread
+    const scenario = scenarios[scenarioType];
+    if (!scenario) return;
     
-    // Generate multiple levels with varying quantities
-    orderBook.bids = Array.from({ length: 15 }, (_, i) => 
-      generateLevel('bids', bidBasePrice, i, marketConditions.volatility)
-    ).slice(0, 10); // Ensure exactly 10 levels
+    // Apply scenario to simulation
+    (simulation as any).activeScenario = {
+      type: scenarioType,
+      startTime: simulation.currentTime,
+      endTime: simulation.currentTime + scenario.duration,
+      phase: 'active',
+      progress: 0,
+      ...scenario
+    };
     
-    orderBook.asks = Array.from({ length: 15 }, (_, i) => 
-      generateLevel('asks', askBasePrice, i, marketConditions.volatility)
-    ).slice(0, 10); // Ensure exactly 10 levels
+    // Adjust market conditions
+    simulation.marketConditions.volatility *= scenario.priceAction.volatility;
+    
+    this.simulations.set(simulationId, simulation);
+    
+    // Broadcast scenario event
+    this.broadcastEvent(simulationId, {
+      type: 'scenario_applied',
+      timestamp: simulation.currentTime,
+      data: {
+        scenarioType,
+        duration: scenario.duration
+      }
+    });
+  }
+
+  // Add these missing methods for scenario routes
+  applyTraderBehaviorModifiers(simulationId: string, modifiers: any): void {
+    const simulation = this.simulations.get(simulationId);
+    if (!simulation) {
+      throw new Error(`Simulation ${simulationId} not found`);
+    }
+    
+    // Apply modifiers to traders
+    simulation.traders.forEach(trader => {
+      if (modifiers.tradingFrequency !== undefined) {
+        trader.tradingFrequency *= modifiers.tradingFrequency;
+      }
+      if (modifiers.positionSizing !== undefined) {
+        trader.positionSizing = modifiers.positionSizing;
+      }
+      if (modifiers.riskTolerance !== undefined) {
+        // Adjust exit thresholds based on risk tolerance
+        const riskMultiplier = modifiers.riskTolerance;
+        trader.stopLoss *= riskMultiplier;
+        trader.takeProfit *= riskMultiplier;
+      }
+    });
+    
+    this.simulations.set(simulationId, simulation);
+    console.log(`Applied trader behavior modifiers to simulation ${simulationId}`);
+  }
+
+  applyScenarioPhase(simulationId: string, phase: any, progress: number): void {
+    const simulation = this.simulations.get(simulationId);
+    if (!simulation) {
+      throw new Error(`Simulation ${simulationId} not found`);
+    }
+    
+    // Update active scenario phase
+    if ((simulation as any).activeScenario) {
+      (simulation as any).activeScenario.phase = phase.name;
+      (simulation as any).activeScenario.progress = progress;
+      
+      // Apply phase-specific effects
+      if (phase.volatilityMultiplier) {
+        simulation.marketConditions.volatility *= phase.volatilityMultiplier;
+      }
+      
+      if (phase.trendBias) {
+        simulation.marketConditions.trend = phase.trendBias;
+      }
+    }
+    
+    this.simulations.set(simulationId, simulation);
+    console.log(`Applied scenario phase ${phase.name} to simulation ${simulationId}`);
+  }
+
+  clearScenarioEffects(simulationId: string): void {
+    const simulation = this.simulations.get(simulationId);
+    if (!simulation) {
+      throw new Error(`Simulation ${simulationId} not found`);
+    }
+    
+    // Remove active scenario
+    delete (simulation as any).activeScenario;
+    
+    // Reset market conditions to defaults
+    simulation.marketConditions.volatility = 0.02 * simulation.parameters.volatilityFactor;
+    
+    // Reset trader behaviors to original values
+    const originalTraders = traderService.generateTraderProfiles(
+      simulation.traders.map(t => t.trader)
+    );
+    
+    simulation.traders = originalTraders;
+    
+    this.simulations.set(simulationId, simulation);
+    console.log(`Cleared scenario effects from simulation ${simulationId}`);
+  }
+  
+  deleteSimulation(id: string): void {
+    const simulation = this.simulations.get(id);
+    if (!simulation) return;
+    
+    // Stop the simulation if running
+    if (simulation.isRunning) {
+      const interval = this.simulationIntervals.get(id);
+      if (interval) {
+        clearInterval(interval);
+        this.simulationIntervals.delete(id);
+      }
+    }
+    
+    // Release all pooled objects
+    simulation.activePositions.forEach(position => {
+      this.positionPool.release(position);
+    });
+    
+    simulation.recentTrades.forEach(trade => {
+      this.tradePool.release(trade);
+    });
+    
+    // Remove from indexes
+    this.traderIndex.delete(id);
+    this.activePositionsIndex.delete(id);
+    this.simulationSpeeds.delete(id);
+    
+    // Remove simulation
+    this.simulations.delete(id);
+    
+    console.log(`Simulation ${id} deleted`);
+  }
+  
+  // Cleanup method
+  cleanup(): void {
+    // Stop all simulations
+    this.simulations.forEach((simulation, id) => {
+      if (simulation.isRunning) {
+        this.pauseSimulation(id);
+      }
+    });
+    
+    // Terminate worker pool
+    this.workerPool.forEach(worker => {
+      worker.terminate();
+    });
+    
+    // Stop performance monitoring
+    if (this.performanceMonitor) {
+      this.performanceMonitor.stopMonitoring();
+    }
+    
+    console.log('SimulationManager cleanup complete');
   }
 }
 
-export const simulationManager = new SimulationManager();
+const simulationManager = new SimulationManager();
+export default simulationManager;
+export { simulationManager };
