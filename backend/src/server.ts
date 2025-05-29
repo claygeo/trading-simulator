@@ -5,9 +5,13 @@ import helmet from 'helmet';
 import dotenv from 'dotenv';
 import path from 'path';
 import http from 'http';
-import { WebSocketServer, WebSocket } from 'ws';
+import { WebSocketServer } from 'ws';
 import apiRoutes from './api/routes';
 import { simulationManager } from './services/simulationManager';
+import { TransactionQueue } from './services/transactionQueue';
+import { BroadcastManager } from './services/broadcastManager';
+import { PerformanceMonitor } from './monitoring/performanceMonitor';
+import { setupWebSocketServer } from './websocket';
 
 // Load environment variables
 dotenv.config();
@@ -15,6 +19,11 @@ dotenv.config();
 // Initialize Express app
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Initialize performance optimizations
+let transactionQueue: TransactionQueue;
+let broadcastManager: BroadcastManager;
+const performanceMonitor = new PerformanceMonitor();
 
 // Middleware
 app.use(cors());
@@ -32,6 +41,43 @@ app.use(express.json());
 // API Routes
 app.use('/api', apiRoutes);
 
+// Performance monitoring endpoint
+app.get('/api/metrics', (req, res) => {
+  const format = req.query.format as string || 'json';
+  const metrics = performanceMonitor.exportMetrics(format as 'prometheus' | 'json');
+  
+  if (format === 'prometheus') {
+    res.set('Content-Type', 'text/plain');
+  } else {
+    res.set('Content-Type', 'application/json');
+  }
+  
+  res.send(metrics);
+});
+
+// Health check endpoint
+app.get('/api/health', async (req, res) => {
+  try {
+    const queueStats = transactionQueue ? await transactionQueue.getQueueStats() : null;
+    const broadcastStats = broadcastManager ? broadcastManager.getStats() : null;
+    
+    res.json({
+      status: 'healthy',
+      timestamp: Date.now(),
+      services: {
+        queue: queueStats,
+        broadcast: broadcastStats,
+        performance: performanceMonitor.getMetrics()
+      }
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'unhealthy',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
 // Serve static files in production
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../../public')));
@@ -47,136 +93,107 @@ const server = http.createServer(app);
 // Create WebSocket server
 const wss = new WebSocketServer({ server });
 
-// Set up WebSocket handlers
-wss.on('connection', (ws: WebSocket, req) => {
-  console.log('Client connected to WebSocket');
-  
-  // Register the client with the simulation manager
-  simulationManager.registerClient(ws);
-  
-  // Send welcome message
-  ws.send(JSON.stringify({
-    type: 'connection',
-    status: 'connected',
-    timestamp: Date.now()
-  }));
-  
-  ws.on('message', (data: Buffer) => {
-    try {
-      const message = JSON.parse(data.toString());
-      console.log('Received message:', message.type);
-      
-      switch (message.type) {
-        case 'subscribe':
-          // Handle subscription to a specific simulation
-          console.log(`Client subscribed to simulation: ${message.simulationId}`);
-          // Send current simulation state if it exists
-          const simulation = simulationManager.getSimulation(message.simulationId);
-          if (simulation) {
-            ws.send(JSON.stringify({
-              type: 'simulation_state',
-              simulationId: message.simulationId,
-              data: {
-                isRunning: simulation.isRunning,
-                isPaused: simulation.isPaused,
-                currentPrice: simulation.currentPrice,
-                speed: simulation.parameters.timeCompressionFactor
-              },
-              timestamp: Date.now()
-            }));
-          }
-          break;
-          
-        case 'setPauseState':
-          // Handle pause state updates from client
-          console.log(`Client set pause state for ${message.simulationId}: ${message.isPaused}`);
-          // Note: Actual pause/resume is handled via REST API endpoints
-          // This message is mainly for logging and coordination
-          break;
-          
-        case 'ping':
-          // Respond to ping with pong
-          ws.send(JSON.stringify({
-            type: 'pong',
-            timestamp: Date.now()
-          }));
-          break;
-          
-        default:
-          console.log('Unknown message type:', message.type);
-          ws.send(JSON.stringify({
-            type: 'error',
-            message: 'Unknown message type',
-            timestamp: Date.now()
-          }));
-      }
-    } catch (error) {
-      console.error('Error parsing WebSocket message:', error);
-      ws.send(JSON.stringify({
-        type: 'error',
-        message: 'Invalid message format',
-        timestamp: Date.now()
-      }));
+// Initialize performance-optimized services
+async function initializeServices() {
+  try {
+    // Initialize transaction queue if Redis is available
+    if (process.env.ENABLE_REDIS === 'true') {
+      console.log('Initializing transaction queue...');
+      transactionQueue = new TransactionQueue();
+      simulationManager.setTransactionQueue(transactionQueue);
     }
-  });
-  
-  ws.on('close', () => {
-    console.log('Client disconnected from WebSocket');
-    // Cleanup is handled automatically by simulationManager.registerClient
-  });
-  
-  ws.on('error', (error) => {
-    console.error('WebSocket error:', error);
-  });
-});
+    
+    // Initialize broadcast manager FIRST
+    console.log('Initializing broadcast manager...');
+    broadcastManager = new BroadcastManager(wss);
+    
+    // Connect broadcast manager to simulation manager
+    simulationManager.setBroadcastManager(broadcastManager);
+    
+    // Now setup WebSocket server with broadcast manager
+    setupWebSocketServer(wss, broadcastManager, performanceMonitor);
+    
+    // Start performance monitoring
+    performanceMonitor.startMonitoring(1000);
+    
+    console.log('Performance optimizations initialized');
+  } catch (error) {
+    console.error('Failed to initialize services:', error);
+    // Continue without optimizations
+  }
+}
 
 // Helper function to broadcast to all connected clients
 export function broadcastToAll(message: any) {
-  const messageStr = JSON.stringify(message);
-  
-  wss.clients.forEach((client) => {
-    if (client.readyState === WebSocket.OPEN) {
-      client.send(messageStr);
-    }
-  });
+  if (broadcastManager) {
+    broadcastManager.broadcastToAll(message);
+  } else {
+    // Fallback to direct broadcast
+    const messageStr = JSON.stringify(message);
+    
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(messageStr);
+      }
+    });
+  }
 }
 
 // Start server
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
   console.log(`WebSocket server running on ws://localhost:${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  
+  // Initialize services after server starts
+  await initializeServices();
 });
 
 // Handle graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
+async function gracefulShutdown() {
+  console.log('Shutting down gracefully...');
+  
+  // Stop accepting new connections
+  server.close(() => {
+    console.log('HTTP server closed');
+  });
   
   // Close WebSocket server
   wss.close(() => {
     console.log('WebSocket server closed');
   });
   
-  // Close HTTP server
-  server.close(() => {
-    console.log('HTTP server closed');
-    process.exit(0);
-  });
+  // Shutdown services
+  if (broadcastManager) {
+    broadcastManager.shutdown();
+  }
+  
+  if (transactionQueue) {
+    await transactionQueue.shutdown();
+  }
+  
+  performanceMonitor.stopMonitoring();
+  simulationManager.cleanup();
+  
+  // Force exit after 10 seconds
+  setTimeout(() => {
+    console.error('Could not close connections in time, forcefully shutting down');
+    process.exit(1);
+  }, 10000);
+}
+
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
+
+// Handle uncaught errors
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  gracefulShutdown();
 });
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully');
-  
-  // Close WebSocket server
-  wss.close(() => {
-    console.log('WebSocket server closed');
-  });
-  
-  // Close HTTP server
-  server.close(() => {
-    console.log('HTTP server closed');
-    process.exit(0);
-  });
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  gracefulShutdown();
 });
 
 export default app;
