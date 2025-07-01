@@ -1,4 +1,4 @@
-// frontend/src/types/index.ts - Updated
+// frontend/src/types/index.ts - Simplified without Template System
 export interface Trader {
   position: number;
   walletAddress: string;
@@ -35,7 +35,7 @@ export interface PricePoint {
   high: number;
   low: number;
   close: number;
-  volume?: number; // Make volume optional to avoid TypeScript errors
+  volume?: number;
 }
 
 export interface OrderBookLevel {
@@ -71,6 +71,7 @@ export interface TraderPosition {
   exitTime?: number;
 }
 
+// SIMPLIFIED: Parameters without template complexity
 export interface SimulationParameters {
   timeCompressionFactor: number;
   initialPrice: number;
@@ -86,6 +87,7 @@ export interface MarketConditions {
   volume: number;
 }
 
+// SIMPLIFIED: Simulation without template metadata
 export interface Simulation {
   id: string;
   startTime: number;
@@ -94,7 +96,7 @@ export interface Simulation {
   isRunning: boolean;
   isPaused: boolean;
   parameters: SimulationParameters;
-  marketConditions?: MarketConditions; // Add to match backend
+  marketConditions?: MarketConditions;
   currentPrice: number;
   priceHistory: PricePoint[];
   orderBook: OrderBook;
@@ -106,7 +108,14 @@ export interface Simulation {
 }
 
 export interface WebSocketEvent {
-  type: 'price_update' | 'trade' | 'position_open' | 'position_close' | 'market_event';
+  type: 'price_update' | 'trade' | 'position_open' | 'position_close' | 'market_event' | 'simulation_state';
   timestamp: number;
   data: any;
+}
+
+// SIMPLIFIED: Basic simulation creation state
+export interface SimulationCreationState {
+  parameters: Partial<SimulationParameters>;
+  loading: boolean;
+  error: string | null;
 }

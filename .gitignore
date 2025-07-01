@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Build outputs
+backend/dist/
+frontend/build/
+backend/cache/
+
+# Environment files
+.env
+.env.local
+.env.production
+backend/.env
+frontend/.env
+
+# Logs
+*.log
+
+# Test files
+*test*.js

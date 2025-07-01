@@ -1,4 +1,8 @@
+// frontend/src/components/TransactionProcessor.tsx
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+
+// Add API base URL constant at the top
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
 
 interface Transaction {
   id: string;
@@ -9,6 +13,9 @@ interface Transaction {
   priority: 'low' | 'medium' | 'high' | 'critical';
   size: number;
   trader: string;
+  // Add fields for backend integration
+  action?: 'buy' | 'sell';
+  price?: number;
 }
 
 interface ProcessingStats {
@@ -22,18 +29,21 @@ interface ProcessingStats {
   fastTrades: number; // 1-5ms
   mediumTrades: number; // 5-15ms
   slowTrades: number; // > 15ms
+  processedOrders?: number; // Track successful backend submissions
 }
 
 interface TransactionProcessorProps {
   isVisible: boolean;
   onToggle: () => void;
   simulationRunning: boolean;
+  simulationId?: string; // Add this prop
 }
 
 const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
   isVisible,
   onToggle,
-  simulationRunning
+  simulationRunning,
+  simulationId
 }) => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [stats, setStats] = useState<ProcessingStats>({
@@ -46,12 +56,14 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
     ultraFastTrades: 0,
     fastTrades: 0,
     mediumTrades: 0,
-    slowTrades: 0
+    slowTrades: 0,
+    processedOrders: 0
   });
   
   const [processingMode, setProcessingMode] = useState<'normal' | 'burst' | 'stress' | 'hft'>('normal');
   const [isExpanded, setIsExpanded] = useState(false);
   const [isOptimizedMode, setIsOptimizedMode] = useState<boolean>(false);
+  const [sendToBackend, setSendToBackend] = useState<boolean>(true); // Toggle for backend integration
   
   // CRITICAL FIX: Add memory management
   const MAX_QUEUE_SIZE = 10000;
@@ -74,6 +86,68 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
   const lastStatsUpdateRef = useRef<number>(0);
   const throughputSamplesRef = useRef<number[]>([]);
   
+  // Track base price for more realistic pricing
+  const basePriceRef = useRef<number>(100);
+  
+  // Track success/failure stats
+  const successCountRef = useRef<number>(0);
+  const failureCountRef = useRef<number>(0);
+  
+  // Add balanced buy/sell tracking refs
+  const buyCountRef = useRef<number>(0);
+  const sellCountRef = useRef<number>(0);
+  const marketTrendRef = useRef<number>(0); // -1 to 1, negative is bearish, positive is bullish
+  
+  // Send transaction to backend
+  const sendTransactionToBackend = useCallback(async (transaction: Transaction) => {
+    if (!simulationId || !sendToBackend) return;
+    
+    try {
+      // FIXED: Use backend URL instead of relative path
+      const url = `${API_BASE_URL}/api/simulation/${simulationId}/external-trade`;
+      console.log('Sending trade to:', url);
+      
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          id: transaction.id,
+          traderId: transaction.trader,
+          traderName: `TXP-${transaction.trader.slice(-6)}`,
+          action: transaction.action || (transaction.type === 'trade' ? (Math.random() > 0.5 ? 'buy' : 'sell') : 'buy'),
+          price: transaction.price || basePriceRef.current,
+          quantity: transaction.size,
+          timestamp: transaction.timestamp
+        })
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`Failed to send transaction to backend: ${response.status} ${response.statusText}`, errorText);
+        failureCountRef.current++;
+      } else {
+        const result = await response.json();
+        successCountRef.current++;
+        
+        // Update base price from the result if available
+        if (result.trade && result.trade.price) {
+          basePriceRef.current = result.trade.price;
+        }
+        
+        // Update stats to show successful integration
+        if (result.newPrice) {
+          statsRef.current.processedOrders = (statsRef.current.processedOrders || 0) + 1;
+        }
+      }
+    } catch (error) {
+      console.error('Error sending transaction to backend:', error);
+      failureCountRef.current++;
+    }
+  }, [simulationId, sendToBackend]);
+  
   // Pre-allocate transaction objects to eliminate GC
   const initializePool = useCallback(() => {
     const pool: Transaction[] = [];
@@ -86,7 +160,9 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
         processingTime: 0,
         priority: 'medium',
         size: 0,
-        trader: ''
+        trader: '',
+        action: 'buy',
+        price: 0
       });
     }
     transactionPoolRef.current = pool;
@@ -100,35 +176,105 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
     return pool[index];
   }, []);
 
-  // Ultra-optimized transaction generation
+  // Ultra-optimized transaction generation with balanced buy/sell and TIMESTAMP FIX
   const generateTransaction = useCallback((): Transaction => {
     const tx = getPooledTransaction();
     
-    // Reuse object instead of creating new one
-    const now = performance.now();
-    tx.id = `tx_${now.toFixed(0)}_${(Math.random() * 1000).toFixed(0)}`;
-    tx.timestamp = now;
+    // CRITICAL FIX: Use real epoch time instead of performance.now()
+    const now = Date.now();
+    tx.id = `tx_${now}_${(Math.random() * 1000).toFixed(0)}`;
+    tx.timestamp = now; // Use real timestamp for backend compatibility
+    
+    // Calculate market trend based on recent price changes
+    const recentPriceChange = (basePriceRef.current - 100) / 100; // Assuming 100 was initial
+    marketTrendRef.current = Math.max(-1, Math.min(1, recentPriceChange * 10));
     
     // Optimized type selection using bit operations
     const rand = Math.random();
     if (rand < 0.6) {
       tx.type = 'trade';
       tx.priority = rand < 0.2 ? 'critical' : rand < 0.4 ? 'high' : 'medium';
+      
+      // BALANCED BUY/SELL LOGIC with market bias
+      const buyRatio = buyCountRef.current / Math.max(1, buyCountRef.current + sellCountRef.current);
+      const sellRatio = sellCountRef.current / Math.max(1, buyCountRef.current + sellCountRef.current);
+      
+      // Base 50/50 chance with adjustments
+      let buyProbability = 0.5;
+      
+      // Adjust based on current ratio (rebalancing mechanism)
+      if (buyRatio > 0.55) {
+        buyProbability -= 0.1; // Reduce buy probability if too many buys
+      } else if (sellRatio > 0.55) {
+        buyProbability += 0.1; // Increase buy probability if too many sells
+      }
+      
+      // Add slight market trend influence
+      buyProbability += marketTrendRef.current * 0.05; // ±5% based on trend
+      
+      // Add some randomness to avoid perfect patterns
+      buyProbability += (Math.random() - 0.5) * 0.1; // ±5% random
+      
+      // Ensure probability stays in valid range
+      buyProbability = Math.max(0.2, Math.min(0.8, buyProbability));
+      
+      tx.action = Math.random() < buyProbability ? 'buy' : 'sell';
+      
+      // Track counts
+      if (tx.action === 'buy') {
+        buyCountRef.current++;
+      } else {
+        sellCountRef.current++;
+      }
+      
+      // Reset counters periodically to avoid overflow
+      if (buyCountRef.current + sellCountRef.current > 1000) {
+        buyCountRef.current = Math.floor(buyCountRef.current / 2);
+        sellCountRef.current = Math.floor(sellCountRef.current / 2);
+      }
+      
     } else if (rand < 0.8) {
       tx.type = 'order_place';
       tx.priority = 'medium';
+      // Orders can be more directional based on market
+      const orderBuyProb = 0.5 + (marketTrendRef.current * 0.2);
+      tx.action = Math.random() < orderBuyProb ? 'buy' : 'sell';
     } else if (rand < 0.95) {
       tx.type = 'order_cancel';
       tx.priority = 'high';
     } else {
       tx.type = 'liquidation';
       tx.priority = 'critical';
+      tx.action = 'sell'; // Liquidations are always sells
     }
     
     tx.status = 'pending';
     tx.processingTime = 0;
-    tx.size = Math.random() * 1000 + 10;
+    
+    // Vary size based on type and market conditions
+    const volatilityMultiplier = 1 + Math.abs(marketTrendRef.current);
+    if (tx.type === 'liquidation') {
+      tx.size = (Math.random() * 5000 + 2000) * volatilityMultiplier; // Larger liquidations
+    } else if (tx.type === 'trade' && tx.priority === 'critical') {
+      tx.size = (Math.random() * 3000 + 1000) * volatilityMultiplier; // Large critical trades
+    } else {
+      tx.size = Math.random() * 1000 + 10;
+    }
+    
     tx.trader = `0x${(Math.random() * 0xFFFFFF).toString(16).padStart(6, '0')}`;
+    
+    // Generate realistic price based on type and action
+    const priceVariation = (Math.random() - 0.5) * 2; // ±1% variation
+    if (tx.type === 'trade') {
+      // Trades happen near market price
+      tx.price = basePriceRef.current * (1 + priceVariation / 100);
+    } else if (tx.type === 'liquidation') {
+      // Liquidations happen at worse prices
+      tx.price = basePriceRef.current * (1 - Math.abs(priceVariation) / 100);
+    } else {
+      // Orders can be at various prices
+      tx.price = basePriceRef.current * (1 + (priceVariation * 3) / 100);
+    }
     
     return tx;
   }, [getPooledTransaction]);
@@ -143,7 +289,7 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
   
   // CRITICAL FIX: Batch processing with memory management
   const processTransactionsBatch = useCallback(() => {
-    const batchStartTime = performance.now();
+    const batchStartTime = Date.now();
     const queue = queueRef.current;
     const processing = processingRef.current;
     const completed = completedRef.current;
@@ -171,7 +317,7 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
       const toProcess = queue.splice(0, Math.min(availableSlots, 100)); // Limit batch size
       
       toProcess.forEach(tx => {
-        const processStartTime = performance.now();
+        const processStartTime = Date.now();
         tx.status = 'processing';
         processing.push(tx);
         
@@ -183,8 +329,8 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
         // Use immediate processing for critical HFT transactions
         if (processingMode === 'hft' && tx.priority === 'critical') {
           // Immediate processing
-          setImmediate(() => {
-            const execTime = performance.now() - processStartTime;
+          setImmediate(async () => {
+            const execTime = Date.now() - processStartTime;
             tx.status = Math.random() < 0.0001 ? 'failed' : 'completed'; // 0.01% failure rate
             tx.processingTime = execTime;
             
@@ -199,12 +345,17 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
               } else if (execTime < 5) {
                 statsRef.current.fastTrades++;
               }
+              
+              // Send to backend if it's a trade
+              if (tx.status === 'completed' && tx.type === 'trade') {
+                await sendTransactionToBackend(tx);
+              }
             }
           });
         } else {
           // Asynchronous processing
-          setTimeout(() => {
-            const execTime = performance.now() - processStartTime;
+          setTimeout(async () => {
+            const execTime = Date.now() - processStartTime;
             tx.status = Math.random() < 0.001 ? 'failed' : 'completed'; // 0.1% failure rate
             tx.processingTime = execTime;
             
@@ -223,6 +374,11 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
               } else {
                 statsRef.current.slowTrades++;
               }
+              
+              // Send to backend if it's a completed trade
+              if (tx.status === 'completed' && tx.type === 'trade') {
+                await sendTransactionToBackend(tx);
+              }
             }
             
             // CRITICAL: Prevent memory leak
@@ -235,7 +391,7 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
     }
     
     // Update stats only every 100ms to reduce overhead
-    const now = performance.now();
+    const now = Date.now();
     if (now - lastStatsUpdateRef.current > 100) {
       lastStatsUpdateRef.current = now;
       
@@ -267,7 +423,8 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
         ultraFastTrades: statsRef.current.ultraFastTrades,
         fastTrades: statsRef.current.fastTrades,
         mediumTrades: statsRef.current.mediumTrades,
-        slowTrades: statsRef.current.slowTrades
+        slowTrades: statsRef.current.slowTrades,
+        processedOrders: statsRef.current.processedOrders || 0
       };
       
       statsRef.current = newStats;
@@ -281,8 +438,18 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
       ].slice(0, MAX_DISPLAY_TRANSACTIONS);
       
       setTransactions(displayTransactions);
+      
+      // Log buy/sell balance periodically
+      if (Math.random() < 0.05) { // 5% chance to log
+        const totalTrades = buyCountRef.current + sellCountRef.current;
+        if (totalTrades > 0) {
+          const buyPercentage = ((buyCountRef.current / totalTrades) * 100).toFixed(1);
+          const sellPercentage = ((sellCountRef.current / totalTrades) * 100).toFixed(1);
+          console.log(`Transaction Processor Balance - Buys: ${buyPercentage}% Sells: ${sellPercentage}% (Total: ${totalTrades})`);
+        }
+      }
     }
-  }, [processingMode, isOptimizedMode]);
+  }, [processingMode, isOptimizedMode, sendTransactionToBackend]);
   
   // Ultra-high frequency transaction generation
   const generateTransactions = useCallback(() => {
@@ -352,7 +519,8 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
           ultraFastTrades: 0,
           fastTrades: 0,
           mediumTrades: 0,
-          slowTrades: 0
+          slowTrades: 0,
+          processedOrders: 0
         };
         setStats(statsRef.current);
         
@@ -360,6 +528,12 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
         queueRef.current = [];
         processingRef.current = [];
         completedRef.current = [];
+        
+        // Reset counters
+        successCountRef.current = 0;
+        failureCountRef.current = 0;
+        buyCountRef.current = 0;
+        sellCountRef.current = 0;
       }
       return newMode;
     });
@@ -469,17 +643,32 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
         ))}
       </div>
 
-      {/* Optimization Toggle */}
-      <div className="flex items-center justify-between mb-3 p-2 bg-gray-800 rounded">
-        <span className="text-xs text-gray-300">Ultra-Low Latency Mode</span>
-        <button
-          onClick={toggleOptimizedMode}
-          className={`px-3 py-1 text-xs rounded transition ${
-            isOptimizedMode ? 'bg-green-600 text-white' : 'bg-gray-600 text-gray-300'
-          }`}
-        >
-          {isOptimizedMode ? 'ENABLED' : 'DISABLED'}
-        </button>
+      {/* Optimization Toggle and Backend Connection */}
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <div className="flex items-center justify-between p-2 bg-gray-800 rounded">
+          <span className="text-xs text-gray-300">Ultra-Low Latency</span>
+          <button
+            onClick={toggleOptimizedMode}
+            className={`px-3 py-1 text-xs rounded transition ${
+              isOptimizedMode ? 'bg-green-600 text-white' : 'bg-gray-600 text-gray-300'
+            }`}
+          >
+            {isOptimizedMode ? 'ON' : 'OFF'}
+          </button>
+        </div>
+        <div className="flex items-center justify-between p-2 bg-gray-800 rounded">
+          <span className="text-xs text-gray-300">Send to Chart</span>
+          <button
+            onClick={() => setSendToBackend(!sendToBackend)}
+            className={`px-3 py-1 text-xs rounded transition ${
+              sendToBackend ? 'bg-green-600 text-white' : 'bg-gray-600 text-gray-300'
+            }`}
+            disabled={!simulationId}
+            title={simulationId ? 'Toggle sending trades to price chart' : 'No simulation connected'}
+          >
+            {sendToBackend ? 'ON' : 'OFF'}
+          </button>
+        </div>
       </div>
 
       {/* Performance Stats Grid */}
@@ -575,6 +764,11 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
                 }`}></div>
                 <span className="font-mono">{tx.id.slice(-8)}</span>
                 <span className="text-gray-400">{tx.type}</span>
+                {tx.action && tx.type === 'trade' && (
+                  <span className={tx.action === 'buy' ? 'text-green-300' : 'text-red-300'}>
+                    {tx.action.toUpperCase()}
+                  </span>
+                )}
               </div>
               <div className="flex items-center space-x-2">
                 <span className={getPriorityColor(tx.priority)}>{tx.priority.charAt(0).toUpperCase()}</span>
@@ -616,9 +810,34 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
           {processingMode === 'hft' && (
             <div className="text-purple-300">• HFT Mode: Processing up to 100 concurrent transactions</div>
           )}
+          {sendToBackend && simulationId && (
+            <div className="text-blue-300">• Connected to simulation: Trades affecting price chart</div>
+          )}
           <div className="text-gray-400 mt-1">
             • Total capacity: {formatNumber(MAX_QUEUE_SIZE)} queue, {formatNumber(MAX_COMPLETED_SIZE)} history
           </div>
+          {/* Buy/Sell Balance Display */}
+          <div className="text-green-300 mt-1">
+            • Buy/Sell Balance: {buyCountRef.current > 0 || sellCountRef.current > 0 ? (
+              <>Buys: {((buyCountRef.current / (buyCountRef.current + sellCountRef.current)) * 100).toFixed(1)}% 
+              | Sells: {((sellCountRef.current / (buyCountRef.current + sellCountRef.current)) * 100).toFixed(1)}%</>
+            ) : 'No trades yet'}
+          </div>
+        </div>
+      )}
+      
+      {/* Connection Status */}
+      {simulationId && (
+        <div className="mt-2 text-xs text-gray-500 flex justify-between items-center">
+          <span>Connected to: {simulationId.slice(0, 8)}...</span>
+          {sendToBackend && (
+            <div className="flex items-center space-x-2">
+              <span className="text-green-400">✓ Sending trades to chart</span>
+              <span className="text-gray-400">
+                Success: {successCountRef.current} | Failed: {failureCountRef.current}
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>

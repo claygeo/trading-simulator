@@ -1,4 +1,4 @@
-// backend/src/types/traders.ts
+// backend/src/types/traders.ts - FIXED: Added missing properties
 export interface RawTrader {
   position: number;
   wallet: string;
@@ -20,6 +20,9 @@ export interface Trader {
   sellVolume: number;
   tradeCount: number;
   feesUsd: number;
+  // FIXED: Added missing properties
+  avatarUrl?: string;
+  preferredName?: string;
   // Derived metrics
   winRate: number;
   riskProfile: 'conservative' | 'moderate' | 'aggressive';

@@ -1,4 +1,4 @@
-// backend/src/services/traderService.ts
+// backend/src/services/traderService.ts - FIXED: positionSizing type
 import { RawTrader, Trader, TraderProfile } from '../types/traders';
 
 export class TraderService {
@@ -119,15 +119,37 @@ export class TraderService {
       entryThreshold: 0.005 + (aggressionFactor * 0.02),
       exitProfitThreshold: 0.01 + (successFactor * 0.04),
       exitLossThreshold: 0.005 + (aggressionFactor * 0.025),
-      positionSizing: 0.1 + (aggressionFactor * 0.4),
+      // FIXED: positionSizing should be string type, not number
+      positionSizing: trader.riskProfile, // Use the riskProfile directly as it's already the correct type
       holdingPeriod: {
         min: 10 * (1 - aggressionFactor), // minutes
         max: 60 * (2 - aggressionFactor), // minutes
         distribution: trader.riskProfile === 'conservative' ? 'normal' : 'exponential'
       },
       tradingFrequency: 0.2 + (aggressionFactor * 0.6),
-      sentimentSensitivity: 0.3 + (aggressionFactor * 0.5)
+      sentimentSensitivity: 0.3 + (aggressionFactor * 0.5),
+      // FIXED: Add missing strategy property
+      strategy: this.determineStrategy(trader),
+      // FIXED: Add missing stopLoss and takeProfit properties
+      stopLoss: 0.02 + (aggressionFactor * 0.03), // 2-5% stop loss
+      takeProfit: 0.03 + (successFactor * 0.07) // 3-10% take profit
     };
+  }
+  
+  // FIXED: Add missing strategy determination method
+  private determineStrategy(trader: Trader): 'scalper' | 'swing' | 'momentum' | 'contrarian' {
+    const { riskProfile, winRate, portfolioEfficiency } = trader;
+    
+    // Determine strategy based on trader characteristics
+    if (riskProfile === 'aggressive' && winRate > 0.6) {
+      return 'scalper'; // High-frequency, aggressive traders
+    } else if (portfolioEfficiency > 0.1) {
+      return 'momentum'; // Efficient traders who follow trends
+    } else if (winRate < 0.4) {
+      return 'contrarian'; // Traders who bet against the trend
+    } else {
+      return 'swing'; // Default swing trading strategy
+    }
   }
 }
 

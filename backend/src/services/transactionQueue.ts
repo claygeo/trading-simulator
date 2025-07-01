@@ -1,6 +1,17 @@
 // backend/src/services/transactionQueue.ts
 import { Trade } from '../types';
 
+interface TradeProcessedCallback {
+  (trade: Trade, simulationId: string): void;
+}
+
+interface TradeResult {
+  tradeId: string;
+  processed: boolean;
+  timestamp: number;
+  simulationId: string;
+}
+
 // Fallback in-memory queue implementation
 class InMemoryQueue {
   private queue: any[] = [];
@@ -44,7 +55,7 @@ class InMemoryQueue {
       this.stats.active--;
       this.stats.waiting = this.queue.length;
       this.processing = false;
-    }, 100);
+    }, 10); // Faster processing for in-memory queue
   }
 
   async getWaitingCount(): Promise<number> { return this.stats.waiting; }
@@ -78,11 +89,13 @@ class RedisStub {
 export class TransactionQueue {
   private queue: any;
   private redis: any;
-  private batchBuffer: Trade[] = [];
-  private batchTimer: NodeJS.Timeout | null = null;
-  private readonly BATCH_SIZE = 100;
-  private readonly BATCH_TIMEOUT = 100; // ms
+  private batchBuffer: Map<string, Trade[]> = new Map(); // Separate buffers per simulation
+  private batchTimers: Map<string, NodeJS.Timeout> = new Map();
+  private readonly BATCH_SIZE = 50; // Smaller batches for faster processing
+  private readonly BATCH_TIMEOUT = 10; // 10ms for near real-time
   private useRedis: boolean = false;
+  private onTradeProcessed?: TradeProcessedCallback;
+  private processedTradesBuffer: Map<string, TradeResult[]> = new Map();
   
   constructor() {
     // Check if Redis is enabled and available
@@ -146,12 +159,16 @@ export class TransactionQueue {
     console.log('TransactionQueue initialized with in-memory fallback');
   }
   
+  setTradeProcessedCallback(callback: TradeProcessedCallback): void {
+    this.onTradeProcessed = callback;
+  }
+  
   private setupWorkers() {
     // Process trades in parallel with multiple workers
     const concurrency = parseInt(process.env.QUEUE_CONCURRENCY || '10');
     
     this.queue.process('batch-trades', concurrency, async (job: any) => {
-      const { trades } = job.data;
+      const { trades, simulationId } = job.data;
       
       try {
         // Process trades in parallel chunks
@@ -163,13 +180,21 @@ export class TransactionQueue {
         }
         
         const results = await Promise.all(
-          chunks.map(chunk => this.processTradeChunk(chunk))
+          chunks.map(chunk => this.processTradeChunk(chunk, simulationId))
         );
+        
+        // Notify about all processed trades
+        const flatResults = results.flat();
+        flatResults.forEach((result, index) => {
+          if (result.processed && this.onTradeProcessed) {
+            this.onTradeProcessed(trades[index], simulationId);
+          }
+        });
         
         return {
           processed: trades.length,
           timestamp: Date.now(),
-          results: results.flat()
+          results: flatResults
         };
       } catch (error) {
         console.error('Error processing batch trades:', error);
@@ -179,13 +204,18 @@ export class TransactionQueue {
     
     // Process high-priority trades immediately
     this.queue.process('priority-trade', 20, async (job: any) => {
-      const { trade } = job.data;
+      const { trade, simulationId } = job.data;
       
       try {
-        const result = await this.processSingleTrade(trade);
+        const result = await this.processSingleTrade(trade, simulationId);
         
         // Update real-time metrics
         await this.updateMetrics(trade);
+        
+        // Notify immediately
+        if (result.processed && this.onTradeProcessed) {
+          this.onTradeProcessed(trade, simulationId);
+        }
         
         return result;
       } catch (error) {
@@ -214,28 +244,36 @@ export class TransactionQueue {
     });
   }
   
-  async addTrade(trade: Trade): Promise<void> {
-    // Add to batch buffer
-    this.batchBuffer.push(trade);
+  async addTrade(trade: Trade, simulationId: string): Promise<void> {
+    // Create a key for the simulation's batch buffer
+    const bufferKey = simulationId;
+    
+    if (!this.batchBuffer.has(bufferKey)) {
+      this.batchBuffer.set(bufferKey, []);
+    }
+    
+    const buffer = this.batchBuffer.get(bufferKey)!;
+    buffer.push(trade);
     
     // Check if we should flush the batch
-    if (this.batchBuffer.length >= this.BATCH_SIZE) {
-      await this.flushBatch();
-    } else if (!this.batchTimer) {
+    if (buffer.length >= this.BATCH_SIZE) {
+      await this.flushBatch(simulationId);
+    } else if (!this.batchTimers.has(bufferKey)) {
       // Set a timer to flush after timeout
-      this.batchTimer = setTimeout(() => {
-        this.flushBatch();
+      const timer = setTimeout(() => {
+        this.flushBatch(simulationId);
       }, this.BATCH_TIMEOUT);
+      this.batchTimers.set(bufferKey, timer);
     }
   }
   
-  async addTrades(trades: Trade[]): Promise<void> {
+  async addTrades(trades: Trade[], simulationId: string): Promise<void> {
     // For bulk trades, create batches immediately
     const batches = this.createBatches(trades, this.BATCH_SIZE);
     
     const jobs = batches.map(batch => ({
       name: 'batch-trades',
-      data: { trades: batch },
+      data: { trades: batch, simulationId },
       opts: {
         priority: 0,
         delay: 0
@@ -245,26 +283,28 @@ export class TransactionQueue {
     await this.queue.addBulk(jobs);
   }
   
-  async addPriorityTrade(trade: Trade): Promise<void> {
+  async addPriorityTrade(trade: Trade, simulationId: string): Promise<void> {
     // High-priority trades bypass batching
-    await this.queue.add('priority-trade', { trade }, {
+    await this.queue.add('priority-trade', { trade, simulationId }, {
       priority: 10,
       delay: 0
     });
   }
   
-  private async flushBatch(): Promise<void> {
-    if (this.batchTimer) {
-      clearTimeout(this.batchTimer);
-      this.batchTimer = null;
+  private async flushBatch(simulationId: string): Promise<void> {
+    const timer = this.batchTimers.get(simulationId);
+    if (timer) {
+      clearTimeout(timer);
+      this.batchTimers.delete(simulationId);
     }
     
-    if (this.batchBuffer.length === 0) return;
+    const buffer = this.batchBuffer.get(simulationId);
+    if (!buffer || buffer.length === 0) return;
     
-    const batch = [...this.batchBuffer];
-    this.batchBuffer = [];
+    const batch = [...buffer];
+    buffer.length = 0; // Clear the buffer
     
-    await this.queue.add('batch-trades', { trades: batch }, {
+    await this.queue.add('batch-trades', { trades: batch, simulationId }, {
       priority: 5,
       delay: 0
     });
@@ -280,32 +320,67 @@ export class TransactionQueue {
     return batches;
   }
   
-  private async processTradeChunk(trades: Trade[]): Promise<any[]> {
-    // Simulate trade processing logic
+  private async processTradeChunk(trades: Trade[], simulationId: string): Promise<TradeResult[]> {
+    // Simulate trade processing logic with validation
     const results = trades.map(trade => {
-      // Apply trade to market state
-      // Update order book
-      // Calculate impact
-      // etc.
+      // Validate trade
+      if (!trade.id || !trade.trader || !trade.price || !trade.quantity) {
+        console.warn('Invalid trade data:', trade);
+        return {
+          tradeId: trade.id || 'unknown',
+          processed: false,
+          timestamp: Date.now(),
+          simulationId
+        };
+      }
       
+      // Apply trade to market state (in a real system, this would update the order book)
+      // For now, we just mark it as processed
       return {
         tradeId: trade.id,
         processed: true,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        simulationId
       };
     });
+    
+    // Store processed trades for retrieval
+    if (!this.processedTradesBuffer.has(simulationId)) {
+      this.processedTradesBuffer.set(simulationId, []);
+    }
+    
+    const processedBuffer = this.processedTradesBuffer.get(simulationId)!;
+    processedBuffer.push(...results);
+    
+    // Keep only last 1000 processed trades per simulation
+    if (processedBuffer.length > 1000) {
+      this.processedTradesBuffer.set(
+        simulationId,
+        processedBuffer.slice(-1000)
+      );
+    }
     
     return results;
   }
   
-  private async processSingleTrade(trade: Trade): Promise<any> {
+  private async processSingleTrade(trade: Trade, simulationId: string): Promise<TradeResult> {
     // Process single high-priority trade
-    return {
+    const result = {
       tradeId: trade.id,
       processed: true,
       priority: true,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      simulationId
     };
+    
+    // Store in processed buffer
+    if (!this.processedTradesBuffer.has(simulationId)) {
+      this.processedTradesBuffer.set(simulationId, []);
+    }
+    
+    this.processedTradesBuffer.get(simulationId)!.push(result);
+    
+    return result;
   }
   
   private async updateMetrics(trade: Trade): Promise<void> {
@@ -336,6 +411,19 @@ export class TransactionQueue {
     }
   }
   
+  // Get processed trades for a simulation
+  getProcessedTrades(simulationId: string, limit: number = 100): TradeResult[] {
+    const buffer = this.processedTradesBuffer.get(simulationId);
+    if (!buffer) return [];
+    
+    return buffer.slice(-limit);
+  }
+  
+  // Clear processed trades buffer for a simulation
+  clearProcessedTrades(simulationId: string): void {
+    this.processedTradesBuffer.delete(simulationId);
+  }
+  
   // Monitoring methods
   async getQueueStats(): Promise<any> {
     const [waiting, active, completed, failed] = await Promise.all([
@@ -345,12 +433,21 @@ export class TransactionQueue {
       this.queue.getFailedCount()
     ]);
     
+    const bufferStats: Record<string, number> = {};
+    this.batchBuffer.forEach((buffer, simId) => {
+      bufferStats[simId] = buffer.length;
+    });
+    
     return {
       waiting,
       active,
       completed,
       failed,
-      health: active < 1000 ? 'healthy' : 'degraded'
+      health: active < 1000 ? 'healthy' : 'degraded',
+      bufferedTrades: bufferStats,
+      processedBufferSizes: Array.from(this.processedTradesBuffer.entries()).map(
+        ([simId, buffer]) => ({ simulationId: simId, size: buffer.length })
+      )
     };
   }
   
@@ -358,11 +455,20 @@ export class TransactionQueue {
     await this.queue.empty();
     await this.queue.clean(0, 'completed');
     await this.queue.clean(0, 'failed');
+    this.batchBuffer.clear();
+    this.processedTradesBuffer.clear();
   }
   
   async shutdown(): Promise<void> {
-    // Flush any pending batches
-    await this.flushBatch();
+    // Flush all pending batches
+    const flushPromises = Array.from(this.batchBuffer.keys()).map(simId => 
+      this.flushBatch(simId)
+    );
+    await Promise.all(flushPromises);
+    
+    // Clear all timers
+    this.batchTimers.forEach(timer => clearTimeout(timer));
+    this.batchTimers.clear();
     
     // Close queue
     await this.queue.close();

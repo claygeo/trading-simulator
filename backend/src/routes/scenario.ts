@@ -1,6 +1,6 @@
 // backend/src/routes/scenario.ts
 import express, { Request, Response } from 'express';
-import { simulationManager } from '../services/simulationManager';
+import simulationManager from '../services/simulation';
 
 const router = express.Router();
 

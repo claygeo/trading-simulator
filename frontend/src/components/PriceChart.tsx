@@ -1,13 +1,15 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react';
-
-interface Candle {
-  time: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
+// frontend/src/components/PriceChart.tsx - PERFORMANCE OPTIMIZED
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { 
+  createChart, 
+  IChartApi, 
+  ISeriesApi, 
+  UTCTimestamp, 
+  ColorType, 
+  CrosshairMode,
+  CandlestickData,
+  HistogramData
+} from 'lightweight-charts';
 
 interface ChartPricePoint {
   time: number;
@@ -28,838 +30,598 @@ interface Trade {
   timestamp: number;
   trader?: any;
   tokenAmount?: number;
-}
-
-type MarketCondition = 'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash';
-
-interface ScenarioPhase {
-  name: string;
-  marketCondition: MarketCondition;
-}
-
-interface ScenarioData {
-  phase: ScenarioPhase;
-  progress?: number;
-}
-
-type Timeframe = '1m' | '5m' | '15m' | '30m' | '1h' | '4h' | '1d';
-
-interface TimeframeConfig {
-  label: string;
-  minutes: number;
-  candlesPerView: number;
-  gridLines: number;
-  dateFormat: (date: Date) => string;
+  action?: 'buy' | 'sell';
 }
 
 interface PriceChartProps {
-  interval?: Timeframe;
   priceHistory?: ChartPricePoint[];
   currentPrice?: number;
   trades?: Trade[];
-  scenarioData?: ScenarioData;
-  candles?: Candle[];
+  scenarioData?: any;
   symbol?: string;
   dynamicView?: boolean;
-  enableAccurateTooltip?: boolean;
 }
 
-const PriceChart: React.FC<PriceChartProps> = ({ 
+const PriceChart: React.FC<PriceChartProps> = ({
   priceHistory = [],
   currentPrice = 0,
   trades = [],
   scenarioData,
-  symbol = 'BTC/USDT',
-  dynamicView = true,
-  enableAccurateTooltip = true
+  symbol = 'TOKEN/USDT',
+  dynamicView = true
 }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-  const animationRef = useRef<number | null>(null);
+  const chartContainerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   
-  // Interactive chart state
-  const [chartOffset, setChartOffset] = useState(0);
-  const [zoomLevel, setZoomLevel] = useState(1);
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [hoveredCandle, setHoveredCandle] = useState<number | null>(null);
-  const [crosshair, setCrosshair] = useState<{ x: number; y: number } | null>(null);
-  
-  // Dynamic timeframe state
-  const [selectedTimeframe, setSelectedTimeframe] = useState<Timeframe>('15m');
+  const [isChartReady, setIsChartReady] = useState(false);
+  const [chartStatus, setChartStatus] = useState<'initializing' | 'empty' | 'building' | 'ready' | 'error'>('initializing');
+  const [candleCount, setCandleCount] = useState(0);
+  const [isLiveBuilding, setIsLiveBuilding] = useState(false);
+  const [buildingStartTime, setBuildingStartTime] = useState<number | null>(null);
 
-  // Timeframe configurations
-  const timeframeConfigs: Record<Timeframe, TimeframeConfig> = {
-    '1m': {
-      label: '1 Minute',
-      minutes: 1,
-      candlesPerView: 60,
-      gridLines: 10,
-      dateFormat: (date: Date) => {
-        const h = date.getHours().toString().padStart(2, '0');
-        const m = date.getMinutes().toString().padStart(2, '0');
-        const s = date.getSeconds().toString().padStart(2, '0');
-        return `${h}:${m}:${s}`;
-      }
-    },
-    '5m': {
-      label: '5 Minutes',
-      minutes: 5,
-      candlesPerView: 48,
-      gridLines: 8,
-      dateFormat: (date: Date) => {
-        const h = date.getHours().toString().padStart(2, '0');
-        const m = date.getMinutes().toString().padStart(2, '0');
-        return `${h}:${m}`;
-      }
-    },
-    '15m': {
-      label: '15 Minutes',
-      minutes: 15,
-      candlesPerView: 48,
-      gridLines: 8,
-      dateFormat: (date: Date) => {
-        const h = date.getHours().toString().padStart(2, '0');
-        const m = date.getMinutes().toString().padStart(2, '0');
-        return `${h}:${m}`;
-      }
-    },
-    '30m': {
-      label: '30 Minutes',
-      minutes: 30,
-      candlesPerView: 48,
-      gridLines: 8,
-      dateFormat: (date: Date) => {
-        const h = date.getHours().toString().padStart(2, '0');
-        const m = date.getMinutes().toString().padStart(2, '0');
-        return `${h}:${m}`;
-      }
-    },
-    '1h': {
-      label: '1 Hour',
-      minutes: 60,
-      candlesPerView: 24,
-      gridLines: 6,
-      dateFormat: (date: Date) => {
-        const h = date.getHours().toString().padStart(2, '0');
-        return `${h}:00`;
-      }
-    },
-    '4h': {
-      label: '4 Hours',
-      minutes: 240,
-      candlesPerView: 24,
-      gridLines: 6,
-      dateFormat: (date: Date) => {
-        const month = (date.getMonth() + 1).toString().padStart(2, '0');
-        const day = date.getDate().toString().padStart(2, '0');
-        const h = date.getHours().toString().padStart(2, '0');
-        return `${month}/${day} ${h}:00`;
-      }
-    },
-    '1d': {
-      label: '1 Day',
-      minutes: 1440,
-      candlesPerView: 30,
-      gridLines: 5,
-      dateFormat: (date: Date) => {
-        const month = (date.getMonth() + 1).toString().padStart(2, '0');
-        const day = date.getDate().toString().padStart(2, '0');
-        return `${month}/${day}`;
-      }
-    }
-  };
+  // Performance optimization refs
+  const lastUpdateRef = useRef<number>(0);
+  const lastCandleCountRef = useRef<number>(0);
+  const updateThrottleRef = useRef<NodeJS.Timeout | null>(null);
+  const isUpdatingRef = useRef<boolean>(false);
 
-  // Dynamic timeframe selection based on price and volatility
-  const determineOptimalTimeframe = useMemo(() => {
-    if (!dynamicView) return selectedTimeframe;
-    
-    if (!priceHistory || priceHistory.length < 2) return '15m';
-    
-    const prices = priceHistory.map(p => p.close);
-    const avgPrice = prices.reduce((sum, p) => sum + p, 0) / prices.length;
-    const minPrice = Math.min(...prices);
-    const maxPrice = Math.max(...prices);
-    const priceRange = maxPrice - minPrice;
-    const volatility = (priceRange / avgPrice) * 100;
-    
-    let significantMoves = 0;
-    for (let i = 1; i < prices.length; i++) {
-      const change = Math.abs((prices[i] - prices[i-1]) / prices[i-1]) * 100;
-      if (change > 0.5) significantMoves++;
-    }
-    const moveFrequency = significantMoves / prices.length;
-    
-    if (avgPrice < 1) {
-      if (volatility > 20) return '1m';
-      if (volatility > 10) return '5m';
-      return '15m';
-    } else if (avgPrice < 10) {
-      if (volatility > 15) return '5m';
-      if (volatility > 8) return '15m';
-      return '30m';
-    } else if (avgPrice < 100) {
-      if (volatility > 10) return '15m';
-      if (volatility > 5) return '30m';
-      return '1h';
-    } else if (avgPrice < 1000) {
-      if (volatility > 8) return '30m';
-      if (volatility > 4) return '1h';
-      return '4h';
-    } else {
-      if (volatility > 5) return '1h';
-      if (volatility > 2) return '4h';
-      return '1d';
-    }
-  }, [priceHistory, dynamicView, selectedTimeframe]);
+  // Track chart state for clean start verification
+  const chartState = useRef({
+    lastCandleCount: 0,
+    hasEverHadData: false,
+    buildStarted: false,
+    initialRenderComplete: false
+  });
 
-  // Calculate optimal price scale
-  const calculatePriceScale = (minPrice: number, maxPrice: number) => {
-    const range = maxPrice - minPrice;
-    const avgPrice = (minPrice + maxPrice) / 2;
-    
-    let decimals = 2;
-    if (avgPrice < 0.01) decimals = 6;
-    else if (avgPrice < 0.1) decimals = 5;
-    else if (avgPrice < 1) decimals = 4;
-    else if (avgPrice < 10) decimals = 3;
-    else if (avgPrice < 100) decimals = 2;
-    else if (avgPrice < 1000) decimals = 1;
-    else decimals = 0;
-    
-    let stepSize = 1;
-    const targetSteps = 5;
-    const rawStep = range / targetSteps;
-    
-    const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
-    const normalized = rawStep / magnitude;
-    
-    if (normalized <= 1) stepSize = magnitude;
-    else if (normalized <= 2) stepSize = 2 * magnitude;
-    else if (normalized <= 5) stepSize = 5 * magnitude;
-    else stepSize = 10 * magnitude;
-    
-    return { decimals, stepSize };
-  };
-
-  // Process candles based on selected timeframe
-  const chartCandles = useMemo(() => {
+  // OPTIMIZED: Throttled chart data converter
+  const convertPriceHistory = useMemo((): { candleData: CandlestickData[]; volumeData: HistogramData[] } => {
     if (!priceHistory || priceHistory.length === 0) {
-      return [];
+      return { candleData: [], volumeData: [] };
     }
-
-    const timeframe = determineOptimalTimeframe;
-    const config = timeframeConfigs[timeframe];
     
-    const candleMap = new Map<number, Candle>();
-    const intervalMs = config.minutes * 60 * 1000;
+    const candleData: CandlestickData[] = [];
+    const volumeData: HistogramData[] = [];
     
-    priceHistory.forEach(point => {
-      const timestamp = point.timestamp || point.time;
-      const candleTime = Math.floor(timestamp / intervalMs) * intervalMs;
+    priceHistory.forEach((candle) => {
+      const timestamp = candle.timestamp || candle.time;
+      const timeInSeconds = Math.floor(timestamp / 1000);
       
-      if (!candleMap.has(candleTime)) {
-        candleMap.set(candleTime, {
-          time: candleTime,
-          open: point.open,
-          high: point.high,
-          low: point.low,
-          close: point.close,
-          volume: point.volume || 0
-        });
-      } else {
-        const candle = candleMap.get(candleTime)!;
-        candle.high = Math.max(candle.high, point.high);
-        candle.low = Math.min(candle.low, point.low);
-        candle.close = point.close;
-        candle.volume += point.volume || 0;
-      }
+      candleData.push({
+        time: timeInSeconds as UTCTimestamp,
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close
+      });
+      
+      volumeData.push({
+        time: timeInSeconds as UTCTimestamp,
+        value: candle.volume || 0,
+        color: candle.close >= candle.open ? '#22C55E44' : '#EF444444'
+      });
     });
     
-    return Array.from(candleMap.values()).sort((a, b) => a.time - b.time);
-  }, [priceHistory, determineOptimalTimeframe]);
+    return { candleData, volumeData };
+  }, [priceHistory]);
 
-  // Update dimensions
+  // Create chart instance
   useEffect(() => {
-    const updateDimensions = () => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        setDimensions({
-          width: Math.floor(rect.width),
-          height: Math.floor(rect.height)
-        });
-      }
-    };
+    if (!chartContainerRef.current) return;
 
-    updateDimensions();
-    
-    const resizeObserver = new ResizeObserver(updateDimensions);
-    if (containerRef.current) {
-      resizeObserver.observe(containerRef.current);
+    console.log('🚀 Creating optimized TradingView chart...');
+    setChartStatus('initializing');
+
+    try {
+      const chart = createChart(chartContainerRef.current, {
+        width: chartContainerRef.current.clientWidth,
+        height: chartContainerRef.current.clientHeight,
+        layout: {
+          background: { type: ColorType.Solid, color: '#0B1426' },
+          textColor: '#9CA3AF',
+        },
+        grid: {
+          vertLines: { color: '#1C2951' },
+          horzLines: { color: '#1C2951' },
+        },
+        crosshair: {
+          mode: CrosshairMode.Normal,
+        },
+        rightPriceScale: {
+          borderColor: '#1C2951',
+          scaleMargins: { top: 0.1, bottom: 0.2 },
+        },
+        timeScale: {
+          borderColor: '#1C2951',
+          timeVisible: true,
+          secondsVisible: false,
+        },
+        handleScroll: {
+          mouseWheel: true,
+          pressedMouseMove: true,
+        },
+        handleScale: {
+          axisPressedMouseMove: true,
+          mouseWheel: true,
+          pinch: true,
+        },
+      });
+
+      // Create candlestick series
+      const candlestickSeries = chart.addCandlestickSeries({
+        upColor: '#22C55E',
+        downColor: '#EF4444',
+        borderUpColor: '#22C55E',
+        borderDownColor: '#EF4444',
+        wickUpColor: '#22C55E',
+        wickDownColor: '#EF4444',
+        priceFormat: {
+          type: 'price',
+          precision: 6,
+          minMove: 0.000001,
+        },
+      });
+
+      // Create volume series
+      const volumeSeries = chart.addHistogramSeries({
+        color: '#26a69a',
+        priceFormat: { 
+          type: 'volume',
+          precision: 0,
+        },
+        priceScaleId: 'volume',
+      });
+
+      chart.priceScale('volume').applyOptions({
+        scaleMargins: { top: 0.85, bottom: 0 },
+      });
+
+      // Store references
+      chartRef.current = chart;
+      candlestickSeriesRef.current = candlestickSeries;
+      volumeSeriesRef.current = volumeSeries;
+      
+      // Start with empty chart
+      candlestickSeries.setData([]);
+      volumeSeries.setData([]);
+      
+      // Reset state
+      chartState.current = {
+        lastCandleCount: 0,
+        hasEverHadData: false,
+        buildStarted: false,
+        initialRenderComplete: true
+      };
+      
+      lastCandleCountRef.current = 0;
+      lastUpdateRef.current = 0;
+      
+      setIsChartReady(true);
+      setChartStatus('empty');
+      setCandleCount(0);
+      setIsLiveBuilding(false);
+      setBuildingStartTime(null);
+      
+      console.log('✅ Optimized chart created and ready');
+
+    } catch (error) {
+      console.error('❌ Failed to create chart:', error);
+      setChartStatus('error');
     }
 
+    // Cleanup function
     return () => {
-      resizeObserver.disconnect();
-    };
-  }, []);
-
-  // Mouse event handlers with accurate candle detection
-  const handleMouseDown = (e: React.MouseEvent) => {
-    setIsDragging(true);
-    setDragStart({ x: e.clientX - chartOffset, y: e.clientY });
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    if (isDragging) {
-      const newOffset = e.clientX - dragStart.x;
-      setChartOffset(newOffset);
-    } else {
-      setCrosshair({ x, y });
+      console.log('🧹 Cleaning up chart...');
       
-      const padding = { top: 60, right: 80, bottom: 40, left: 10 };
-      const chartWidth = dimensions.width - padding.left - padding.right;
-      
-      // Calculate visible candles based on zoom and offset
-      const totalWidth = chartWidth * zoomLevel;
-      const candleWidth = totalWidth / chartCandles.length;
-      
-      // Calculate which candle is under the mouse
-      const mouseChartX = x - padding.left - chartOffset;
-      const candleIndex = Math.floor(mouseChartX / candleWidth);
-      
-      // Validate the candle index and ensure mouse is within chart area
-      if (enableAccurateTooltip && 
-          candleIndex >= 0 && 
-          candleIndex < chartCandles.length && 
-          x >= padding.left && 
-          x <= dimensions.width - padding.right &&
-          y >= padding.top &&
-          y <= dimensions.height - padding.bottom) {
-        setHoveredCandle(candleIndex);
-      } else {
-        setHoveredCandle(null);
+      if (updateThrottleRef.current) {
+        clearTimeout(updateThrottleRef.current);
+        updateThrottleRef.current = null;
       }
-    }
-  };
+      
+      if (chartRef.current) {
+        try {
+          chartRef.current.remove();
+        } catch (error) {
+          console.warn('Chart cleanup warning:', error);
+        }
+      }
+      
+      chartRef.current = null;
+      candlestickSeriesRef.current = null;
+      volumeSeriesRef.current = null;
+      setIsChartReady(false);
+      setChartStatus('initializing');
+      
+      // Reset all state
+      chartState.current = {
+        lastCandleCount: 0,
+        hasEverHadData: false,
+        buildStarted: false,
+        initialRenderComplete: false
+      };
+      
+      setCandleCount(0);
+      setIsLiveBuilding(false);
+      setBuildingStartTime(null);
+      isUpdatingRef.current = false;
+    };
+  }, []); // Only create once
 
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
-
-  const handleMouseLeave = () => {
-    setIsDragging(false);
-    setCrosshair(null);
-    setHoveredCandle(null);
-  };
-
-  const handleWheel = (e: React.WheelEvent) => {
-    e.preventDefault();
-    
-    const zoomSpeed = 0.001;
-    const delta = e.deltaY * -zoomSpeed;
-    const newZoom = Math.max(0.5, Math.min(3, zoomLevel + delta));
-    
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (rect) {
-      const mouseX = e.clientX - rect.left;
-      const centerX = dimensions.width / 2;
-      const offsetAdjustment = (mouseX - centerX) * (newZoom - zoomLevel) * 0.5;
-      setChartOffset(chartOffset - offsetAdjustment);
-    }
-    
-    setZoomLevel(newZoom);
-  };
-
-  // Draw chart
-  useEffect(() => {
-    if (!canvasRef.current || chartCandles.length === 0 || dimensions.width === 0 || dimensions.height === 0) {
+  // OPTIMIZED: Throttled chart update function
+  const updateChart = useCallback((candleData: CandlestickData[], volumeData: HistogramData[]) => {
+    if (!isChartReady || !candlestickSeriesRef.current || !volumeSeriesRef.current || isUpdatingRef.current) {
       return;
     }
 
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    if (animationRef.current) {
-      cancelAnimationFrame(animationRef.current);
+    const now = Date.now();
+    const timeSinceLastUpdate = now - lastUpdateRef.current;
+    
+    // Throttle updates to max 30fps for performance
+    if (timeSinceLastUpdate < 33) {
+      if (updateThrottleRef.current) {
+        clearTimeout(updateThrottleRef.current);
+      }
+      
+      updateThrottleRef.current = setTimeout(() => {
+        updateChart(candleData, volumeData);
+      }, 33 - timeSinceLastUpdate);
+      return;
     }
 
-    const draw = () => {
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = dimensions.width * dpr;
-      canvas.height = dimensions.height * dpr;
-      canvas.style.width = `${dimensions.width}px`;
-      canvas.style.height = `${dimensions.height}px`;
-      ctx.scale(dpr, dpr);
+    isUpdatingRef.current = true;
+    lastUpdateRef.current = now;
 
-      ctx.fillStyle = '#0B1426';
-      ctx.fillRect(0, 0, dimensions.width, dimensions.height);
-
-      const padding = {
-        top: 60,
-        right: 80,
-        bottom: 40,
-        left: 10
-      };
-
-      const chartWidth = dimensions.width - padding.left - padding.right;
-      const chartHeight = dimensions.height - padding.top - padding.bottom;
-
-      if (chartWidth <= 0 || chartHeight <= 0) return;
-
-      const totalWidth = chartWidth * zoomLevel;
-      const candleWidth = totalWidth / chartCandles.length;
-      const visibleStartIndex = Math.max(0, Math.floor(-chartOffset / candleWidth));
-      const visibleEndIndex = Math.min(chartCandles.length, Math.ceil((chartWidth - chartOffset) / candleWidth));
-      const visibleCandles = chartCandles.slice(visibleStartIndex, visibleEndIndex);
-
-      let minPrice = Infinity;
-      let maxPrice = -Infinity;
-
-      visibleCandles.forEach(candle => {
-        minPrice = Math.min(minPrice, candle.low);
-        maxPrice = Math.max(maxPrice, candle.high);
-      });
-
-      // Include current price in the range
-      if (currentPrice) {
-        minPrice = Math.min(minPrice, currentPrice);
-        maxPrice = Math.max(maxPrice, currentPrice);
-      }
-
-      if (!isFinite(minPrice) || !isFinite(maxPrice)) {
-        minPrice = currentPrice * 0.95 || 100;
-        maxPrice = currentPrice * 1.05 || 150;
-      }
-
-      const pricePadding = (maxPrice - minPrice) * 0.1;
-      minPrice -= pricePadding;
-      maxPrice += pricePadding;
-
-      const { decimals, stepSize } = calculatePriceScale(minPrice, maxPrice);
-
-      const priceToY = (price: number) => {
-        const ratio = (price - minPrice) / (maxPrice - minPrice);
-        return padding.top + chartHeight * (1 - ratio);
-      };
-
-      const indexToX = (index: number) => {
-        return padding.left + (index * candleWidth) + chartOffset;
-      };
-
-      ctx.save();
-      ctx.beginPath();
-      ctx.rect(padding.left, padding.top, chartWidth, chartHeight);
-      ctx.clip();
-
-      // Draw grid
-      ctx.strokeStyle = '#1C2951';
-      ctx.lineWidth = 0.5;
-      ctx.setLineDash([]);
-
-      // Horizontal grid lines
-      const gridStart = Math.ceil(minPrice / stepSize) * stepSize;
-      for (let price = gridStart; price <= maxPrice; price += stepSize) {
-        const y = priceToY(price);
-        ctx.beginPath();
-        ctx.moveTo(padding.left, y);
-        ctx.lineTo(dimensions.width - padding.right, y);
-        ctx.stroke();
-      }
-
-      // Vertical grid lines
-      const timeframe = determineOptimalTimeframe;
-      const config = timeframeConfigs[timeframe];
-      const timeSteps = Math.min(config.gridLines, visibleCandles.length - 1);
-      const stepSizeTime = Math.max(1, Math.floor(visibleCandles.length / timeSteps));
+    try {
+      const incomingCandleCount = candleData.length;
       
-      for (let i = 0; i <= timeSteps; i++) {
-        const candleIndex = Math.min(i * stepSizeTime, visibleCandles.length - 1);
-        const globalIndex = visibleStartIndex + candleIndex;
-        const x = indexToX(globalIndex);
+      console.log(`📊 Chart update: ${incomingCandleCount} candles`);
 
-        if (x >= padding.left && x <= dimensions.width - padding.right) {
-          ctx.beginPath();
-          ctx.moveTo(x, padding.top);
-          ctx.lineTo(x, dimensions.height - padding.bottom);
-          ctx.stroke();
+      // Handle empty state
+      if (incomingCandleCount === 0) {
+        console.log('🎯 Empty state: clearing chart');
+        candlestickSeriesRef.current.setData([]);
+        volumeSeriesRef.current.setData([]);
+        
+        setChartStatus('empty');
+        setCandleCount(0);
+        setIsLiveBuilding(false);
+        setBuildingStartTime(null);
+        
+        chartState.current.lastCandleCount = 0;
+        chartState.current.buildStarted = false;
+        lastCandleCountRef.current = 0;
+        
+        isUpdatingRef.current = false;
+        return;
+      }
+
+      // Handle first data
+      if (incomingCandleCount > 0 && lastCandleCountRef.current === 0) {
+        console.log('🚀 First candles received - starting live build');
+        
+        if (!chartState.current.hasEverHadData) {
+          chartState.current.hasEverHadData = true;
+          chartState.current.buildStarted = true;
+          setIsLiveBuilding(true);
+          setBuildingStartTime(Date.now());
+          setChartStatus('building');
         }
       }
 
-      // Draw candles
-      const effectiveCandleWidth = Math.max(3, Math.min(candleWidth * 0.8, 15));
-
-      chartCandles.forEach((candle, index) => {
-        const x = indexToX(index);
+      // Handle reset detection
+      if (incomingCandleCount < lastCandleCountRef.current) {
+        console.log('🔄 Reset detected - clearing chart');
+        candlestickSeriesRef.current.setData([]);
+        volumeSeriesRef.current.setData([]);
         
-        if (x < padding.left - effectiveCandleWidth || x > dimensions.width - padding.right + effectiveCandleWidth) {
-          return;
-        }
-
-        const openY = priceToY(candle.open);
-        const closeY = priceToY(candle.close);
-        const highY = priceToY(candle.high);
-        const lowY = priceToY(candle.low);
-
-        const isGreen = candle.close >= candle.open;
-        const color = isGreen ? '#22C55E' : '#EF4444';
-
-        // Highlight hovered candle
-        if (index === hoveredCandle) {
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
-          ctx.fillRect(x - effectiveCandleWidth / 2 - 5, padding.top, effectiveCandleWidth + 10, chartHeight);
-        }
-
-        // Draw wick
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(x, highY);
-        ctx.lineTo(x, lowY);
-        ctx.stroke();
-
-        // Draw body
-        const bodyHeight = Math.abs(closeY - openY);
-        const bodyY = Math.min(openY, closeY);
-
-        if (bodyHeight < 1) {
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(x - effectiveCandleWidth / 2, bodyY);
-          ctx.lineTo(x + effectiveCandleWidth / 2, bodyY);
-          ctx.stroke();
-        } else {
-          ctx.fillStyle = color;
-          ctx.fillRect(x - effectiveCandleWidth / 2, bodyY, effectiveCandleWidth, bodyHeight);
-        }
-      });
-
-      // Draw current price line - thin dotted line with color based on candle direction
-      if (currentPrice && currentPrice >= minPrice && currentPrice <= maxPrice) {
-        const currentPriceY = priceToY(currentPrice);
+        setChartStatus('empty');
+        setCandleCount(0);
+        setIsLiveBuilding(false);
+        setBuildingStartTime(null);
         
-        // Save context state
-        ctx.save();
+        chartState.current.lastCandleCount = 0;
+        chartState.current.buildStarted = false;
+        chartState.current.hasEverHadData = false;
+        lastCandleCountRef.current = 0;
         
-        // Determine line color based on current candle
-        let lineColor = '#FFD700'; // Default yellow/gold for neutral
-        
-        if (chartCandles.length > 0) {
-          const lastCandle = chartCandles[chartCandles.length - 1];
-          if (lastCandle.close > lastCandle.open) {
-            lineColor = '#22C55E'; // Green for bullish candle
-          } else if (lastCandle.close < lastCandle.open) {
-            lineColor = '#EF4444'; // Red for bearish candle
+        isUpdatingRef.current = false;
+        return;
+      }
+
+      // Validate data ordering (quick check)
+      let isOrdered = true;
+      if (candleData.length > 1) {
+        for (let i = 1; i < Math.min(candleData.length, 10); i++) {
+          if (candleData[i].time <= candleData[i - 1].time) {
+            isOrdered = false;
+            console.error(`❌ Data ordering issue at index ${i}`);
+            break;
           }
-          // If close === open, it remains yellow
-        }
-        
-        // Set up the thin dotted line style
-        ctx.strokeStyle = lineColor;
-        ctx.lineWidth = 1; // Thin line
-        ctx.setLineDash([3, 3]); // Small dots: 3px dash, 3px gap
-        
-        // Draw the dotted line across the chart
-        ctx.beginPath();
-        ctx.moveTo(padding.left, currentPriceY);
-        ctx.lineTo(dimensions.width - padding.right, currentPriceY);
-        ctx.stroke();
-        
-        // Draw tiny price label on the RIGHT where line ends
-        ctx.setLineDash([]); // Reset dash pattern
-        
-        // Small background for right price label
-        ctx.fillStyle = lineColor;
-        ctx.fillRect(dimensions.width - padding.right + 5, currentPriceY - 7, 60, 14);
-        
-        // Tiny price text on the right
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = '9px -apple-system, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText(currentPrice.toFixed(decimals), dimensions.width - padding.right + 8, currentPriceY + 2);
-        
-        // Restore context state
-        ctx.restore();
-      }
-
-      ctx.restore();
-
-      // Format price function
-      const formatPrice = (price: number) => {
-        if (decimals === 0) return price.toFixed(0);
-        return price.toFixed(decimals);
-      };
-
-      // Draw price labels
-      for (let price = gridStart; price <= maxPrice; price += stepSize) {
-        const y = priceToY(price);
-        ctx.fillStyle = '#6B7280';
-        ctx.font = '11px -apple-system, sans-serif';
-        ctx.textAlign = 'right';
-        ctx.fillText(formatPrice(price), dimensions.width - 5, y + 3);
-      }
-
-      // Draw time labels
-      for (let i = 0; i <= timeSteps; i++) {
-        const candleIndex = Math.min(i * stepSizeTime, visibleCandles.length - 1);
-        const globalIndex = visibleStartIndex + candleIndex;
-        const x = indexToX(globalIndex);
-
-        if (x >= padding.left && x <= dimensions.width - padding.right && chartCandles[globalIndex]) {
-          const date = new Date(chartCandles[globalIndex].time);
-          const timeLabel = config.dateFormat(date);
-
-          ctx.fillStyle = '#6B7280';
-          ctx.font = '11px -apple-system, sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(timeLabel, x, dimensions.height - padding.bottom + 20);
         }
       }
 
-      // Draw crosshair
-      if (crosshair && !isDragging) {
-        ctx.setLineDash([5, 5]);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
-        ctx.lineWidth = 1;
-
-        // Vertical line
-        ctx.beginPath();
-        ctx.moveTo(crosshair.x, padding.top);
-        ctx.lineTo(crosshair.x, dimensions.height - padding.bottom);
-        ctx.stroke();
-
-        // Horizontal line
-        ctx.beginPath();
-        ctx.moveTo(padding.left, crosshair.y);
-        ctx.lineTo(dimensions.width - padding.right, crosshair.y);
-        ctx.stroke();
-
-        ctx.setLineDash([]);
-
-        // Price label at crosshair
-        const price = minPrice + ((dimensions.height - padding.bottom - crosshair.y) / chartHeight) * (maxPrice - minPrice);
-        
-        ctx.fillStyle = '#1F2937';
-        ctx.fillRect(dimensions.width - padding.right + 5, crosshair.y - 10, 75, 20);
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = '12px -apple-system, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillText(formatPrice(price), dimensions.width - padding.right + 8, crosshair.y + 3);
+      if (!isOrdered) {
+        console.error('💥 Chart data not ordered - skipping update');
+        isUpdatingRef.current = false;
+        return;
       }
 
-      // Draw accurate candle tooltip
-      if (hoveredCandle !== null && chartCandles[hoveredCandle] && enableAccurateTooltip) {
-        const candle = chartCandles[hoveredCandle];
-        const date = new Date(candle.time);
-        const dateStr = date.toLocaleString();
-        
-        // Calculate tooltip position based on mouse position
-        const tooltipWidth = 220;
-        const tooltipHeight = 140;
-        const tooltipPadding = 10;
-        
-        // Position tooltip near the mouse
-        let tooltipX = crosshair ? crosshair.x + 20 : 100;
-        let tooltipY = crosshair ? crosshair.y - tooltipHeight / 2 : 100;
-        
-        // Keep tooltip within bounds
-        if (tooltipX + tooltipWidth > dimensions.width - padding.right) {
-          tooltipX = crosshair ? crosshair.x - tooltipWidth - 20 : dimensions.width - tooltipWidth - padding.right - tooltipPadding;
-        }
-        if (tooltipY < padding.top) {
-          tooltipY = padding.top + tooltipPadding;
-        }
-        if (tooltipY + tooltipHeight > dimensions.height - padding.bottom) {
-          tooltipY = dimensions.height - padding.bottom - tooltipHeight - tooltipPadding;
-        }
-        
-        // Draw tooltip with shadow
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-        ctx.shadowBlur = 10;
-        ctx.shadowOffsetX = 2;
-        ctx.shadowOffsetY = 2;
-        
-        ctx.fillStyle = 'rgba(17, 24, 39, 0.95)';
-        ctx.strokeStyle = '#374151';
-        ctx.lineWidth = 1;
-        
-        // Rounded rectangle for tooltip
-        const radius = 5;
-        ctx.beginPath();
-        ctx.moveTo(tooltipX + radius, tooltipY);
-        ctx.lineTo(tooltipX + tooltipWidth - radius, tooltipY);
-        ctx.quadraticCurveTo(tooltipX + tooltipWidth, tooltipY, tooltipX + tooltipWidth, tooltipY + radius);
-        ctx.lineTo(tooltipX + tooltipWidth, tooltipY + tooltipHeight - radius);
-        ctx.quadraticCurveTo(tooltipX + tooltipWidth, tooltipY + tooltipHeight, tooltipX + tooltipWidth - radius, tooltipY + tooltipHeight);
-        ctx.lineTo(tooltipX + radius, tooltipY + tooltipHeight);
-        ctx.quadraticCurveTo(tooltipX, tooltipY + tooltipHeight, tooltipX, tooltipY + tooltipHeight - radius);
-        ctx.lineTo(tooltipX, tooltipY + radius);
-        ctx.quadraticCurveTo(tooltipX, tooltipY, tooltipX + radius, tooltipY);
-        ctx.closePath();
-        
-        ctx.fill();
-        ctx.stroke();
-        
-        // Reset shadow
-        ctx.shadowColor = 'transparent';
-        ctx.shadowBlur = 0;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 0;
-        
-        // Draw tooltip content
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = '12px -apple-system, sans-serif';
-        ctx.textAlign = 'left';
-        
-        const lineHeight = 18;
-        let y = tooltipY + 20;
-        
-        // Date/time
-        ctx.fillStyle = '#9CA3AF';
-        ctx.font = '11px -apple-system, sans-serif';
-        ctx.fillText(dateStr, tooltipX + 10, y);
-        y += lineHeight;
-        
-        // OHLC values
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = '12px -apple-system, sans-serif';
-        
-        ctx.fillText(`Open: ${formatPrice(candle.open)}`, tooltipX + 10, y);
-        y += lineHeight;
-        
-        ctx.fillText(`High: ${formatPrice(candle.high)}`, tooltipX + 10, y);
-        y += lineHeight;
-        
-        ctx.fillText(`Low: ${formatPrice(candle.low)}`, tooltipX + 10, y);
-        y += lineHeight;
-        
-        ctx.fillText(`Close: ${formatPrice(candle.close)}`, tooltipX + 10, y);
-        y += lineHeight;
-        
-        ctx.fillText(`Volume: ${candle.volume.toLocaleString()}`, tooltipX + 10, y);
-        y += lineHeight;
-        
-        // Show percentage change
-        if (hoveredCandle > 0) {
-          const prevCandle = chartCandles[hoveredCandle - 1];
-          const change = ((candle.close - prevCandle.close) / prevCandle.close) * 100;
-          const changeColor = change >= 0 ? '#22C55E' : '#EF4444';
-          ctx.fillStyle = changeColor;
-          ctx.font = 'bold 12px -apple-system, sans-serif';
-          ctx.fillText(`Change: ${change >= 0 ? '+' : ''}${change.toFixed(2)}%`, tooltipX + 10, y);
+      // Apply data efficiently
+      candlestickSeriesRef.current.setData(candleData);
+      volumeSeriesRef.current.setData(volumeData);
+
+      // Update state
+      chartState.current.lastCandleCount = incomingCandleCount;
+      lastCandleCountRef.current = incomingCandleCount;
+      setCandleCount(incomingCandleCount);
+
+      // Auto-fit view for live building (throttled)
+      if (dynamicView && candleData.length > 0 && Math.random() < 0.1) { // Only 10% of updates
+        try {
+          const visibleCandles = Math.min(50, candleData.length);
+          chartRef.current?.timeScale().setVisibleLogicalRange({
+            from: Math.max(0, candleData.length - visibleCandles),
+            to: candleData.length - 1
+          });
+        } catch (error) {
+          console.warn('Auto-fit failed:', error);
         }
       }
 
-      // Draw header
-      ctx.fillStyle = '#FFFFFF';
-      ctx.font = 'bold 16px -apple-system, sans-serif';
-      ctx.textAlign = 'left';
-      ctx.fillText(`${symbol} - ${config.label}`, padding.left, 25);
-
-      // Draw current price
-      if (currentPrice && chartCandles.length > 0) {
-        const lastCandle = chartCandles[chartCandles.length - 1];
-        const firstVisibleCandle = visibleCandles[0] || chartCandles[0];
-        const priceChange = ((lastCandle.close - firstVisibleCandle.open) / firstVisibleCandle.open) * 100;
-        const changeColor = priceChange >= 0 ? '#22C55E' : '#EF4444';
-        
-        ctx.fillStyle = changeColor;
-        ctx.font = '14px -apple-system, sans-serif';
-        ctx.fillText(
-          `${formatPrice(lastCandle.close)} (${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%)`,
-          padding.left + 180,
-          25
-        );
+      // Update status
+      if (incomingCandleCount >= 50) {
+        setChartStatus('ready');
+      } else if (incomingCandleCount > 0) {
+        setChartStatus('building');
       }
 
-      // Draw timeframe indicator if dynamic view is enabled
-      if (dynamicView) {
-        const currentTf = determineOptimalTimeframe;
-        const tfLabel = timeframeConfigs[currentTf].label;
-        
-        ctx.fillStyle = 'rgba(107, 114, 128, 0.3)';
-        ctx.fillRect(dimensions.width - 100, dimensions.height - 30, 95, 25);
-        
-        ctx.fillStyle = '#9CA3AF';
-        ctx.font = '11px -apple-system, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(tfLabel, dimensions.width - 52.5, dimensions.height - 12);
+      console.log(`✅ Chart updated: ${candleData.length} candles displayed`);
+
+    } catch (error) {
+      console.error('❌ Error updating chart:', error);
+      setChartStatus('error');
+    } finally {
+      isUpdatingRef.current = false;
+    }
+  }, [isChartReady, dynamicView]);
+
+  // OPTIMIZED: Chart data update effect
+  useEffect(() => {
+    const { candleData, volumeData } = convertPriceHistory;
+    updateChart(candleData, volumeData);
+  }, [convertPriceHistory, updateChart]);
+
+  // Handle resize
+  useEffect(() => {
+    const handleResize = () => {
+      if (chartRef.current && chartContainerRef.current) {
+        try {
+          chartRef.current.applyOptions({
+            width: chartContainerRef.current.clientWidth,
+            height: chartContainerRef.current.clientHeight,
+          });
+        } catch (error) {
+          console.warn('Resize failed:', error);
+        }
       }
+    };
 
-      // Draw zoom indicator
-      ctx.fillStyle = '#6B7280';
-      ctx.font = '12px -apple-system, sans-serif';
-      ctx.textAlign = 'right';
-      ctx.fillText(`Zoom: ${(zoomLevel * 100).toFixed(0)}%`, dimensions.width - padding.right - 100, 25);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
-      // Draw scenario indicator
-      if (scenarioData && scenarioData.phase) {
-        const phase = scenarioData.phase;
-        const progress = scenarioData.progress || 0;
-        
-        ctx.fillStyle = '#8B5CF6';
-        ctx.font = '12px -apple-system, sans-serif';
-        ctx.textAlign = 'right';
-        ctx.fillText(
-          `📊 ${phase.name} (${Math.round(progress * 100)}%)`,
-          dimensions.width - padding.right,
-          45
-        );
-        
-        const conditionColors: Record<MarketCondition, string> = {
-          bullish: '#22C55E',
-          bearish: '#EF4444',
-          volatile: '#F59E0B',
-          calm: '#3B82F6',
-          building: '#6366F1',
-          crash: '#DC2626'
+  // Control functions
+  const resetView = useCallback(() => {
+    try {
+      if (chartRef.current) {
+        chartRef.current.timeScale().resetTimeScale();
+        console.log('🔄 Chart view reset');
+      }
+    } catch (error) {
+      console.warn('Reset view failed:', error);
+    }
+  }, []);
+
+  const fitContent = useCallback(() => {
+    try {
+      if (chartRef.current) {
+        chartRef.current.timeScale().fitContent();
+        console.log('📏 Chart content fitted');
+      }
+    } catch (error) {
+      console.warn('Fit content failed:', error);
+    }
+  }, []);
+
+  // Calculate building stats
+  const buildingStats = useMemo(() => {
+    if (!isLiveBuilding || !buildingStartTime) {
+      return null;
+    }
+
+    const elapsedMs = Date.now() - buildingStartTime;
+    const elapsedSeconds = Math.floor(elapsedMs / 1000);
+    const candlesPerSecond = candleCount > 0 && elapsedSeconds > 0 
+      ? (candleCount / elapsedSeconds).toFixed(2) 
+      : '0.00';
+
+    return {
+      elapsed: elapsedSeconds,
+      candlesPerSecond: candlesPerSecond,
+      totalCandles: candleCount
+    };
+  }, [isLiveBuilding, buildingStartTime, candleCount]);
+
+  // Status indicator
+  const getStatusInfo = () => {
+    switch (chartStatus) {
+      case 'initializing':
+        return { color: 'bg-yellow-900 text-yellow-300', icon: '⚡', text: 'Initializing...' };
+      case 'empty':
+        return { color: 'bg-blue-900 text-blue-300', icon: '⏳', text: 'Ready for data' };
+      case 'building':
+        return { 
+          color: 'bg-green-900 text-green-300', 
+          icon: '📈', 
+          text: `Building: ${candleCount} candles`
         };
-        
-        const conditionColor = conditionColors[phase.marketCondition] || '#6B7280';
-        ctx.fillStyle = conditionColor;
-        ctx.fillRect(dimensions.width - padding.right - 80, 55, 80, 20);
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = 'bold 10px -apple-system, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(phase.marketCondition.toUpperCase(), dimensions.width - padding.right - 40, 68);
-      }
-    };
+      case 'ready':
+        return { 
+          color: 'bg-green-900 text-green-300', 
+          icon: '✅', 
+          text: `Live: ${candleCount} candles`
+        };
+      case 'error':
+        return { color: 'bg-red-900 text-red-300', icon: '❌', text: 'Error' };
+      default:
+        return { color: 'bg-gray-900 text-gray-300', icon: '❓', text: 'Unknown' };
+    }
+  };
 
-    animationRef.current = requestAnimationFrame(draw);
-
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-    };
-  }, [chartCandles, currentPrice, dimensions, symbol, scenarioData, chartOffset, zoomLevel, hoveredCandle, crosshair, isDragging, determineOptimalTimeframe, dynamicView, enableAccurateTooltip]);
+  const statusInfo = getStatusInfo();
 
   return (
-    <div 
-      ref={containerRef}
-      className="w-full h-full bg-[#0B1426] rounded-lg overflow-hidden relative"
-    >
-      <canvas
-        ref={canvasRef}
-        className="w-full h-full cursor-crosshair"
-        style={{ display: 'block' }}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseLeave}
-        onWheel={handleWheel}
-      />
-      <div className="absolute bottom-2 left-2 text-xs text-gray-500">
-        <span className="mr-4">Drag to pan</span>
-        <span>Scroll to zoom</span>
+    <div className="relative w-full h-full bg-[#0B1426] rounded-lg overflow-hidden">
+      {/* Chart container */}
+      <div ref={chartContainerRef} className="w-full h-full" />
+      
+      {/* Status overlay */}
+      <div className="absolute top-4 left-4 pointer-events-none">
+        <div className="flex items-center space-x-4">
+          <h3 className="text-white text-lg font-bold">{symbol}</h3>
+          
+          {/* Enhanced status indicator */}
+          <div className={`flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-medium ${statusInfo.color}`}>
+            <div className={`w-2 h-2 rounded-full ${
+              chartStatus === 'building' || chartStatus === 'ready' ? 'bg-green-400 animate-pulse' :
+              chartStatus === 'empty' ? 'bg-blue-400 animate-pulse' :
+              chartStatus === 'error' ? 'bg-red-400' :
+              'bg-yellow-400 animate-pulse'
+            }`}></div>
+            <span>{statusInfo.icon} {statusInfo.text}</span>
+          </div>
+          
+          {/* Live building indicator */}
+          {isLiveBuilding && buildingStats && (
+            <div className="bg-purple-900 bg-opacity-75 px-3 py-1 rounded text-xs text-purple-300">
+              🔴 LIVE: {buildingStats.candlesPerSecond}/sec
+            </div>
+          )}
+          
+          {/* Current price */}
+          {currentPrice > 0 && (
+            <div className="bg-gray-900 bg-opacity-75 px-3 py-1 rounded">
+              <span className="text-gray-400 text-sm">Last: </span>
+              <span className="text-white text-lg font-mono">
+                ${currentPrice < 1 ? currentPrice.toFixed(6) : currentPrice.toFixed(2)}
+              </span>
+            </div>
+          )}
+          
+          {/* Performance indicator */}
+          <div className="bg-gray-900 bg-opacity-75 px-2 py-1 rounded text-xs text-gray-400">
+            FPS: {Math.round(1000 / Math.max(Date.now() - lastUpdateRef.current, 16))}
+          </div>
+        </div>
       </div>
+      
+      {/* Controls */}
+      <div className="absolute bottom-4 right-4 flex space-x-2">
+        <button
+          onClick={resetView}
+          className="px-3 py-1 bg-gray-700 bg-opacity-80 text-gray-300 text-xs rounded hover:bg-opacity-100 transition"
+          title="Reset view"
+        >
+          🔄
+        </button>
+        <button
+          onClick={fitContent}
+          className="px-3 py-1 bg-blue-700 bg-opacity-80 text-blue-300 text-xs rounded hover:bg-opacity-100 transition"
+          title="Fit content"
+        >
+          📏
+        </button>
+        <button
+          className={`px-3 py-1 text-xs rounded transition ${
+            dynamicView 
+              ? 'bg-green-700 bg-opacity-80 text-green-300 hover:bg-opacity-100' 
+              : 'bg-gray-700 bg-opacity-80 text-gray-300 hover:bg-opacity-100'
+          }`}
+          title="Dynamic view enabled"
+        >
+          {dynamicView ? '📍 Live' : '📌 Static'}
+        </button>
+      </div>
+      
+      {/* Chart info */}
+      <div className="absolute bottom-4 left-4 pointer-events-none">
+        <div className="text-gray-400 text-xs space-y-1">
+          <div>📊 Candles: {candleCount}</div>
+          <div>🔄 Trades: {trades.length}</div>
+          <div>🎯 Status: {chartStatus}</div>
+          <div>🏗️ Building: {isLiveBuilding ? 'YES' : 'NO'}</div>
+          <div>⚡ Updates: {isUpdatingRef.current ? 'ACTIVE' : 'IDLE'}</div>
+          {buildingStats && (
+            <>
+              <div>⏱️ Time: {buildingStats.elapsed}s</div>
+              <div>📈 Rate: {buildingStats.candlesPerSecond}/s</div>
+            </>
+          )}
+        </div>
+      </div>
+      
+      {/* Error state */}
+      {chartStatus === 'error' && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75">
+          <div className="bg-red-900 text-red-100 p-6 rounded-lg max-w-md text-center">
+            <h3 className="font-bold text-lg mb-2">Chart Error</h3>
+            <p className="text-sm">Failed to initialize TradingView chart. Check console for details.</p>
+            <button 
+              onClick={() => window.location.reload()} 
+              className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-sm transition"
+            >
+              Reload Page
+            </button>
+          </div>
+        </div>
+      )}
+      
+      {/* Empty state */}
+      {chartStatus === 'empty' && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div className="text-center text-gray-400">
+            <div className="text-6xl mb-6">📊</div>
+            <h3 className="text-xl font-bold mb-3">Optimized Chart Ready</h3>
+            <p className="text-sm mb-4">High-performance chart with throttled updates</p>
+            <div className="space-y-2 text-xs">
+              <div className="flex items-center justify-center space-x-2">
+                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
+                <span>Waiting for backend candle data...</span>
+              </div>
+              <div>⚡ 30fps update throttling</div>
+              <div>🎯 Batch processing enabled</div>
+              <div>📈 Progressive real-time building</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Building state */}
+      {chartStatus === 'building' && candleCount > 0 && (
+        <div className="absolute top-20 left-4 pointer-events-none">
+          <div className="bg-green-900 bg-opacity-75 px-4 py-2 rounded-lg">
+            <div className="text-green-300 text-sm font-medium">
+              🔴 OPTIMIZED LIVE BUILDING: {candleCount} candles
+            </div>
+            {buildingStats && (
+              <div className="text-green-400 text-xs mt-1">
+                {buildingStats.elapsed}s elapsed • {buildingStats.candlesPerSecond} candles/sec • Throttled updates
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
