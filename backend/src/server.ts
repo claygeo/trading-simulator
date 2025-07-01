@@ -1,4 +1,4 @@
-// backend/src/server.ts - COMPLETE COMPRESSION-FREE SERVER - FIXED TYPES
+// backend/src/server.ts - BACKEND ONLY - NO FRONTEND SERVING
 // 🚨 COMPRESSION ELIMINATOR - MUST BE AT TOP
 console.log('🚨 STARTING COMPRESSION ELIMINATION PROCESS...');
 
@@ -151,7 +151,10 @@ const performanceMonitor = new PerformanceMonitor();
 let candleUpdateCoordinator: CandleUpdateCoordinator;
 
 // Middleware - COMPRESSION PREVENTION
-app.use(cors());
+app.use(cors({
+  origin: process.env.FRONTEND_URL || ['http://localhost:3000', 'https://your-netlify-app.netlify.app'],
+  credentials: true
+}));
 
 // Override helmet to prevent compression
 app.use(helmet({
@@ -182,6 +185,28 @@ app.use((req, res, next) => {
   
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} - COMPRESSION BLOCKED`);
   next();
+});
+
+// 🚀 ROOT ROUTE - Backend API Status
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Trading Simulator Backend API',
+    status: 'running',
+    timestamp: Date.now(),
+    environment: process.env.NODE_ENV || 'development',
+    version: '1.0.0',
+    services: {
+      websocket: 'active',
+      simulations: 'active',
+      compression: 'disabled'
+    },
+    endpoints: {
+      health: '/api/health',
+      test: '/api/test',
+      simulations: '/api/simulations',
+      websocket: 'ws://' + req.get('host')
+    }
+  });
 });
 
 // FIXED CandleUpdateCoordinator class - Prevents pre-populated candles
@@ -875,14 +900,8 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-// Static files in production
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../../public')));
-  
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../../public/index.html'));
-  });
-}
+// 🚀 REMOVED STATIC FILE SERVING - Backend only serves API routes
+// No more static file serving or frontend routing
 
 // Create HTTP server
 const server = http.createServer(app);
@@ -992,14 +1011,16 @@ export { simulationManager };
 
 // Start server
 server.listen(PORT, async () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 Backend API Server running on port ${PORT}`);
   console.log(`📡 WebSocket server running on ws://localhost:${PORT}`);
   console.log(`🌟 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🎯 BACKEND ONLY - No static file serving`);
   console.log(`📈 CLEAN REAL-TIME CHARTS - Guaranteed clean start!`);
   console.log(`🎯 No pre-populated data - charts build live from zero`);
   console.log(`🚨 COMPRESSION DISABLED - All WebSocket messages as TEXT frames`);
   console.log(`✅ perMessageDeflate: false - No Blob conversion issues`);
   console.log(`🎯 COMPRESSION ELIMINATOR ACTIVE - All compression vectors blocked`);
+  console.log(`📍 Frontend should be on Netlify, Backend serves API only`);
   
   await initializeServices();
 });
