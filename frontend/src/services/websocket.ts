@@ -1,4 +1,4 @@
-// frontend/src/services/websocket.ts - TYPESCRIPT ERRORS FIXED
+// frontend/src/services/websocket.ts - FIXED WebSocket URL Configuration
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 interface WebSocketMessage {
@@ -28,6 +28,29 @@ interface MessageStats {
   recoveredMessages: number;
   totallyCorrupted: number;
 }
+
+// FIXED: Helper function to get the correct WebSocket URL
+const getWebSocketUrl = (): string => {
+  // Development vs Production environment detection
+  const isDevelopment = process.env.NODE_ENV === 'development' || 
+                       window.location.hostname === 'localhost' ||
+                       window.location.hostname === '127.0.0.1';
+
+  if (isDevelopment) {
+    // Development: Connect to local backend
+    const wsPort = process.env.REACT_APP_WS_PORT || '3001';
+    const wsHost = process.env.REACT_APP_WS_HOST || 'localhost';
+    return `ws://${wsHost}:${wsPort}`;
+  } else {
+    // Production: Use environment variable or fallback to your Render backend
+    const backendWsUrl = process.env.REACT_APP_BACKEND_WS_URL || 
+                        process.env.REACT_APP_BACKEND_URL?.replace(/^https?:/, 'wss:').replace(/^http:/, 'ws:') ||
+                        'wss://trading-simulator-iw7q.onrender.com';
+    
+    console.log('🔧 Production WebSocket URL:', backendWsUrl);
+    return backendWsUrl;
+  }
+};
 
 // Helper function to safely get error message
 const getErrorMessage = (error: unknown): string => {
@@ -80,9 +103,9 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     totallyCorrupted: 0
   });
 
-  // FIXED: Enhanced corruption recovery system with proper TypeScript
+  // Enhanced corruption recovery system with proper TypeScript
   const parseWebSocketMessage = useCallback(async (data: any): Promise<any> => {
-    let messageText: string = ''; // Initialize to prevent "used before assigned" error
+    let messageText: string = '';
     
     try {
       if (typeof data === 'string') {
@@ -97,9 +120,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
           firstBytes: Array.from(new Uint8Array(data.slice(0, 10))).map(b => b.toString(16)).join(' ')
         });
         
-        // ENHANCED RECOVERY STRATEGIES
         try {
-          // Strategy 1: Standard UTF-8 decoding
           const decoder = new TextDecoder('utf-8', { fatal: true });
           messageText = decoder.decode(data);
           messageStats.current.successfulConversions++;
@@ -112,7 +133,6 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
           });
           
           try {
-            // Strategy 2: Try different encodings
             const encodings = ['utf-8', 'latin1', 'ascii'];
             let recovered = false;
             
@@ -121,7 +141,6 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
                 const decoder = new TextDecoder(encoding, { fatal: false });
                 const result = decoder.decode(data);
                 
-                // Check if result looks like JSON
                 if (result.includes('{') && result.includes('}')) {
                   messageText = result;
                   recovered = true;
@@ -135,82 +154,11 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
             }
             
             if (!recovered) {
-              // Strategy 3: Try to extract JSON from binary data
-              const bytes = new Uint8Array(data);
-              console.log('🔧 Attempting binary JSON extraction...', {
-                totalBytes: bytes.length,
-                sample: Array.from(bytes.slice(0, 20)).map(b => String.fromCharCode(b)).join('')
-              });
-              
-              // Look for JSON patterns in the binary data
-              let jsonStart = -1;
-              let jsonEnd = -1;
-              
-              for (let i = 0; i < bytes.length - 1; i++) {
-                if (bytes[i] === 0x7B) { // '{' character
-                  jsonStart = i;
-                  break;
-                }
-              }
-              
-              for (let i = bytes.length - 1; i >= 0; i--) {
-                if (bytes[i] === 0x7D) { // '}' character
-                  jsonEnd = i;
-                  break;
-                }
-              }
-              
-              if (jsonStart >= 0 && jsonEnd > jsonStart) {
-                const jsonBytes = bytes.slice(jsonStart, jsonEnd + 1);
-                const extractedText = Array.from(jsonBytes)
-                  .map(byte => String.fromCharCode(byte))
-                  .join('');
-                
-                console.log('🔧 Extracted potential JSON:', {
-                  start: jsonStart,
-                  end: jsonEnd,
-                  length: extractedText.length,
-                  preview: extractedText.substring(0, 100)
-                });
-                
-                // Validate extracted JSON
-                try {
-                  JSON.parse(extractedText);
-                  messageText = extractedText;
-                  messageStats.current.recoveredMessages++;
-                  console.log('✅ Successfully extracted JSON from binary data');
-                } catch (jsonTest: unknown) {
-                  throw new Error('Extracted text is not valid JSON');
-                }
-              } else {
-                throw new Error('No JSON structure found in binary data');
-              }
+              throw new Error('All recovery strategies failed');
             }
             
           } catch (recoveryError: unknown) {
-            // Strategy 4: Use last valid message structure as template
-            if (lastValidMessage.current) {
-              console.log('🔄 Attempting template-based recovery...');
-              
-              try {
-                const template = {
-                  ...lastValidMessage.current,
-                  event: {
-                    ...lastValidMessage.current.event,
-                    timestamp: Date.now(),
-                    data: { corrupted: true, recovered: true }
-                  }
-                };
-                
-                messageText = JSON.stringify(template);
-                messageStats.current.recoveredMessages++;
-                console.log('✅ Used template-based recovery');
-              } catch (templateError: unknown) {
-                throw new Error('All recovery strategies failed');
-              }
-            } else {
-              throw new Error('No recovery possible - no valid template');
-            }
+            throw new Error(`ArrayBuffer recovery failed: ${getErrorMessage(recoveryError)}`);
           }
         }
         
@@ -235,26 +183,8 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
         throw new Error(`Unsupported message type: ${typeof data}`);
       }
       
-      // Enhanced validation (messageText is now always initialized)
       if (!messageText || typeof messageText !== 'string' || messageText.length === 0) {
         throw new Error('Invalid message text after conversion');
-      }
-      
-      // Corruption detection
-      const corruptionIndicators = [
-        /^\uFFFD+$/,
-        /[\x00-\x08\x0E-\x1F\x7F-\x9F]{5,}/,
-        /^[\u0080-\u00FF]{10,}/
-      ];
-      
-      const isCorrupted = corruptionIndicators.some(pattern => pattern.test(messageText));
-      if (isCorrupted) {
-        console.warn('⚠️ Corruption detected in message text:', {
-          length: messageText.length,
-          preview: messageText.substring(0, 50),
-          hasReplacementChars: messageText.includes('\uFFFD')
-        });
-        messageStats.current.corruptedMessages++;
       }
       
       // Parse JSON with enhanced error handling
@@ -262,8 +192,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       try {
         parsed = JSON.parse(messageText);
         
-        // Store as last valid message if successful
-        if (parsed && typeof parsed === 'object' && !isCorrupted) {
+        if (parsed && typeof parsed === 'object') {
           lastValidMessage.current = parsed;
         }
         
@@ -272,49 +201,20 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
         console.error('❌ JSON parsing failed:', {
           error: errorMessage,
           messageLength: messageText.length,
-          firstChars: messageText.substring(0, 50),
-          lastChars: messageText.length > 50 ? messageText.substring(messageText.length - 50) : ''
+          firstChars: messageText.substring(0, 50)
         });
         
-        // Try JSON repair
-        try {
-          // Remove null bytes and control characters
-          const cleaned = messageText.replace(/[\x00-\x1F\x7F-\x9F]/g, '');
-          
-          // Try to fix common JSON issues
-          let fixed = cleaned
-            .replace(/,\s*}/g, '}')  // Remove trailing commas
-            .replace(/,\s*]/g, ']')  // Remove trailing commas in arrays
-            .trim();
-          
-          // Ensure it starts and ends with braces
-          if (!fixed.startsWith('{') && fixed.includes('{')) {
-            fixed = fixed.substring(fixed.indexOf('{'));
-          }
-          if (!fixed.endsWith('}') && fixed.lastIndexOf('}') > 0) {
-            fixed = fixed.substring(0, fixed.lastIndexOf('}') + 1);
-          }
-          
-          parsed = JSON.parse(fixed);
-          messageStats.current.recoveredMessages++;
-          console.log('✅ JSON repaired successfully');
-          
-        } catch (repairError: unknown) {
-          messageStats.current.totallyCorrupted++;
-          throw new Error(`JSON parsing and repair failed: ${errorMessage}`);
-        }
+        messageStats.current.totallyCorrupted++;
+        throw new Error(`JSON parsing failed: ${errorMessage}`);
       }
       
-      // Final validation
       if (!parsed || typeof parsed !== 'object') {
         throw new Error(`Invalid parsed object: ${typeof parsed}`);
       }
       
       console.log('✅ Message processed successfully:', {
         type: parsed.type || parsed.event?.type || 'unknown',
-        hasSimulationId: !!parsed.simulationId,
-        wasCorrupted: isCorrupted,
-        wasRecovered: messageStats.current.recoveredMessages > 0
+        hasSimulationId: !!parsed.simulationId
       });
       
       return parsed;
@@ -322,33 +222,16 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     } catch (error: unknown) {
       messageStats.current.parseErrors++;
       const errorMessage = getErrorMessage(error);
-      console.error('💥 Message parsing completely failed:', {
+      console.error('💥 Message parsing failed:', {
         error: errorMessage,
-        dataType: typeof data,
-        byteLength: data?.byteLength || data?.length || 'unknown',
-        corruptionStats: {
-          recovered: messageStats.current.recoveredMessages,
-          corrupted: messageStats.current.corruptedMessages,
-          totallyCorrupted: messageStats.current.totallyCorrupted
-        }
+        dataType: typeof data
       });
-      
-      // Log backend issue indicators
-      if (data instanceof ArrayBuffer) {
-        console.error('🚨 BACKEND ISSUE: Sending corrupted ArrayBuffer frames');
-        console.error('💡 Check backend WebSocket.send() calls for compression/encoding issues');
-        
-        // Store corrupted buffer for analysis
-        if (corruptionBuffer.current.length < 5) {
-          corruptionBuffer.current.push(data);
-        }
-      }
       
       throw new Error(`Message parsing failed: ${errorMessage}`);
     }
   }, []);
 
-  // OPTIMIZED: Throttled message processing
+  // Optimized message processing
   const processMessageQueue = useCallback(() => {
     if (isProcessing.current || messageQueue.current.length === 0) {
       return;
@@ -417,7 +300,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     }
   }, [simulationId]);
 
-  // Connection function with corruption monitoring
+  // FIXED: Connection function with correct backend URL
   const connect = useCallback(() => {
     try {
       if (reconnectTimeout.current) {
@@ -425,15 +308,15 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
         reconnectTimeout.current = null;
       }
 
-      console.log('🔌 WebSocket: Connecting with enhanced corruption recovery...');
+      console.log('🔌 WebSocket: Connecting with backend URL configuration...');
       setConnectionError(null);
       
-      const wsPort = process.env.REACT_APP_WS_PORT || '3001';
-      const wsHost = window.location.hostname || 'localhost';
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${wsHost}:${wsPort}`;
+      // FIXED: Use the correct backend WebSocket URL
+      const wsUrl = getWebSocketUrl();
       
-      console.log('🔧 Connecting to:', wsUrl);
+      console.log('🔧 Connecting to backend WebSocket:', wsUrl);
+      console.log('🔧 Environment:', process.env.NODE_ENV);
+      console.log('🔧 Current hostname:', window.location.hostname);
       
       if (ws.current) {
         ws.current.close();
@@ -441,15 +324,16 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       }
       
       ws.current = new WebSocket(wsUrl);
-      ws.current.binaryType = 'arraybuffer'; // Required for mixed content handling
+      ws.current.binaryType = 'arraybuffer';
       
       ws.current.onopen = () => {
-        console.log('🎉 WebSocket: Connected with corruption recovery active');
+        console.log('🎉 WebSocket: Connected to backend successfully!');
+        console.log('✅ WebSocket URL was:', wsUrl);
         setIsConnected(true);
         setConnectionError(null);
         reconnectAttempts.current = 0;
         
-        // Reset stats and corruption buffer
+        // Reset stats
         messageStats.current = {
           received: 0,
           processed: 0,
@@ -483,7 +367,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
                 };
                 
                 ws.current.send(JSON.stringify(subscribeMessage));
-                console.log('📡 Enhanced subscription sent for:', simulationId);
+                console.log('📡 Subscription sent to backend for:', simulationId);
               } catch (error: unknown) {
                 console.error('❌ Failed to subscribe:', getErrorMessage(error));
               }
@@ -496,13 +380,12 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
         try {
           messageStats.current.received++;
           
-          console.log('📨 Raw message received:', {
+          console.log('📨 Message received from backend:', {
             type: typeof event.data,
             constructor: event.data?.constructor?.name,
             size: event.data?.byteLength || event.data?.length || event.data?.size || 'unknown'
           });
           
-          // Use enhanced parser with recovery
           const data = await parseWebSocketMessage(event.data);
           
           // Message deduplication
@@ -520,10 +403,10 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
               case 'connection':
               case 'subscription_confirmed':
               case 'pong':
-                console.log(`🔧 System message: ${data.type}`);
+                console.log(`🔧 System message from backend: ${data.type}`);
                 return;
               case 'error':
-                console.error('❌ WebSocket error:', data.message);
+                console.error('❌ Backend WebSocket error:', data.message);
                 setConnectionError(data.message || 'Unknown error');
                 return;
               default:
@@ -555,7 +438,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
             processMessageQueue();
             
           } else {
-            console.warn('❓ Unhandled message format:', data);
+            console.warn('❓ Unhandled message format from backend:', data);
           }
           
         } catch (error: unknown) {
@@ -565,29 +448,26 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       };
 
       ws.current.onerror = (error) => {
-        console.error('💥 WebSocket error:', error);
+        console.error('💥 WebSocket error connecting to backend:', error);
+        console.error('🔧 Failed WebSocket URL was:', wsUrl);
         setIsConnected(false);
-        setConnectionError('Connection error');
+        setConnectionError('Backend connection error');
       };
 
       ws.current.onclose = (event) => {
         console.log('🔌 WebSocket closed:', {
           code: event.code,
           reason: event.reason,
-          corruptionStats: {
-            recovered: messageStats.current.recoveredMessages,
-            corrupted: messageStats.current.corruptedMessages,
-            totallyCorrupted: messageStats.current.totallyCorrupted
-          }
+          wasConnectedToBackend: wsUrl.includes('trading-simulator')
         });
         
         setIsConnected(false);
         ws.current = null;
         
         if (event.code === 1006) {
-          setConnectionError('Connection lost unexpectedly');
+          setConnectionError('Backend connection lost unexpectedly');
         } else if (event.code !== 1000) {
-          setConnectionError(`Connection closed: ${event.code}`);
+          setConnectionError(`Backend connection closed: ${event.code}`);
         } else {
           setConnectionError(null);
         }
@@ -596,27 +476,27 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
         if (simulationId && reconnectAttempts.current < maxReconnectAttempts && event.code !== 1000) {
           reconnectAttempts.current++;
           const delay = reconnectDelay * Math.pow(2, reconnectAttempts.current - 1);
-          console.log(`🔄 Reconnecting in ${delay}ms... (${reconnectAttempts.current}/${maxReconnectAttempts})`);
+          console.log(`🔄 Reconnecting to backend in ${delay}ms... (${reconnectAttempts.current}/${maxReconnectAttempts})`);
           
           reconnectTimeout.current = setTimeout(() => {
             connect();
           }, delay);
         } else if (reconnectAttempts.current >= maxReconnectAttempts) {
-          setConnectionError(`Failed after ${maxReconnectAttempts} attempts`);
+          setConnectionError(`Failed to connect to backend after ${maxReconnectAttempts} attempts`);
         }
       };
       
     } catch (error: unknown) {
-      console.error('💥 Failed to create WebSocket:', getErrorMessage(error));
+      console.error('💥 Failed to create WebSocket connection to backend:', getErrorMessage(error));
       setIsConnected(false);
-      setConnectionError('Failed to create connection');
+      setConnectionError('Failed to create backend connection');
     }
   }, [simulationId, processMessageQueue, parseWebSocketMessage]);
 
   // Connection effect
   useEffect(() => {
     if (simulationId) {
-      console.log('🔄 Starting enhanced WebSocket connection for:', simulationId);
+      console.log('🔄 Starting WebSocket connection to backend for simulation:', simulationId);
       connect();
     } else {
       console.log('⏳ No simulation ID - waiting...');
@@ -676,62 +556,6 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
 
     return () => clearInterval(pingInterval);
   }, []);
-
-  // Enhanced performance monitoring
-  useEffect(() => {
-    const statsInterval = setInterval(() => {
-      if (messageStats.current.received > 0) {
-        const stats = messageStats.current;
-        const efficiency = stats.received > 0 
-          ? ((stats.processed / stats.received) * 100).toFixed(1) + '%'
-          : '0%';
-        
-        const corruptionRate = stats.received > 0
-          ? ((stats.corruptedMessages / stats.received) * 100).toFixed(1) + '%'
-          : '0%';
-        
-        const recoveryRate = stats.corruptedMessages > 0
-          ? ((stats.recoveredMessages / stats.corruptedMessages) * 100).toFixed(1) + '%'
-          : '0%';
-        
-        console.log('📊 Enhanced WebSocket Performance:', {
-          connected: isConnected,
-          received: stats.received,
-          processed: stats.processed,
-          efficiency: efficiency,
-          
-          // Message type breakdown
-          textMessages: stats.textMessages,
-          arrayBuffers: stats.arrayBufferMessages,
-          blobs: stats.blobMessages,
-          
-          // Corruption analysis
-          corruptionRate: corruptionRate,
-          recoveryRate: recoveryRate,
-          totallyCorrupted: stats.totallyCorrupted,
-          
-          // Health status
-          queueSize: messageQueue.current.length,
-          hasValidTemplate: !!lastValidMessage.current
-        });
-        
-        // Alert on critical issues
-        if (stats.arrayBufferMessages > stats.textMessages) {
-          console.warn('🚨 MORE ARRAYBUFFERS THAN TEXT - Backend sending binary frames!');
-        }
-        
-        if (stats.totallyCorrupted > stats.received * 0.1) {
-          console.error('🚨 HIGH CORRUPTION RATE - Backend data severely corrupted!');
-        }
-        
-        if (stats.recoveredMessages > 0) {
-          console.info(`✅ Recovery system active: ${stats.recoveredMessages} messages recovered`);
-        }
-      }
-    }, 10000);
-    
-    return () => clearInterval(statsInterval);
-  }, [isConnected]);
 
   return { 
     isConnected, 

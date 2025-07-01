@@ -1,14 +1,89 @@
-// frontend/src/services/api.ts - Fixed to Match Simplified Backend
+// frontend/src/services/api.ts - FIXED API Configuration
 import axios from 'axios';
 
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001/api';
+// FIXED: Determine the correct API base URL based on environment
+const getApiBaseUrl = (): string => {
+  // Check if we're in development
+  const isDevelopment = process.env.NODE_ENV === 'development' || 
+                       window.location.hostname === 'localhost' ||
+                       window.location.hostname === '127.0.0.1';
+
+  if (isDevelopment) {
+    // Development: Use local backend
+    return process.env.REACT_APP_API_BASE_URL || 'http://localhost:3001/api';
+  } else {
+    // Production: Use Render backend
+    return process.env.REACT_APP_API_BASE_URL || 
+           process.env.REACT_APP_BACKEND_URL + '/api' ||
+           'https://trading-simulator-iw7q.onrender.com/api';
+  }
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
+console.log('🔧 API Configuration:', {
+  baseUrl: API_BASE_URL,
+  environment: process.env.NODE_ENV,
+  hostname: window.location.hostname,
+  isDevelopment: process.env.NODE_ENV === 'development'
+});
 
 const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     'Content-Type': 'application/json'
-  }
+  },
+  // Add timeout for better error handling
+  timeout: 30000
 });
+
+// Add request interceptor for debugging
+api.interceptors.request.use(
+  (config) => {
+    if (process.env.REACT_APP_DEBUG === 'true') {
+      console.log('🌐 API Request:', {
+        method: config.method?.toUpperCase(),
+        url: config.url,
+        baseURL: config.baseURL,
+        fullUrl: `${config.baseURL}${config.url}`
+      });
+    }
+    return config;
+  },
+  (error) => {
+    console.error('❌ API Request Error:', error);
+    return Promise.reject(error);
+  }
+);
+
+// Add response interceptor for debugging
+api.interceptors.response.use(
+  (response) => {
+    if (process.env.REACT_APP_DEBUG === 'true') {
+      console.log('✅ API Response:', {
+        status: response.status,
+        url: response.config.url,
+        data: response.data
+      });
+    }
+    return response;
+  },
+  (error) => {
+    console.error('❌ API Response Error:', {
+      status: error.response?.status,
+      url: error.config?.url,
+      message: error.message,
+      baseURL: error.config?.baseURL
+    });
+    
+    // Provide helpful error messages based on error type
+    if (error.code === 'ECONNREFUSED' || error.code === 'ERR_NETWORK') {
+      console.error('💡 Backend connection failed. Check if backend is running at:', API_BASE_URL);
+    }
+    
+    return Promise.reject(error);
+  }
+);
 
 export interface ApiResponse<T> {
   data: T;
@@ -44,37 +119,30 @@ export const TraderApi = {
 };
 
 export const SimulationApi = {
-  // FIXED: Use correct endpoint that matches backend
   createSimulation: async (parameters: any = {}): Promise<ApiResponse<any>> => {
     try {
-      console.log('🚀 Creating clean simulation with parameters:', parameters);
+      console.log('🚀 Creating simulation with backend at:', API_BASE_URL);
+      console.log('📊 Parameters:', parameters);
       
-      // FIXED: Use correct endpoint - matches backend '/api/simulation' POST route
       const response = await api.post('/simulation', {
-        // Default clean parameters for real-time chart
         initialPrice: 100,
-        duration: 3600, // 1 hour
+        duration: 3600,
         volatilityFactor: 1.0,
         scenarioType: 'standard',
-        // Override with any provided parameters
         ...parameters
       });
       
-      console.log('✅ Clean simulation created:', response.data);
+      console.log('✅ Simulation created successfully:', response.data);
       return { data: response.data };
     } catch (error: any) {
       console.error('❌ Error creating simulation:', error);
       
-      // Better error handling
       let errorMessage = 'Failed to create simulation';
       if (error.response) {
-        // Server responded with error status
         errorMessage = error.response.data?.error || `Server error: ${error.response.status}`;
       } else if (error.request) {
-        // Request was made but no response received
-        errorMessage = 'No response from server - check if backend is running';
+        errorMessage = `No response from backend server: ${API_BASE_URL}`;
       } else {
-        // Something else happened
         errorMessage = error.message || 'Unknown error';
       }
       
@@ -105,14 +173,13 @@ export const SimulationApi = {
     } catch (error: any) {
       console.error(`Error fetching simulation ${id}:`, error);
       
-      // Better error handling for 404s
       let errorMessage = 'Unknown error';
       if (error.response?.status === 404) {
         errorMessage = 'Simulation not found';
       } else if (error.response) {
         errorMessage = error.response.data?.error || `Server error: ${error.response.status}`;
       } else if (error.request) {
-        errorMessage = 'No response from server';
+        errorMessage = `No response from backend: ${API_BASE_URL}`;
       } else {
         errorMessage = error.message;
       }
@@ -182,21 +249,45 @@ export const SimulationApi = {
   }
 };
 
-// ENHANCED: Better test utilities for debugging
+// Enhanced test utilities with backend URL verification
 export const SimulationUtils = {
-  // Test if basic simulation system is working
+  testBackendConnection: async (): Promise<boolean> => {
+    try {
+      console.log('🧪 Testing backend connection to:', API_BASE_URL);
+      
+      const testResponse = await api.get('/test');
+      console.log('✅ Backend connection successful:', testResponse.data);
+      return true;
+      
+    } catch (error: any) {
+      console.error('❌ Backend connection failed:', error);
+      
+      if (error.code === 'ECONNREFUSED') {
+        console.log('💡 Backend server appears to be down at:', API_BASE_URL);
+      } else if (error.response?.status === 404) {
+        console.log('💡 Backend running but route not found. Check backend routes.');
+      } else if (error.response?.status >= 500) {
+        console.log('💡 Backend server error. Check backend logs.');
+      }
+      
+      return false;
+    }
+  },
+
   testSimulationSystem: async (): Promise<boolean> => {
     try {
-      console.log('🧪 Testing clean simulation system...');
+      console.log('🧪 Testing simulation system...');
       
-      // Test the exact endpoint the frontend uses
-      const testResponse = await api.get('/test');
-      console.log('🔧 API test endpoint response:', testResponse.data);
+      // First test backend connection
+      const backendOk = await SimulationUtils.testBackendConnection();
+      if (!backendOk) {
+        return false;
+      }
       
-      // Try creating a basic simulation
+      // Try creating a simulation
       const simResult = await SimulationApi.createSimulation({
         initialPrice: 100,
-        duration: 30, // 30 minutes
+        duration: 30,
         volatilityFactor: 1.0
       });
       
@@ -205,124 +296,43 @@ export const SimulationUtils = {
         return false;
       }
       
-      console.log('✅ Clean simulation system working! Created simulation:', simResult.data);
+      console.log('✅ Simulation system working! Created:', simResult.data);
       return true;
       
     } catch (error: any) {
       console.error('❌ Simulation system test failed:', error);
-      
-      // Provide helpful debugging info
-      if (error.code === 'ECONNREFUSED') {
-        console.log('💡 Backend appears to be down. Check if server is running on port 3001');
-      } else if (error.response?.status === 404) {
-        console.log('💡 Route not found. Check if backend routes are properly configured');
-      } else if (error.response?.status === 500) {
-        console.log('💡 Server error. Check backend logs for details');
-      }
-      
       return false;
     }
   },
 
-  // Debug API connectivity
-  debugApiConnectivity: async () => {
-    console.log('🔍 Debugging API connectivity...');
-    console.log('API Base URL:', API_BASE_URL);
-    
-    try {
-      // Test basic connectivity
-      const response = await fetch(`${API_BASE_URL}/test`);
-      console.log('✅ API reachable, status:', response.status);
-      
-      if (response.ok) {
-        const data = await response.json();
-        console.log('📡 API response:', data);
-      } else {
-        console.log('❌ API returned error status:', response.status);
+  debugConfiguration: () => {
+    console.log('🔍 Frontend Configuration Debug:', {
+      apiBaseUrl: API_BASE_URL,
+      environment: process.env.NODE_ENV,
+      hostname: window.location.hostname,
+      port: window.location.port,
+      protocol: window.location.protocol,
+      envVars: {
+        REACT_APP_BACKEND_URL: process.env.REACT_APP_BACKEND_URL,
+        REACT_APP_API_BASE_URL: process.env.REACT_APP_API_BASE_URL,
+        REACT_APP_BACKEND_WS_URL: process.env.REACT_APP_BACKEND_WS_URL,
+        REACT_APP_DEBUG: process.env.REACT_APP_DEBUG
       }
-    } catch (error) {
-      console.error('❌ API connection failed:', error);
-    }
-  },
-
-  // Create simulation with recommended settings for beginners
-  createBeginnerSimulation: async (): Promise<ApiResponse<any>> => {
-    console.log('🎯 Creating beginner-friendly simulation...');
-    return await SimulationApi.createSimulation({
-      initialPrice: 100, // Start at $100
-      duration: 3600, // 1 hour
-      volatilityFactor: 1.0, // Normal volatility
-      scenarioType: 'standard'
     });
-  },
-
-  // Create high-frequency simulation for testing
-  createTestSimulation: async (): Promise<ApiResponse<any>> => {
-    console.log('⚡ Creating test simulation...');
-    return await SimulationApi.createSimulation({
-      initialPrice: 50, // Start at $50
-      duration: 1800, // 30 minutes
-      volatilityFactor: 1.5, // Higher volatility for testing
-      scenarioType: 'volatility_challenge'
-    });
-  },
-
-  // Test real-time chart generation
-  testRealTimeChart: async (): Promise<boolean> => {
-    try {
-      console.log('📈 Testing real-time chart generation...');
-      
-      // Create simulation
-      const simResult = await SimulationApi.createSimulation({
-        initialPrice: 100,
-        duration: 60, // 1 hour
-        volatilityFactor: 1.0
-      });
-      
-      if (simResult.error) {
-        console.log('❌ Failed to create simulation for chart test:', simResult.error);
-        return false;
-      }
-      
-      const simId = simResult.data?.simulationId || simResult.data?.data?.id || simResult.data?.id;
-      if (!simId) {
-        console.log('❌ No simulation ID returned');
-        return false;
-      }
-      
-      console.log('✅ Simulation created for chart test:', simId);
-      
-      // Try to start it
-      const startResult = await SimulationApi.startSimulation(simId);
-      if (startResult.error) {
-        console.log('❌ Failed to start simulation:', startResult.error);
-        return false;
-      }
-      
-      console.log('✅ Real-time chart test successful! Simulation started:', simId);
-      console.log('📊 Chart should now be building real-time candles');
-      
-      return true;
-      
-    } catch (error) {
-      console.error('❌ Real-time chart test failed:', error);
-      return false;
-    }
   }
 };
 
-// Enhanced global testing functions for browser console
+// Make debugging functions available in browser console
 if (typeof window !== 'undefined') {
+  (window as any).testBackend = SimulationUtils.testBackendConnection;
   (window as any).testSimulation = SimulationUtils.testSimulationSystem;
-  (window as any).debugAPI = SimulationUtils.debugApiConnectivity;
-  (window as any).testChart = SimulationUtils.testRealTimeChart;
-  (window as any).SimulationUtils = SimulationUtils;
+  (window as any).debugConfig = SimulationUtils.debugConfiguration;
   (window as any).SimulationApi = SimulationApi;
   
   console.log('🛠️ Debug functions available:');
-  console.log('  testSimulation() - Test basic simulation creation');
-  console.log('  debugAPI() - Test API connectivity');
-  console.log('  testChart() - Test real-time chart generation');
+  console.log('  testBackend() - Test backend connection');
+  console.log('  testSimulation() - Test full simulation system');
+  console.log('  debugConfig() - Show configuration details');
 }
 
 export default {
