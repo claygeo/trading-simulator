@@ -1,4 +1,4 @@
-// backend/src/services/simulation/SimulationManager.ts - CRITICAL FIXES
+// backend/src/services/simulation/SimulationManager.ts - COMPLETE WITH ALL MISSING METHODS
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import {
@@ -264,6 +264,59 @@ export class SimulationManager {
     }
     
     throw new Error(`Failed to verify simulation ${simulationId} registration after ${maxAttempts} attempts`);
+  }
+
+  // 🆕 MISSING METHOD: Check if simulation is registered with all systems
+  async isSimulationRegistered(simulationId: string): Promise<boolean> {
+    try {
+      // Check if simulation exists in the manager
+      const simulation = this.simulations.get(simulationId);
+      if (!simulation) {
+        console.log(`❌ [REG CHECK] Simulation ${simulationId} not found in manager`);
+        return false;
+      }
+      
+      // Check if simulation is in ready state (not just created)
+      const status = this.simulationRegistrationStatus.get(simulationId);
+      if (status !== 'ready' && status !== 'starting' && status !== 'running') {
+        console.log(`⏳ [REG CHECK] Simulation ${simulationId} status: ${status} (not ready yet)`);
+        return false;
+      }
+      
+      // Check if candle manager is initialized
+      const candleManager = this.candleManagers.get(simulationId);
+      if (!candleManager) {
+        console.log(`❌ [REG CHECK] Simulation ${simulationId} candle manager not initialized`);
+        return false;
+      }
+      
+      // Check if speed is set
+      const speed = this.simulationSpeeds.get(simulationId);
+      if (speed === undefined) {
+        console.log(`❌ [REG CHECK] Simulation ${simulationId} speed not set`);
+        return false;
+      }
+      
+      // Verify with broadcast manager (if available)
+      if (this.broadcastManager) {
+        // Check if broadcast manager knows about this simulation
+        const hasSimulation = typeof (this.broadcastManager as any).hasSimulation === 'function' 
+          ? (this.broadcastManager as any).hasSimulation(simulationId)
+          : true; // Assume true if method doesn't exist
+        
+        if (!hasSimulation) {
+          console.log(`❌ [REG CHECK] Simulation ${simulationId} not registered with broadcast manager`);
+          return false;
+        }
+      }
+      
+      console.log(`✅ [REG CHECK] Simulation ${simulationId} is fully registered`);
+      return true;
+      
+    } catch (error) {
+      console.error(`❌ [REG CHECK] Error checking registration for ${simulationId}:`, error);
+      return false;
+    }
   }
 
   // CRITICAL FIX: Public method to check if simulation is ready for WebSocket subscriptions

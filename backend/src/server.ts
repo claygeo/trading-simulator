@@ -1,4 +1,4 @@
-// backend/src/server.ts - COMPLETE FIXED VERSION - NO FRONTEND SERVING
+// backend/src/server.ts - COMPLETE FIXED VERSION WITH MISSING ENDPOINTS
 // 🚨 COMPRESSION ELIMINATOR - MUST BE AT TOP
 console.log('🚨 STARTING COMPRESSION ELIMINATION PROCESS...');
 
@@ -480,6 +480,119 @@ app.get('/api/simulation/:id', async (req, res) => {
   }
 });
 
+// 🆕 MISSING ENDPOINT: Simulation ready check endpoint for race condition prevention
+app.get('/api/simulation/:id/ready', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`🔍 [API READY] Checking readiness for simulation: ${id}`);
+    
+    // Check if simulation exists and is ready
+    const simulation = simulationManager.getSimulation(id);
+    
+    if (!simulation) {
+      console.log(`❌ [API READY] Simulation ${id} not found`);
+      return res.status(404).json({ 
+        ready: false, 
+        error: 'Simulation not found',
+        id 
+      });
+    }
+    
+    // Check if simulation is properly registered with all systems
+    const isRegistered = await simulationManager.isSimulationRegistered(id);
+    
+    if (!isRegistered) {
+      console.log(`⏳ [API READY] Simulation ${id} not fully registered yet`);
+      return res.json({ 
+        ready: false, 
+        status: 'registering',
+        id 
+      });
+    }
+    
+    console.log(`✅ [API READY] Simulation ${id} is ready`);
+    res.json({ 
+      ready: true, 
+      status: 'ready',
+      id,
+      state: simulation.state 
+    });
+    
+  } catch (error) {
+    console.error(`❌ [API READY] Error checking simulation ${req.params.id}:`, error);
+    res.status(500).json({ 
+      ready: false, 
+      error: 'Internal server error',
+      id: req.params.id 
+    });
+  }
+});
+
+// 🆕 MISSING ENDPOINT: Wait for simulation ready endpoint (with timeout)
+app.get('/api/simulation/:id/wait-ready', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const maxWaitTime = 30000; // 30 seconds
+    const checkInterval = 500; // 500ms
+    const startTime = Date.now();
+    
+    console.log(`⏳ [API WAIT-READY] Waiting for simulation ${id} to be ready...`);
+    
+    const checkReady = async (): Promise<boolean> => {
+      try {
+        const simulation = simulationManager.getSimulation(id);
+        if (!simulation) return false;
+        
+        const isRegistered = await simulationManager.isSimulationRegistered(id);
+        return isRegistered;
+      } catch (error) {
+        console.error(`❌ [API WAIT-READY] Error checking simulation ${id}:`, error);
+        return false;
+      }
+    };
+    
+    const waitForReady = async () => {
+      while (Date.now() - startTime < maxWaitTime) {
+        if (await checkReady()) {
+          console.log(`✅ [API WAIT-READY] Simulation ${id} is ready after ${Date.now() - startTime}ms`);
+          return res.json({ 
+            ready: true, 
+            waitTime: Date.now() - startTime,
+            id 
+          });
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, checkInterval));
+      }
+      
+      console.log(`⏰ [API WAIT-READY] Timeout waiting for simulation ${id} after ${maxWaitTime}ms`);
+      res.status(408).json({ 
+        ready: false, 
+        error: 'Timeout waiting for simulation to be ready',
+        waitTime: Date.now() - startTime,
+        id 
+      });
+    };
+    
+    waitForReady().catch(error => {
+      console.error(`❌ [API WAIT-READY] Error waiting for simulation ${id}:`, error);
+      res.status(500).json({ 
+        ready: false, 
+        error: 'Internal server error',
+        id 
+      });
+    });
+    
+  } catch (error) {
+    console.error(`❌ [API WAIT-READY] Error in wait-ready endpoint for ${req.params.id}:`, error);
+    res.status(500).json({ 
+      ready: false, 
+      error: 'Internal server error',
+      id: req.params.id 
+    });
+  }
+});
+
 // CRITICAL FIX: Enhanced start simulation endpoint with comprehensive logging
 app.post('/api/simulation/:id/start', async (req, res) => {
   try {
@@ -788,80 +901,6 @@ app.get('/api/simulation/:id/status', async (req, res) => {
   } catch (error) {
     console.error(`❌ [API STATUS] Error getting simulation status for ${req.params.id}:`, error);
     res.status(500).json({ error: 'Failed to get simulation status' });
-  }
-});
-
-// NEW: Simulation ready check endpoint for race condition prevention
-app.get('/api/simulation/:id/ready', async (req, res) => {
-  try {
-    const { id } = req.params;
-    console.log(`🔍 [API READY] Checking if simulation ${id} is ready for WebSocket subscription`);
-    
-    const simulation = simulationManager.getSimulation(id);
-    if (!simulation) {
-      console.error(`❌ [API READY] Simulation ${id} not found`);
-      return res.status(404).json({ 
-        error: 'Simulation not found',
-        ready: false 
-      });
-    }
-    
-    const isReady = simulationManager.isSimulationReady(id);
-    
-    console.log(`✅ [API READY] Simulation ${id} ready status: ${isReady}`);
-    
-    res.json({
-      simulationId: id,
-      ready: isReady,
-      registrationStatus: isReady ? 'ready' : 'pending',
-      candleCount: simulation.priceHistory.length,
-      cleanStart: simulation.priceHistory.length === 0,
-      timestamp: Date.now()
-    });
-  } catch (error) {
-    console.error(`❌ [API READY] Error checking simulation ready status for ${req.params.id}:`, error);
-    res.status(500).json({ 
-      error: 'Failed to check simulation ready status',
-      ready: false 
-    });
-  }
-});
-
-// NEW: Wait for simulation ready endpoint (with timeout)
-app.post('/api/simulation/:id/wait-ready', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { timeout = 5000 } = req.body;
-    
-    console.log(`⏳ [API WAIT] Waiting for simulation ${id} to be ready (timeout: ${timeout}ms)`);
-    
-    const simulation = simulationManager.getSimulation(id);
-    if (!simulation) {
-      console.error(`❌ [API WAIT] Simulation ${id} not found`);
-      return res.status(404).json({ 
-        error: 'Simulation not found',
-        ready: false 
-      });
-    }
-    
-    const isReady = await simulationManager.waitForSimulationReady(id, timeout);
-    
-    console.log(`✅ [API WAIT] Simulation ${id} wait completed: ${isReady}`);
-    
-    res.json({
-      simulationId: id,
-      ready: isReady,
-      registrationStatus: isReady ? 'ready' : 'timeout',
-      candleCount: simulation.priceHistory.length,
-      cleanStart: simulation.priceHistory.length === 0,
-      timestamp: Date.now()
-    });
-  } catch (error) {
-    console.error(`❌ [API WAIT] Error waiting for simulation ready status for ${req.params.id}:`, error);
-    res.status(500).json({ 
-      error: 'Failed to wait for simulation ready status',
-      ready: false 
-    });
   }
 });
 
