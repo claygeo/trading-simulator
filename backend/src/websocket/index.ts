@@ -1,4 +1,4 @@
-// backend/src/websocket/index.ts - FULLY FIXED TEXT FRAME ONLY
+// backend/src/websocket/index.ts - FIXED: Race condition prevention for subscriptions
 import { WebSocket, WebSocketServer } from 'ws';
 import { simulationManager } from '../services/simulation';
 import { BroadcastManager } from '../services/broadcastManager';
@@ -15,15 +15,17 @@ interface WebSocketMessage {
 interface ClientSubscription {
   simulationId: string;
   subscribedAt: number;
+  subscriptionAttempts: number;
   preferences?: {
     includeMarketAnalysis?: boolean;
     includeTimeframeChanges?: boolean;
   };
 }
 
-// Track client subscriptions
+// Track client subscriptions with enhanced metadata
 const clientSubscriptions = new WeakMap<WebSocket, Set<ClientSubscription>>();
 const clientIds = new WeakMap<WebSocket, string>();
+const clientRetryTimers = new WeakMap<WebSocket, Map<string, NodeJS.Timeout>>();
 
 let clientCounter = 0;
 
@@ -32,7 +34,7 @@ export function setupWebSocketServer(
   broadcastManager?: BroadcastManager,
   performanceMonitor?: PerformanceMonitor
 ) {
-  console.log('Setting up WebSocket server with enhanced debugging...');
+  console.log('Setting up WebSocket server with race condition prevention...');
   
   // Log server status
   setInterval(() => {
@@ -54,8 +56,9 @@ export function setupWebSocketServer(
     console.log(`New WebSocket connection established: ${clientId}`);
     console.log(`Total clients: ${wss.clients.size}`);
     
-    // Initialize client subscriptions
+    // Initialize client subscriptions and retry timers
     clientSubscriptions.set(ws, new Set());
+    clientRetryTimers.set(ws, new Map());
     
     // Update connection count for monitoring
     if (performanceMonitor) {
@@ -91,9 +94,10 @@ export function setupWebSocketServer(
           highFrequencyMode: process.env.ENABLE_HFT === 'true',
           marketAnalysis: true,
           dynamicTimeframes: true,
-          realtimeAdaptation: true
+          realtimeAdaptation: true,
+          raceConditionPrevention: true
         },
-        version: '2.0.0'
+        version: '2.1.0'
       }), { binary: false, compress: false, fin: true });
     } catch (error) {
       console.error('Error sending welcome message:', error);
@@ -106,7 +110,7 @@ export function setupWebSocketServer(
         
         switch (message.type) {
           case 'subscribe':
-            handleSubscription(ws, message, clientId);
+            handleSubscriptionWithRetry(ws, message, clientId);
             break;
             
           case 'unsubscribe':
@@ -162,9 +166,16 @@ export function setupWebSocketServer(
       console.log(`WebSocket connection closed: ${clientId}, code: ${code}, reason: ${reason}`);
       console.log(`Remaining clients: ${wss.clients.size - 1}`);
       
-      // Clean up subscriptions
+      // Clean up subscriptions and timers
       clientSubscriptions.delete(ws);
       clientIds.delete(ws);
+      
+      // Clear any retry timers
+      const retryTimers = clientRetryTimers.get(ws);
+      if (retryTimers) {
+        retryTimers.forEach(timer => clearTimeout(timer));
+        clientRetryTimers.delete(ws);
+      }
       
       if (performanceMonitor) {
         performanceMonitor.recordWebSocketConnection(wss.clients.size - 1);
@@ -181,11 +192,11 @@ export function setupWebSocketServer(
     console.error('WebSocket server error:', error);
   });
   
-  console.log('WebSocket server setup complete');
+  console.log('WebSocket server setup complete with race condition prevention');
 }
 
-// Handle subscription with preferences
-function handleSubscription(ws: WebSocket, message: WebSocketMessage, clientId: string) {
+// CRITICAL FIX: Enhanced subscription with retry mechanism and simulation readiness check
+async function handleSubscriptionWithRetry(ws: WebSocket, message: WebSocketMessage, clientId: string) {
   const { simulationId, preferences } = message;
   
   if (!simulationId) {
@@ -197,14 +208,107 @@ function handleSubscription(ws: WebSocket, message: WebSocketMessage, clientId: 
     return;
   }
   
-  console.log(`${clientId} subscribing to simulation: ${simulationId}`);
+  console.log(`🔔 [WS SUB] ${clientId} attempting to subscribe to simulation: ${simulationId}`);
+  
+  // STEP 1: Check if simulation exists
+  const simulation = simulationManager.getSimulation(simulationId);
+  if (!simulation) {
+    console.error(`❌ [WS SUB] Simulation ${simulationId} not found for ${clientId}`);
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: `Simulation ${simulationId} not found`,
+      timestamp: Date.now()
+    }), { binary: false, compress: false, fin: true });
+    return;
+  }
+  
+  // STEP 2: Check if simulation is ready for subscriptions
+  const isReady = simulationManager.isSimulationReady(simulationId);
+  
+  if (!isReady) {
+    console.log(`⏳ [WS SUB] Simulation ${simulationId} not ready yet, will retry for ${clientId}`);
+    
+    // Track subscription attempt
+    const subscriptions = clientSubscriptions.get(ws);
+    if (subscriptions) {
+      const existingSubscription = Array.from(subscriptions).find(sub => sub.simulationId === simulationId);
+      if (existingSubscription) {
+        existingSubscription.subscriptionAttempts++;
+        
+        // Limit retry attempts
+        if (existingSubscription.subscriptionAttempts > 10) {
+          console.error(`❌ [WS SUB] Max retry attempts reached for ${simulationId} and ${clientId}`);
+          ws.send(JSON.stringify({
+            type: 'error',
+            message: `Simulation ${simulationId} failed to become ready after multiple attempts`,
+            timestamp: Date.now()
+          }), { binary: false, compress: false, fin: true });
+          return;
+        }
+      } else {
+        subscriptions.add({
+          simulationId,
+          subscribedAt: Date.now(),
+          subscriptionAttempts: 1,
+          preferences: preferences || {
+            includeMarketAnalysis: true,
+            includeTimeframeChanges: true
+          }
+        });
+      }
+    }
+    
+    // Set up retry timer
+    const retryTimers = clientRetryTimers.get(ws);
+    if (retryTimers) {
+      // Clear existing timer for this simulation
+      const existingTimer = retryTimers.get(simulationId);
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+      }
+      
+      // Set new retry timer with exponential backoff
+      const attempts = Array.from(subscriptions || []).find(s => s.simulationId === simulationId)?.subscriptionAttempts || 1;
+      const retryDelay = Math.min(5000, 500 * Math.pow(2, attempts - 1)); // Cap at 5 seconds
+      
+      console.log(`⏰ [WS SUB] Scheduling retry for ${simulationId} in ${retryDelay}ms (attempt ${attempts})`);
+      
+      const retryTimer = setTimeout(() => {
+        console.log(`🔄 [WS SUB] Retrying subscription for ${simulationId} (attempt ${attempts + 1})`);
+        handleSubscriptionWithRetry(ws, message, clientId);
+      }, retryDelay);
+      
+      retryTimers.set(simulationId, retryTimer);
+    }
+    
+    // Send pending status to client
+    ws.send(JSON.stringify({
+      type: 'subscription_pending',
+      simulationId: simulationId,
+      message: 'Simulation still registering, will retry automatically',
+      retryAttempt: attempts,
+      retryDelay: retryDelay,
+      timestamp: Date.now()
+    }), { binary: false, compress: false, fin: true });
+    
+    return;
+  }
+  
+  // STEP 3: Simulation is ready - proceed with subscription
+  console.log(`✅ [WS SUB] Simulation ${simulationId} is ready, proceeding with subscription for ${clientId}`);
   
   // Track subscription
   const subscriptions = clientSubscriptions.get(ws);
   if (subscriptions) {
+    // Remove any existing subscription for this simulation
+    const existingSubscriptions = Array.from(subscriptions).filter(sub => sub.simulationId === simulationId);
+    existingSubscriptions.forEach(sub => subscriptions.delete(sub));
+    
+    // Add new subscription
     subscriptions.add({
       simulationId,
       subscribedAt: Date.now(),
+      subscriptionAttempts: 1,
       preferences: preferences || {
         includeMarketAnalysis: true,
         includeTimeframeChanges: true
@@ -212,57 +316,65 @@ function handleSubscription(ws: WebSocket, message: WebSocketMessage, clientId: 
     });
   }
   
-  // Get simulation and send current state
-  const simulation = simulationManager.getSimulation(simulationId);
-  if (simulation) {
-    console.log(`Sending initial state for simulation ${simulationId} to ${clientId}`);
-    
-    // Prepare enhanced simulation state
-    const enhancedState = {
-      isRunning: simulation.isRunning,
-      isPaused: simulation.isPaused,
-      currentPrice: simulation.currentPrice,
-      priceHistory: simulation.priceHistory,
-      orderBook: simulation.orderBook,
-      activePositions: simulation.activePositions,
-      recentTrades: simulation.recentTrades.slice(0, 200), // Send more trades initially
-      traderRankings: simulation.traderRankings.slice(0, 20),
-      speed: simulation.parameters.timeCompressionFactor,
-      marketConditions: simulation.marketConditions,
-      parameters: {
-        initialPrice: simulation.parameters.initialPrice,
-        volatilityFactor: simulation.parameters.volatilityFactor,
-        timeCompressionFactor: simulation.parameters.timeCompressionFactor
-      },
-      externalMarketMetrics: simulation.externalMarketMetrics
-    };
-    
-    ws.send(JSON.stringify({
-      simulationId: simulationId,
-      event: {
-        type: 'simulation_state',
-        timestamp: Date.now(),
-        data: enhancedState
-      }
-    }), { binary: false, compress: false, fin: true });
-    
-    // Send confirmation - EXPLICIT TEXT FRAME
-    ws.send(JSON.stringify({
-      type: 'subscription_confirmed',
-      simulationId: simulationId,
-      timestamp: Date.now(),
-      preferences: preferences
-    }), { binary: false, compress: false, fin: true });
-    
-    console.log(`Initial state sent to ${clientId}, trades: ${enhancedState.recentTrades.length}`);
-  } else {
-    console.error(`Simulation ${simulationId} not found for ${clientId}`);
-    ws.send(JSON.stringify({
-      type: 'error',
-      message: `Simulation ${simulationId} not found`,
-      timestamp: Date.now()
-    }), { binary: false, compress: false, fin: true });
+  // Clear any retry timers for this simulation
+  const retryTimers = clientRetryTimers.get(ws);
+  if (retryTimers && retryTimers.has(simulationId)) {
+    clearTimeout(retryTimers.get(simulationId)!);
+    retryTimers.delete(simulationId);
+    console.log(`🧹 [WS SUB] Cleared retry timer for ${simulationId}`);
   }
+  
+  console.log(`📡 [WS SUB] Sending initial state for simulation ${simulationId} to ${clientId}`);
+  
+  // Prepare enhanced simulation state
+  const enhancedState = {
+    isRunning: simulation.isRunning,
+    isPaused: simulation.isPaused,
+    currentPrice: simulation.currentPrice,
+    priceHistory: simulation.priceHistory,
+    orderBook: simulation.orderBook,
+    activePositions: simulation.activePositions,
+    recentTrades: simulation.recentTrades.slice(0, 200),
+    traderRankings: simulation.traderRankings.slice(0, 20),
+    speed: simulation.parameters.timeCompressionFactor,
+    marketConditions: simulation.marketConditions,
+    parameters: {
+      initialPrice: simulation.parameters.initialPrice,
+      volatilityFactor: simulation.parameters.volatilityFactor,
+      timeCompressionFactor: simulation.parameters.timeCompressionFactor
+    },
+    externalMarketMetrics: simulation.externalMarketMetrics,
+    registrationStatus: 'ready',
+    cleanStart: simulation.priceHistory.length === 0,
+    candleCount: simulation.priceHistory.length
+  };
+  
+  ws.send(JSON.stringify({
+    simulationId: simulationId,
+    event: {
+      type: 'simulation_state',
+      timestamp: Date.now(),
+      data: enhancedState
+    }
+  }), { binary: false, compress: false, fin: true });
+  
+  // Send confirmation - EXPLICIT TEXT FRAME
+  ws.send(JSON.stringify({
+    type: 'subscription_confirmed',
+    simulationId: simulationId,
+    timestamp: Date.now(),
+    preferences: preferences,
+    registrationStatus: 'ready',
+    message: 'Successfully subscribed to ready simulation'
+  }), { binary: false, compress: false, fin: true });
+  
+  console.log(`✅ [WS SUB] Subscription confirmed for ${clientId} to ${simulationId}, trades: ${enhancedState.recentTrades.length}, candles: ${enhancedState.candleCount}`);
+}
+
+// Handle subscription with preferences (original function, modified to be race-condition aware)
+function handleSubscription(ws: WebSocket, message: WebSocketMessage, clientId: string) {
+  // Redirect to the new retry-enabled function
+  handleSubscriptionWithRetry(ws, message, clientId);
 }
 
 // Handle unsubscription
@@ -285,6 +397,14 @@ function handleUnsubscription(ws: WebSocket, message: WebSocketMessage, clientId
     if (toRemove) {
       subscriptions.delete(toRemove);
       console.log(`${clientId} unsubscribed from simulation: ${simulationId}`);
+      
+      // Clear any retry timers
+      const retryTimers = clientRetryTimers.get(ws);
+      if (retryTimers && retryTimers.has(simulationId)) {
+        clearTimeout(retryTimers.get(simulationId)!);
+        retryTimers.delete(simulationId);
+        console.log(`🧹 [WS UNSUB] Cleared retry timer for ${simulationId}`);
+      }
       
       ws.send(JSON.stringify({
         type: 'unsubscription_confirmed',
@@ -366,6 +486,8 @@ function handlePreferencesUpdate(ws: WebSocket, message: WebSocketMessage) {
 // Handle debug requests
 function handleDebugRequest(ws: WebSocket, clientId: string, broadcastManager?: BroadcastManager) {
   const subscriptions = clientSubscriptions.get(ws);
+  const retryTimers = clientRetryTimers.get(ws);
+  
   const debugInfo = {
     type: 'debug_info',
     clientId: clientId,
@@ -373,11 +495,14 @@ function handleDebugRequest(ws: WebSocket, clientId: string, broadcastManager?: 
     subscriptions: subscriptions ? Array.from(subscriptions).map(s => ({
       simulationId: s.simulationId,
       subscribedAt: s.subscribedAt,
+      subscriptionAttempts: s.subscriptionAttempts,
       preferences: s.preferences
     })) : [],
+    retryTimers: retryTimers ? Array.from(retryTimers.keys()) : [],
     serverStats: {
       totalClients: ws.readyState === WebSocket.OPEN ? 
-        Array.from((ws as any)._server?.clients || []).length : 0
+        Array.from((ws as any)._server?.clients || []).length : 0,
+      raceConditionPrevention: true
     }
   };
   
@@ -391,7 +516,7 @@ function handleDebugRequest(ws: WebSocket, clientId: string, broadcastManager?: 
   ws.send(JSON.stringify(debugInfo), { binary: false, compress: false, fin: true });
 }
 
-// Enhanced broadcast function that respects client preferences
+// Enhanced broadcast function that respects client preferences and handles race conditions
 export function broadcastToSubscribers(
   wss: WebSocketServer, 
   simulationId: string, 
@@ -408,6 +533,7 @@ export function broadcastToSubscribers(
   
   const messageStr = JSON.stringify(message);
   let sentCount = 0;
+  let skippedCount = 0;
   
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
@@ -417,44 +543,47 @@ export function broadcastToSubscribers(
         const subscription = Array.from(subscriptions).find(sub => sub.simulationId === simulationId);
         
         if (subscription) {
-          // Apply preferences filtering
-          let shouldSend = true;
-          
-          // Filter market analysis if not requested
-          if (event.type === 'price_update' && 
-              event.data?.marketAnalysis && 
-              subscription.preferences?.includeMarketAnalysis === false) {
-            // Remove market analysis from the event
-            const filteredEvent = {
-              ...message,
-              event: {
-                ...message.event,
-                data: {
-                  ...message.event.data,
-                  marketAnalysis: undefined
+          // Only send to clients that have confirmed subscriptions (not pending)
+          if (subscription.subscriptionAttempts <= 1) {
+            // Apply preferences filtering
+            let shouldSend = true;
+            
+            // Filter market analysis if not requested
+            if (event.type === 'price_update' && 
+                event.data?.marketAnalysis && 
+                subscription.preferences?.includeMarketAnalysis === false) {
+              // Remove market analysis from the event
+              const filteredEvent = {
+                ...message,
+                event: {
+                  ...message.event,
+                  data: {
+                    ...message.event.data,
+                    marketAnalysis: undefined
+                  }
                 }
-              }
-            };
-            // FIXED: Use explicit text frame with all options
-            client.send(JSON.stringify(filteredEvent), { binary: false, compress: false, fin: true });
-            shouldSend = false;
-          }
-          
-          // Filter timeframe changes if not requested
-          if (event.type === 'timeframe_change' && 
-              subscription.preferences?.includeTimeframeChanges === false) {
-            shouldSend = false;
-          }
-          
-          // Apply custom filter if provided
-          if (shouldSend && filterFn && !filterFn(client)) {
-            shouldSend = false;
-          }
-          
-          if (shouldSend) {
-            // FIXED: Use explicit text frame with all options
-            client.send(messageStr, { binary: false, compress: false, fin: true });
-            sentCount++;
+              };
+              client.send(JSON.stringify(filteredEvent), { binary: false, compress: false, fin: true });
+              shouldSend = false;
+            }
+            
+            // Filter timeframe changes if not requested
+            if (event.type === 'timeframe_change' && 
+                subscription.preferences?.includeTimeframeChanges === false) {
+              shouldSend = false;
+            }
+            
+            // Apply custom filter if provided
+            if (shouldSend && filterFn && !filterFn(client)) {
+              shouldSend = false;
+            }
+            
+            if (shouldSend) {
+              client.send(messageStr, { binary: false, compress: false, fin: true });
+              sentCount++;
+            }
+          } else {
+            skippedCount++;
           }
         }
       }
@@ -462,7 +591,7 @@ export function broadcastToSubscribers(
   });
   
   if (event.type === 'trade' || event.type === 'price_update') {
-    console.log(`Broadcast ${event.type} to ${sentCount} clients for simulation ${simulationId}`);
+    console.log(`Broadcast ${event.type} to ${sentCount} clients for simulation ${simulationId} (skipped ${skippedCount} pending)`);
   }
 }
 
@@ -473,7 +602,6 @@ export function broadcastToAll(wss: WebSocketServer, message: any) {
   
   wss.clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
-      // FIXED: Use explicit text frame with all options
       client.send(messageStr, { binary: false, compress: false, fin: true });
       sentCount++;
     }
@@ -489,7 +617,9 @@ export function getSubscribedClients(wss: WebSocketServer, simulationId: string)
   wss.clients.forEach((client) => {
     const subscriptions = clientSubscriptions.get(client);
     if (subscriptions) {
-      const hasSubscription = Array.from(subscriptions).some(sub => sub.simulationId === simulationId);
+      const hasSubscription = Array.from(subscriptions).some(sub => 
+        sub.simulationId === simulationId && sub.subscriptionAttempts <= 1
+      );
       if (hasSubscription) {
         subscribedClients.push(client);
       }
@@ -499,16 +629,18 @@ export function getSubscribedClients(wss: WebSocketServer, simulationId: string)
   return subscribedClients;
 }
 
-// Get subscription statistics
+// Get subscription statistics with race condition info
 export function getSubscriptionStats(wss: WebSocketServer): {
   totalConnections: number;
   totalSubscriptions: number;
-  subscriptionsBySimulation: Map<string, number>;
+  pendingSubscriptions: number;
+  subscriptionsBySimulation: Map<string, { confirmed: number; pending: number }>;
 } {
   const stats = {
     totalConnections: wss.clients.size,
     totalSubscriptions: 0,
-    subscriptionsBySimulation: new Map<string, number>()
+    pendingSubscriptions: 0,
+    subscriptionsBySimulation: new Map<string, { confirmed: number; pending: number }>()
   };
   
   wss.clients.forEach((client) => {
@@ -516,8 +648,20 @@ export function getSubscriptionStats(wss: WebSocketServer): {
     if (subscriptions) {
       subscriptions.forEach(sub => {
         stats.totalSubscriptions++;
-        const current = stats.subscriptionsBySimulation.get(sub.simulationId) || 0;
-        stats.subscriptionsBySimulation.set(sub.simulationId, current + 1);
+        
+        if (sub.subscriptionAttempts > 1) {
+          stats.pendingSubscriptions++;
+        }
+        
+        const current = stats.subscriptionsBySimulation.get(sub.simulationId) || { confirmed: 0, pending: 0 };
+        
+        if (sub.subscriptionAttempts <= 1) {
+          current.confirmed++;
+        } else {
+          current.pending++;
+        }
+        
+        stats.subscriptionsBySimulation.set(sub.simulationId, current);
       });
     }
   });

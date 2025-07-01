@@ -1,4 +1,4 @@
-// backend/src/server.ts - BACKEND ONLY - NO FRONTEND SERVING
+// backend/src/server.ts - COMPLETE FIXED VERSION - NO FRONTEND SERVING
 // 🚨 COMPRESSION ELIMINATOR - MUST BE AT TOP
 console.log('🚨 STARTING COMPRESSION ELIMINATION PROCESS...');
 
@@ -390,65 +390,78 @@ class CandleUpdateCoordinator {
   }
 }
 
-// Create simulation - FIXED to ensure clean start
+// CRITICAL FIX: Enhanced simulation creation with race condition prevention
 app.post('/api/simulation', async (req, res) => {
   try {
-    console.log('🚀 Creating simulation with GUARANTEED clean start...');
+    console.log('🚀 [API CREATE] Starting simulation creation with race condition prevention...');
     
     const simulation = await simulationManager.createSimulation(req.body);
     
-    // 🎯 CRITICAL: Ensure CandleUpdateCoordinator has clean state
+    console.log(`✅ [API CREATE] Simulation ${simulation.id} created successfully`);
+    
+    // CRITICAL FIX: Ensure CandleUpdateCoordinator has clean state
     if (candleUpdateCoordinator) {
       candleUpdateCoordinator.ensureCleanStart(simulation.id);
+      console.log(`🧹 [API CREATE] CandleUpdateCoordinator cleaned for ${simulation.id}`);
     }
     
-    // Verify simulation exists before responding
-    await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+    // CRITICAL FIX: Wait for full registration before responding
+    console.log(`⏳ [API CREATE] Waiting for simulation ${simulation.id} to be fully registered...`);
+    const isReady = await simulationManager.waitForSimulationReady(simulation.id, 3000);
     
-    const verifySimulation = simulationManager.getSimulation(simulation.id);
-    if (!verifySimulation) {
-      console.error(`💥 VERIFICATION FAILED: Simulation ${simulation.id} not found after creation!`);
+    if (!isReady) {
+      console.error(`💥 [API CREATE] Simulation ${simulation.id} failed to register within timeout`);
       return res.status(500).json({ 
-        error: 'Simulation creation verification failed' 
+        error: 'Simulation creation timeout - backend registration failed',
+        simulationId: simulation.id 
       });
     }
     
     // FINAL VERIFICATION: Ensure truly clean start
-    if (verifySimulation.priceHistory.length > 0) {
-      console.error(`💥 CLEAN START VIOLATION: Simulation has ${verifySimulation.priceHistory.length} candles after creation!`);
+    if (simulation.priceHistory.length > 0) {
+      console.error(`💥 [API CREATE] CLEAN START VIOLATION: Simulation has ${simulation.priceHistory.length} candles after creation!`);
       // Force clean
-      verifySimulation.priceHistory = [];
-      console.log(`🧹 FORCED clean start - cleared candles`);
+      simulation.priceHistory = [];
+      console.log(`🧹 [API CREATE] FORCED clean start - cleared candles`);
     }
     
-    console.log(`✅ Simulation ${simulation.id} creation VERIFIED with ${verifySimulation.priceHistory.length} candles (MUST BE 0)`);
+    console.log(`✅ [API CREATE] Simulation ${simulation.id} fully registered and verified clean`);
     
     res.json({ 
       simulationId: simulation.id,
       data: simulation,
-      candleCount: verifySimulation.priceHistory.length,
-      cleanStart: verifySimulation.priceHistory.length === 0,
-      message: `Clean simulation created - chart will build live when started!`
+      candleCount: simulation.priceHistory.length,
+      cleanStart: simulation.priceHistory.length === 0,
+      isReady: true,
+      message: `Clean simulation created - chart will build live when started!`,
+      registrationStatus: 'ready'
     });
+    
   } catch (error) {
-    console.error('❌ Error creating simulation:', error);
-    res.status(500).json({ error: 'Failed to create simulation' });
+    console.error('❌ [API CREATE] Error creating simulation:', error);
+    res.status(500).json({ 
+      error: 'Failed to create simulation',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 });
 
-// Get simulation
-app.get('/api/simulation/:id', (req, res) => {
+// Get simulation with registration status
+app.get('/api/simulation/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    console.log(`🔍 Fetching simulation: ${id}`);
+    console.log(`🔍 [API GET] Fetching simulation: ${id}`);
     
     const simulation = simulationManager.getSimulation(id);
     if (!simulation) {
-      console.error(`❌ Simulation not found: ${id}`);
+      console.error(`❌ [API GET] Simulation not found: ${id}`);
       return res.status(404).json({ error: 'Simulation not found' });
     }
     
-    console.log(`✅ Simulation found: ${id} (${simulation.priceHistory.length} candles)`);
+    // Check if simulation is ready for WebSocket subscriptions
+    const isReady = simulationManager.isSimulationReady(id);
+    
+    console.log(`✅ [API GET] Simulation found: ${id} (${simulation.priceHistory.length} candles, ready: ${isReady})`);
     
     // Return in the format the frontend expects
     res.json({ 
@@ -456,81 +469,171 @@ app.get('/api/simulation/:id', (req, res) => {
         ...simulation,
         type: 'real-time',
         chartStatus: simulation.priceHistory.length === 0 ? 'empty-ready' : 'building',
-        candleCount: simulation.priceHistory.length
+        candleCount: simulation.priceHistory.length,
+        isReady: isReady,
+        registrationStatus: isReady ? 'ready' : 'pending'
       }
     });
   } catch (error) {
-    console.error('❌ Error getting simulation:', error);
+    console.error('❌ [API GET] Error getting simulation:', error);
     res.status(500).json({ error: 'Failed to get simulation' });
   }
 });
 
-// Start simulation
-app.post('/api/simulation/:id/start', (req, res) => {
+// CRITICAL FIX: Enhanced start simulation endpoint with comprehensive logging
+app.post('/api/simulation/:id/start', async (req, res) => {
   try {
     const { id } = req.params;
-    console.log(`▶️ Starting simulation: ${id}`);
+    console.log(`🚀 [API START] === STARTING SIMULATION ${id} ===`);
     
-    simulationManager.startSimulation(id);
-    res.json({ 
+    // STEP 1: Verify simulation exists
+    const simulation = simulationManager.getSimulation(id);
+    if (!simulation) {
+      console.error(`❌ [API START] Simulation ${id} not found in manager`);
+      return res.status(404).json({ error: 'Simulation not found' });
+    }
+    
+    console.log(`✅ [API START] Simulation ${id} found in manager`);
+    
+    // STEP 2: Check if simulation is ready
+    const isReady = simulationManager.isSimulationReady(id);
+    if (!isReady) {
+      console.error(`❌ [API START] Simulation ${id} not ready for starting`);
+      return res.status(400).json({ error: 'Simulation not ready - still registering' });
+    }
+    
+    console.log(`✅ [API START] Simulation ${id} is ready for starting`);
+    
+    // STEP 3: Attempt to start simulation with detailed logging
+    console.log(`⚡ [API START] Calling simulationManager.startSimulation(${id})`);
+    
+    try {
+      simulationManager.startSimulation(id);
+      console.log(`✅ [API START] simulationManager.startSimulation() completed successfully`);
+    } catch (startError) {
+      console.error(`💥 [API START] simulationManager.startSimulation() failed:`, startError);
+      throw startError; // Re-throw to be caught by outer try-catch
+    }
+    
+    // STEP 4: Verify simulation actually started
+    const updatedSimulation = simulationManager.getSimulation(id);
+    if (!updatedSimulation?.isRunning) {
+      console.error(`💥 [API START] Simulation ${id} failed to start - isRunning still false`);
+      return res.status(500).json({ error: 'Simulation failed to start properly' });
+    }
+    
+    console.log(`✅ [API START] Simulation ${id} confirmed running`);
+    
+    // STEP 5: Send success response
+    const response = {
       success: true,
       status: 'started',
-      message: 'Real-time chart generation started - candles will appear smoothly'
-    });
+      simulationId: id,
+      isRunning: updatedSimulation.isRunning,
+      isPaused: updatedSimulation.isPaused,
+      currentPrice: updatedSimulation.currentPrice,
+      candleCount: updatedSimulation.priceHistory.length,
+      message: 'Real-time chart generation started - candles will appear smoothly',
+      timestamp: Date.now()
+    };
+    
+    console.log(`📡 [API START] Sending success response:`, response);
+    res.json(response);
+    
+    console.log(`🎉 [API START] === SIMULATION ${id} STARTED SUCCESSFULLY ===`);
+    
   } catch (error) {
-    console.error('❌ Error starting simulation:', error);
-    res.status(500).json({ error: 'Failed to start simulation' });
+    console.error(`💥 [API START] === ERROR STARTING SIMULATION ${req.params.id} ===`);
+    console.error(`💥 [API START] Error details:`, {
+      name: error instanceof Error ? error.name : 'Unknown',
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    
+    res.status(500).json({ 
+      error: 'Failed to start simulation',
+      simulationId: req.params.id,
+      details: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: Date.now()
+    });
   }
 });
 
-// Pause simulation
-app.post('/api/simulation/:id/pause', (req, res) => {
+// Enhanced pause simulation endpoint
+app.post('/api/simulation/:id/pause', async (req, res) => {
   try {
     const { id } = req.params;
-    console.log(`⏸️ Pausing simulation: ${id}`);
+    console.log(`⏸️ [API PAUSE] Pausing simulation: ${id}`);
+    
+    const simulation = simulationManager.getSimulation(id);
+    if (!simulation) {
+      console.error(`❌ [API PAUSE] Simulation ${id} not found`);
+      return res.status(404).json({ error: 'Simulation not found' });
+    }
+    
+    if (!simulation.isRunning) {
+      console.warn(`⚠️ [API PAUSE] Simulation ${id} is not running`);
+      return res.status(400).json({ error: 'Simulation is not running' });
+    }
     
     simulationManager.pauseSimulation(id);
+    
+    console.log(`✅ [API PAUSE] Simulation ${id} paused successfully`);
+    
     res.json({ 
       success: true,
-      status: 'paused'
+      status: 'paused',
+      simulationId: id,
+      message: 'Simulation paused successfully'
     });
   } catch (error) {
-    console.error('❌ Error pausing simulation:', error);
+    console.error(`❌ [API PAUSE] Error pausing simulation ${req.params.id}:`, error);
     res.status(500).json({ error: 'Failed to pause simulation' });
   }
 });
 
-// FIXED Reset endpoint with enhanced clean start logic
-app.post('/api/simulation/:id/reset', (req, res) => {
+// Enhanced reset endpoint with comprehensive clean start logic
+app.post('/api/simulation/:id/reset', async (req, res) => {
   try {
     const { id } = req.params;
-    console.log(`🔄 Resetting simulation with GUARANTEED clean start: ${id}`);
+    console.log(`🔄 [API RESET] === RESETTING SIMULATION ${id} ===`);
     
-    // Reset the simulation in SimulationManager
+    // STEP 1: Verify simulation exists
+    const simulation = simulationManager.getSimulation(id);
+    if (!simulation) {
+      console.error(`❌ [API RESET] Simulation ${id} not found`);
+      return res.status(404).json({ error: 'Simulation not found' });
+    }
+    
+    console.log(`✅ [API RESET] Simulation ${id} found, proceeding with reset`);
+    
+    // STEP 2: Reset the simulation in SimulationManager
+    console.log(`🔄 [API RESET] Calling simulationManager.resetSimulation(${id})`);
     simulationManager.resetSimulation(id);
+    console.log(`✅ [API RESET] SimulationManager reset completed`);
     
-    // CRITICAL FIX: Also clear candles in CandleUpdateCoordinator
+    // STEP 3: Clear candles in CandleUpdateCoordinator
     if (candleUpdateCoordinator) {
       candleUpdateCoordinator.clearCandles(id);
       candleUpdateCoordinator.ensureCleanStart(id);
-      console.log(`🧹 Cleared candles in coordinator for simulation ${id}`);
+      console.log(`🧹 [API RESET] CandleUpdateCoordinator cleared for ${id}`);
     }
     
-    // Verify the simulation is actually reset
+    // STEP 4: Verify the simulation is actually reset
     const resetSimulation = simulationManager.getSimulation(id);
     if (resetSimulation) {
-      console.log(`✅ Reset verification: ${resetSimulation.priceHistory.length} candles (should be 0)`);
+      console.log(`🔍 [API RESET] Reset verification: ${resetSimulation.priceHistory.length} candles (should be 0)`);
       
       if (resetSimulation.priceHistory.length > 0) {
-        console.error(`💥 RESET FAILURE: Still has ${resetSimulation.priceHistory.length} candles after reset!`);
+        console.error(`💥 [API RESET] RESET FAILURE: Still has ${resetSimulation.priceHistory.length} candles after reset!`);
         // Force clear
         resetSimulation.priceHistory = [];
-        console.log(`🧹 FORCED cleanup: Reset candles to 0`);
+        console.log(`🧹 [API RESET] FORCED cleanup: Reset candles to 0`);
       }
       
-      // Send updated state to confirm clean reset
+      // STEP 5: Send updated state to confirm clean reset
       if (broadcastManager) {
-        broadcastManager.sendDirectMessage(id, {
+        const resetMessage = {
           type: 'simulation_reset',
           timestamp: Date.now(),
           data: {
@@ -540,35 +643,62 @@ app.post('/api/simulation/:id/reset', (req, res) => {
             currentPrice: resetSimulation.currentPrice,
             priceHistory: resetSimulation.priceHistory, // Should be empty
             candleCount: resetSimulation.priceHistory.length,
+            cleanStart: true,
             message: 'Simulation reset to clean state - chart will start empty'
           }
-        });
+        };
+        
+        broadcastManager.sendDirectMessage(id, resetMessage);
+        console.log(`📡 [API RESET] Reset broadcast sent for ${id}`);
       }
     }
     
-    res.json({ 
+    const response = {
       success: true,
       status: 'reset',
+      simulationId: id,
       candleCount: resetSimulation?.priceHistory.length || 0,
       cleanStart: (resetSimulation?.priceHistory.length || 0) === 0,
-      message: 'Simulation reset to clean state - chart will start empty'
-    });
+      isRunning: false,
+      isPaused: false,
+      message: 'Simulation reset to clean state - chart will start empty',
+      timestamp: Date.now()
+    };
+    
+    console.log(`📡 [API RESET] Sending reset response:`, response);
+    res.json(response);
+    
+    console.log(`🎉 [API RESET] === SIMULATION ${id} RESET SUCCESSFULLY ===`);
+    
   } catch (error) {
-    console.error('❌ Error resetting simulation:', error);
-    res.status(500).json({ error: 'Failed to reset simulation' });
+    console.error(`💥 [API RESET] === ERROR RESETTING SIMULATION ${req.params.id} ===`);
+    console.error(`💥 [API RESET] Error details:`, error);
+    res.status(500).json({ 
+      error: 'Failed to reset simulation',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 });
 
-// Speed control
-app.post('/api/simulation/:id/speed', (req, res) => {
+// Enhanced speed control endpoint
+app.post('/api/simulation/:id/speed', async (req, res) => {
   try {
     const { id } = req.params;
     const { speed } = req.body;
     
+    console.log(`⚡ [API SPEED] Setting speed for ${id} to ${speed}x`);
+    
     if (typeof speed !== 'number' || speed < 0.1 || speed > 100) {
+      console.error(`❌ [API SPEED] Invalid speed value: ${speed}`);
       return res.status(400).json({ 
         error: 'Invalid speed value. Must be between 0.1 and 100' 
       });
+    }
+    
+    const simulation = simulationManager.getSimulation(id);
+    if (!simulation) {
+      console.error(`❌ [API SPEED] Simulation ${id} not found`);
+      return res.status(404).json({ error: 'Simulation not found' });
     }
     
     simulationManager.setSimulationSpeed(id, speed);
@@ -577,20 +707,19 @@ app.post('/api/simulation/:id/speed', (req, res) => {
       candleUpdateCoordinator.setSimulationSpeed(id, speed);
     }
     
-    const simulation = simulationManager.getSimulation(id);
-    if (!simulation) {
-      return res.status(404).json({ error: 'Simulation not found' });
-    }
-    
     if (broadcastManager) {
       broadcastManager.sendDirectMessage(id, {
         type: 'speed_change',
         timestamp: Date.now(),
-        data: { speed: speed, simulationTime: simulation.currentTime }
+        data: { 
+          speed: speed, 
+          simulationTime: simulation.currentTime,
+          message: `Speed changed to ${speed}x`
+        }
       });
     }
     
-    console.log(`⚡ Simulation ${id} speed changed to ${speed}x`);
+    console.log(`✅ [API SPEED] Simulation ${id} speed changed to ${speed}x`);
     
     res.json({ 
       success: true,
@@ -600,18 +729,21 @@ app.post('/api/simulation/:id/speed', (req, res) => {
       message: `Speed set to ${speed}x - real-time candle generation adjusted`
     });
   } catch (error) {
-    console.error('❌ Error setting simulation speed:', error);
+    console.error(`❌ [API SPEED] Error setting simulation speed for ${req.params.id}:`, error);
     res.status(500).json({ error: 'Failed to set simulation speed' });
   }
 });
 
-// Get simulation status
-app.get('/api/simulation/:id/status', (req, res) => {
+// Enhanced status endpoint with detailed information
+app.get('/api/simulation/:id/status', async (req, res) => {
   try {
     const { id } = req.params;
+    console.log(`📊 [API STATUS] Getting status for simulation: ${id}`);
+    
     const simulation = simulationManager.getSimulation(id);
     
     if (!simulation) {
+      console.error(`❌ [API STATUS] Simulation ${id} not found`);
       return res.status(404).json({ error: 'Simulation not found' });
     }
     
@@ -619,10 +751,14 @@ app.get('/api/simulation/:id/status', (req, res) => {
     const coordinatorCandleCount = candleUpdateCoordinator ? 
       candleUpdateCoordinator.getCandleCount(id) : 0;
     
-    res.json({
+    // Check registration status
+    const isReady = simulationManager.isSimulationReady(id);
+    
+    const status = {
       id: simulation.id,
       isRunning: simulation.isRunning,
       isPaused: simulation.isPaused,
+      isReady: isReady,
       speed: simulation.parameters.timeCompressionFactor,
       currentPrice: simulation.currentPrice,
       candleCount: simulation.priceHistory.length,
@@ -632,13 +768,100 @@ app.get('/api/simulation/:id/status', (req, res) => {
       activePositions: simulation.activePositions.length,
       type: 'real-time',
       cleanStart: simulation.priceHistory.length === 0,
+      currentTime: simulation.currentTime,
+      startTime: simulation.startTime,
+      endTime: simulation.endTime,
+      registrationStatus: isReady ? 'ready' : 'pending',
       message: simulation.priceHistory.length === 0 
         ? 'Ready to start - chart will fill smoothly in real-time'
-        : `Building chart: ${simulation.priceHistory.length} candles generated`
+        : `Building chart: ${simulation.priceHistory.length} candles generated`,
+      timestamp: Date.now()
+    };
+    
+    console.log(`✅ [API STATUS] Status retrieved for ${id}:`, {
+      isRunning: status.isRunning,
+      candleCount: status.candleCount,
+      isReady: status.isReady
+    });
+    
+    res.json(status);
+  } catch (error) {
+    console.error(`❌ [API STATUS] Error getting simulation status for ${req.params.id}:`, error);
+    res.status(500).json({ error: 'Failed to get simulation status' });
+  }
+});
+
+// NEW: Simulation ready check endpoint for race condition prevention
+app.get('/api/simulation/:id/ready', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`🔍 [API READY] Checking if simulation ${id} is ready for WebSocket subscription`);
+    
+    const simulation = simulationManager.getSimulation(id);
+    if (!simulation) {
+      console.error(`❌ [API READY] Simulation ${id} not found`);
+      return res.status(404).json({ 
+        error: 'Simulation not found',
+        ready: false 
+      });
+    }
+    
+    const isReady = simulationManager.isSimulationReady(id);
+    
+    console.log(`✅ [API READY] Simulation ${id} ready status: ${isReady}`);
+    
+    res.json({
+      simulationId: id,
+      ready: isReady,
+      registrationStatus: isReady ? 'ready' : 'pending',
+      candleCount: simulation.priceHistory.length,
+      cleanStart: simulation.priceHistory.length === 0,
+      timestamp: Date.now()
     });
   } catch (error) {
-    console.error('❌ Error getting simulation status:', error);
-    res.status(500).json({ error: 'Failed to get simulation status' });
+    console.error(`❌ [API READY] Error checking simulation ready status for ${req.params.id}:`, error);
+    res.status(500).json({ 
+      error: 'Failed to check simulation ready status',
+      ready: false 
+    });
+  }
+});
+
+// NEW: Wait for simulation ready endpoint (with timeout)
+app.post('/api/simulation/:id/wait-ready', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { timeout = 5000 } = req.body;
+    
+    console.log(`⏳ [API WAIT] Waiting for simulation ${id} to be ready (timeout: ${timeout}ms)`);
+    
+    const simulation = simulationManager.getSimulation(id);
+    if (!simulation) {
+      console.error(`❌ [API WAIT] Simulation ${id} not found`);
+      return res.status(404).json({ 
+        error: 'Simulation not found',
+        ready: false 
+      });
+    }
+    
+    const isReady = await simulationManager.waitForSimulationReady(id, timeout);
+    
+    console.log(`✅ [API WAIT] Simulation ${id} wait completed: ${isReady}`);
+    
+    res.json({
+      simulationId: id,
+      ready: isReady,
+      registrationStatus: isReady ? 'ready' : 'timeout',
+      candleCount: simulation.priceHistory.length,
+      cleanStart: simulation.priceHistory.length === 0,
+      timestamp: Date.now()
+    });
+  } catch (error) {
+    console.error(`❌ [API WAIT] Error waiting for simulation ready status for ${req.params.id}:`, error);
+    res.status(500).json({ 
+      error: 'Failed to wait for simulation ready status',
+      ready: false 
+    });
   }
 });
 
@@ -900,9 +1123,6 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-// 🚀 REMOVED STATIC FILE SERVING - Backend only serves API routes
-// No more static file serving or frontend routing
-
 // Create HTTP server
 const server = http.createServer(app);
 
@@ -1021,6 +1241,9 @@ server.listen(PORT, async () => {
   console.log(`✅ perMessageDeflate: false - No Blob conversion issues`);
   console.log(`🎯 COMPRESSION ELIMINATOR ACTIVE - All compression vectors blocked`);
   console.log(`📍 Frontend should be on Netlify, Backend serves API only`);
+  console.log(`🛡️ RACE CONDITION PREVENTION ACTIVE`);
+  console.log(`🔄 Enhanced Registration Tracking System`);
+  console.log(`⚡ Comprehensive Logging & Error Handling`);
   
   await initializeServices();
 });
