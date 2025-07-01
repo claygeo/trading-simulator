@@ -1,4 +1,4 @@
-// frontend/src/components/Dashboard.tsx - REACT 18+ COMPATIBLE FIX
+// frontend/src/components/Dashboard.tsx - CRITICAL FIXES for Race Conditions
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -64,6 +64,11 @@ const Dashboard: React.FC = () => {
   const [averageExecutionTime, setAverageExecutionTime] = useState<number>(0);
   const [isHighFrequencyMode, setIsHighFrequencyMode] = useState<boolean>(false);
   
+  // CRITICAL FIX: Enhanced WebSocket ready state tracking with registration status
+  const [isWebSocketReady, setIsWebSocketReady] = useState<boolean>(false);
+  const [simulationRegistrationStatus, setSimulationRegistrationStatus] = useState<'creating' | 'pending' | 'ready' | 'error'>('creating');
+  const [initializationStep, setInitializationStep] = useState<string>('Starting...');
+  
   // Refs
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const initializationRef = useRef<boolean>(false);
@@ -88,9 +93,9 @@ const Dashboard: React.FC = () => {
     'quantum': 100
   } as const;
 
-  // Use WebSocket with simulationId
+  // CRITICAL FIX: Use WebSocket with proper ready state management
   const { isConnected, lastMessage, setPauseState, connectionError, messageStats } = useWebSocket(
-    simulationId || undefined,
+    isWebSocketReady && simulationRegistrationStatus === 'ready' ? simulationId || undefined : undefined,
     simulation?.isPaused
   );
 
@@ -99,7 +104,7 @@ const Dashboard: React.FC = () => {
     const timestamp = new Date().toLocaleTimeString();
     console.log(`[Dashboard ${timestamp}] ${message}`);
     debugLogCountRef.current++;
-  }, []); // Empty deps to prevent recreation
+  }, []);
 
   // CRITICAL FIX: Memoized market condition detector
   const determineMarketCondition = useCallback((): 'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash' => {
@@ -130,7 +135,7 @@ const Dashboard: React.FC = () => {
     if (percentChange < -3) return 'bearish';
     
     return 'calm';
-  }, [priceHistory, currentPrice]); // Only depend on actual data
+  }, [priceHistory, currentPrice]);
 
   // CRITICAL FIX: Optimized state update function with React 18+ automatic batching
   const updateSimulationState = useCallback((data: any, eventType: string) => {
@@ -143,7 +148,6 @@ const Dashboard: React.FC = () => {
     });
 
     // React 18+ automatically batches these state updates
-    // No need for manual batching - React handles it efficiently
     if (data.currentPrice !== undefined) {
       setCurrentPrice(data.currentPrice);
     }
@@ -249,8 +253,14 @@ const Dashboard: React.FC = () => {
     switch (type) {
       case 'simulation_state':
         if (data) {
-          addDebugLog(`Loading initial state: ${data.recentTrades?.length || 0} trades, price: $${data.currentPrice}`);
+          addDebugLog(`Loading initial state: ${data.recentTrades?.length || 0} trades, price: $${data.currentPrice}, candles: ${data.candleCount || 0}`);
           updateSimulationState(data, 'simulation_state');
+          
+          // Update registration status based on received data
+          if (data.registrationStatus === 'ready') {
+            setSimulationRegistrationStatus('ready');
+            addDebugLog('Simulation confirmed ready by backend');
+          }
         }
         break;
         
@@ -280,6 +290,13 @@ const Dashboard: React.FC = () => {
           });
           
           setTotalTradesProcessed(prev => prev + 1);
+        }
+        break;
+        
+      case 'candle_update':
+        if (data && data.priceHistory) {
+          addDebugLog(`Candle update: ${data.candleCount} candles, live: ${data.isLive}`);
+          setPriceHistory(data.priceHistory);
         }
         break;
         
@@ -342,7 +359,7 @@ const Dashboard: React.FC = () => {
         addDebugLog(`Unhandled event type: ${type}`);
     }
     
-  }, [lastMessage, simulationId, simulation?.id, updateSimulationState, addDebugLog]); // FIXED: Stable dependencies only
+  }, [lastMessage, simulationId, simulation?.id, updateSimulationState, addDebugLog]);
 
   // CRITICAL FIX: Separate effect for market condition updates with proper cleanup
   useEffect(() => {
@@ -358,7 +375,7 @@ const Dashboard: React.FC = () => {
         updateTimeoutRef.current = null;
       }
     };
-  }, [priceHistory.length, currentPrice]); // Only when data changes
+  }, [priceHistory.length, currentPrice]);
 
   // Cleanup effect for timeouts
   useEffect(() => {
@@ -379,15 +396,18 @@ const Dashboard: React.FC = () => {
     return 'BTC/USDT';
   }, []);
 
-  // SIMPLIFIED: Create simulation without complex validation
+  // CRITICAL FIX: Enhanced simulation initialization with race condition prevention
   useEffect(() => {
     if (initializationRef.current) return;
     initializationRef.current = true;
 
     const initSimulation = async () => {
       setLoading(true);
+      setSimulationRegistrationStatus('creating');
       
       try {
+        // STEP 1: Create simulation
+        setInitializationStep('Creating simulation...');
         addDebugLog("Creating simulation...");
         
         const response = await SimulationApi.createSimulation({
@@ -416,16 +436,59 @@ const Dashboard: React.FC = () => {
         addDebugLog(`Simulation created with ID: ${simId}`);
         setSimulationId(simId);
         
-        // Small delay for backend initialization
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // STEP 2: Check registration status from response
+        if (response.data?.registrationStatus === 'ready' && response.data?.isReady) {
+          addDebugLog('Backend confirmed simulation is ready immediately');
+          setSimulationRegistrationStatus('ready');
+        } else {
+          setSimulationRegistrationStatus('pending');
+          setInitializationStep('Waiting for backend registration...');
+          addDebugLog("Backend still registering simulation...");
+        }
+        
+        // STEP 3: Wait for simulation to be ready using new API endpoint
+        setInitializationStep('Verifying simulation readiness...');
+        addDebugLog("Checking simulation readiness with backend...");
+        
+        let isReady = false;
+        let attempts = 0;
+        const maxAttempts = 10;
+        
+        while (!isReady && attempts < maxAttempts) {
+          attempts++;
+          addDebugLog(`Readiness check attempt ${attempts}/${maxAttempts}`);
+          
+          try {
+            const readyResponse = await fetch(`/api/simulation/${simId}/ready`);
+            const readyData = await readyResponse.json();
+            
+            if (readyData.ready) {
+              isReady = true;
+              addDebugLog(`✅ Simulation ${simId} confirmed ready by backend!`);
+              setSimulationRegistrationStatus('ready');
+              break;
+            } else {
+              addDebugLog(`⏳ Simulation ${simId} not ready yet (attempt ${attempts})`);
+              await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
+            }
+          } catch (readyError) {
+            addDebugLog(`❌ Error checking readiness: ${readyError}`);
+            await new Promise(resolve => setTimeout(resolve, 1000)); // 1s delay on error
+          }
+        }
+        
+        if (!isReady) {
+          throw new Error(`Simulation failed to become ready after ${maxAttempts} attempts`);
+        }
+        
+        // STEP 4: Get simulation data
+        setInitializationStep('Loading simulation data...');
+        addDebugLog("Loading simulation data...");
         
         const simulationResponse = await SimulationApi.getSimulation(simId);
         
-        if (simulationResponse.error) {
-          setError(simulationResponse.error);
-          addDebugLog(`Error getting simulation: ${simulationResponse.error}`);
-          initializationRef.current = false;
-          return;
+        if (simulationResponse?.error || !simulationResponse?.data) {
+          throw new Error(`Failed to load simulation data: ${simulationResponse?.error}`);
         }
         
         const simData = simulationResponse.data?.data || simulationResponse.data;
@@ -437,7 +500,8 @@ const Dashboard: React.FC = () => {
         simData.id = simId;
         setSimulation(simData);
         
-        // Initialize state - React 18+ will automatically batch these
+        // STEP 5: Initialize state
+        setInitializationStep('Initializing dashboard state...');
         updateSimulationState({
           currentPrice: simData.currentPrice || 100,
           orderBook: simData.orderBook || { bids: [], asks: [], lastUpdateTime: Date.now() },
@@ -450,12 +514,19 @@ const Dashboard: React.FC = () => {
         const initialPrice = simData.currentPrice || 100;
         setTokenSymbol(determineTokenSymbol(initialPrice));
         
-        addDebugLog(`Simulation initialized - ready for real-time updates`);
+        // STEP 6: Enable WebSocket connection
+        setInitializationStep('Enabling WebSocket connection...');
+        addDebugLog("Simulation ready - enabling WebSocket connection...");
+        setIsWebSocketReady(true);
+        
+        addDebugLog(`Simulation initialized successfully - ready for real-time updates`);
+        setInitializationStep('Ready!');
         
       } catch (error) {
         setError('Failed to initialize simulation');
         addDebugLog(`Initialization error: ${error}`);
         console.error(error);
+        setSimulationRegistrationStatus('error');
         initializationRef.current = false;
       } finally {
         setLoading(false);
@@ -513,12 +584,36 @@ const Dashboard: React.FC = () => {
   // Prepare chart data
   const chartPriceHistory = useMemo(() => convertPriceHistory(priceHistory), [priceHistory, convertPriceHistory]);
 
-  // Control handlers
+  // CRITICAL FIX: Enhanced start simulation handler with comprehensive logging
   const handleStartSimulation = useCallback(async () => {
-    if (!simulationId) return;
+    if (!simulationId) {
+      addDebugLog("Cannot start - no simulation ID");
+      return;
+    }
+    
+    if (!isConnected) {
+      addDebugLog("Cannot start - WebSocket not connected");
+      return;
+    }
+    
+    if (simulationRegistrationStatus !== 'ready') {
+      addDebugLog(`Cannot start - simulation not ready (status: ${simulationRegistrationStatus})`);
+      return;
+    }
     
     try {
-      await SimulationApi.startSimulation(simulationId);
+      addDebugLog(`Attempting to start simulation: ${simulationId}`);
+      
+      const response = await SimulationApi.startSimulation(simulationId);
+      
+      if (response.error) {
+        addDebugLog(`Failed to start simulation: ${response.error}`);
+        console.error('Failed to start simulation:', response.error);
+        return;
+      }
+      
+      addDebugLog("✅ Backend confirmed simulation started");
+      
       setSimulation(prev => prev ? { ...prev, isRunning: true, isPaused: false } : prev);
       setPauseState(false);
       
@@ -527,12 +622,13 @@ const Dashboard: React.FC = () => {
       }
       
       setAudioEnabled(true);
-      addDebugLog("Simulation started");
+      addDebugLog("Simulation started - expecting real-time data...");
+      
     } catch (error) {
       console.error('Failed to start simulation:', error);
       addDebugLog(`Error starting simulation: ${error}`);
     }
-  }, [simulationId, simulationStartTime, addDebugLog, setPauseState]);
+  }, [simulationId, simulationStartTime, addDebugLog, setPauseState, isConnected, simulationRegistrationStatus]);
 
   const handlePauseSimulation = useCallback(async () => {
     if (!simulationId) return;
@@ -627,13 +723,22 @@ const Dashboard: React.FC = () => {
     addDebugLog(`Dynamic chart view: ${!dynamicChartView ? 'enabled' : 'disabled'}`);
   }, [dynamicChartView, addDebugLog]);
 
-  // Loading state
+  // Loading state with enhanced information
   if (loading) {
     return (
       <div className="flex justify-center items-center h-screen bg-gray-900">
         <div className="text-white text-center">
           <div className="animate-spin h-12 w-12 mx-auto mb-4 border-4 border-blue-500 border-t-transparent rounded-full"></div>
           <span className="text-xl">Initializing trading simulation...</span>
+          <div className="mt-4 text-sm text-gray-400">
+            {initializationStep}
+          </div>
+          <div className="mt-2 text-xs text-gray-500">
+            Status: {simulationRegistrationStatus}
+          </div>
+          <div className="mt-4 text-sm text-blue-400">
+            ✅ Race condition prevention active
+          </div>
         </div>
       </div>
     );
@@ -645,6 +750,9 @@ const Dashboard: React.FC = () => {
         <div className="text-red-400 p-6 bg-gray-800 rounded-lg shadow-lg text-center">
           <h2 className="text-xl font-bold mb-2">Simulation Error</h2>
           <p>{error}</p>
+          <p className="mt-2 text-sm text-gray-400">
+            Registration Status: {simulationRegistrationStatus}
+          </p>
           <button 
             onClick={() => window.location.reload()} 
             className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded transition"
@@ -661,10 +769,18 @@ const Dashboard: React.FC = () => {
       <div className="flex justify-center items-center h-screen bg-gray-900">
         <div className="text-white p-6 bg-gray-800 rounded-lg shadow-lg text-center">
           <p>No simulation data available</p>
+          <p className="mt-2 text-sm text-gray-400">
+            Registration Status: {simulationRegistrationStatus}
+          </p>
         </div>
       </div>
     );
   }
+
+  // Determine if simulation can be started
+  const canStartSimulation = isConnected && 
+                            simulationRegistrationStatus === 'ready' && 
+                            (!simulation.isRunning || simulation.isPaused);
 
   return (
     <div className="h-screen w-full bg-gray-900 text-white p-2 flex flex-col overflow-hidden">
@@ -684,10 +800,24 @@ const Dashboard: React.FC = () => {
               <span className="text-gray-400 mr-1">{tokenSymbol}:</span>
               <span className="text-white font-medium">${currentPrice < 1 ? currentPrice.toFixed(6) : currentPrice.toFixed(2)}</span>
             </div>
-            <div className={`ml-2 w-2 h-2 rounded-full mr-1 ${isConnected ? 'bg-green-500' : connectionError ? 'bg-red-500' : 'bg-yellow-500'}`}></div>
+            
+            {/* Enhanced connection status */}
+            <div className={`ml-2 w-2 h-2 rounded-full mr-1 ${
+              isConnected ? 'bg-green-500' : connectionError ? 'bg-red-500' : 'bg-yellow-500'
+            }`}></div>
             <span className="text-xs text-gray-400">
               {isConnected ? 'Connected' : connectionError || 'Connecting...'}
             </span>
+            
+            {/* Registration status indicator */}
+            <div className={`ml-2 text-xs px-2 py-1 rounded ${
+              simulationRegistrationStatus === 'ready' ? 'bg-green-900 text-green-300' :
+              simulationRegistrationStatus === 'pending' ? 'bg-yellow-900 text-yellow-300' :
+              simulationRegistrationStatus === 'error' ? 'bg-red-900 text-red-300' :
+              'bg-blue-900 text-blue-300'
+            }`}>
+              Reg: {simulationRegistrationStatus}
+            </div>
             
             {/* Stats */}
             <div className="ml-2 text-xs text-gray-400">
@@ -699,9 +829,16 @@ const Dashboard: React.FC = () => {
               Logs: {debugLogCountRef.current}
             </div>
             
-            {/* React 18+ indicator */}
+            {/* WebSocket ready indicator */}
+            <div className={`ml-2 text-xs px-2 py-1 rounded ${
+              isWebSocketReady ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300'
+            }`}>
+              WS: {isWebSocketReady ? 'Ready' : 'Waiting'}
+            </div>
+            
+            {/* Race condition prevention indicator */}
             <div className="ml-2 text-xs text-green-400">
-              React 18+ Auto-Batch
+              ✅ Race Prevention
             </div>
             
             {/* Scenario indicator */}
@@ -782,19 +919,32 @@ const Dashboard: React.FC = () => {
           </div>
           
           <div className="flex space-x-2">
-            {!simulation.isRunning || simulation.isPaused ? (
+            {canStartSimulation ? (
               <button 
                 onClick={handleStartSimulation}
                 className="px-3 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+                title={!canStartSimulation ? 'Waiting for simulation to be ready' : ''}
               >
                 {simulation.isPaused ? 'Resume' : 'Start'}
               </button>
-            ) : (
+            ) : simulation.isRunning && !simulation.isPaused ? (
               <button 
                 onClick={handlePauseSimulation} 
                 className="px-3 py-0.5 bg-yellow-600 text-white rounded hover:bg-yellow-700 transition"
               >
                 Pause
+              </button>
+            ) : (
+              <button 
+                disabled
+                className="px-3 py-0.5 bg-gray-600 text-gray-400 rounded cursor-not-allowed"
+                title={`Cannot start - ${
+                  !isConnected ? 'WebSocket not connected' :
+                  simulationRegistrationStatus !== 'ready' ? 'Simulation not ready' :
+                  'Unknown issue'
+                }`}
+              >
+                {simulation.isPaused ? 'Resume' : 'Start'}
               </button>
             )}
             
