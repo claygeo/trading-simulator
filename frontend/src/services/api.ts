@@ -1,4 +1,4 @@
-// frontend/src/services/api.ts - FIXED API Configuration
+// frontend/src/services/api.ts - COMPLETE FIXED VERSION WITH READY ENDPOINT
 import axios from 'axios';
 
 // FIXED: Determine the correct API base URL based on environment
@@ -190,6 +190,88 @@ export const SimulationApi = {
       };
     }
   },
+
+  // 🆕 NEW: Check if simulation is ready for WebSocket connections
+  checkSimulationReady: async (id: string): Promise<ApiResponse<{ready: boolean, status: string, id: string}>> => {
+    try {
+      console.log(`🔍 Checking simulation readiness for ${id}...`);
+      const response = await api.get(`/simulation/${id}/ready`);
+      console.log(`✅ Readiness check response:`, response.data);
+      return { data: response.data };
+    } catch (error: any) {
+      console.error(`❌ Error checking simulation readiness for ${id}:`, error);
+      
+      let errorMessage = 'Failed to check simulation readiness';
+      if (error.response?.status === 404) {
+        errorMessage = 'Simulation not found or ready endpoint not available';
+      } else if (error.response) {
+        errorMessage = error.response.data?.error || `Server error: ${error.response.status}`;
+      } else if (error.request) {
+        errorMessage = `No response from backend: ${API_BASE_URL}`;
+      } else {
+        errorMessage = error.message;
+      }
+      
+      return { 
+        data: { ready: false, status: 'error', id },
+        error: errorMessage
+      };
+    }
+  },
+
+  // 🆕 NEW: Wait for simulation to be ready with timeout
+  waitForSimulationReady: async (id: string, maxAttempts: number = 10, delayMs: number = 500): Promise<ApiResponse<{ready: boolean, attempts: number}>> => {
+    console.log(`⏳ Waiting for simulation ${id} to be ready (max ${maxAttempts} attempts)...`);
+    
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      console.log(`🔍 Readiness check attempt ${attempt}/${maxAttempts} for simulation ${id}`);
+      
+      try {
+        const result = await SimulationApi.checkSimulationReady(id);
+        
+        if (result.data?.ready) {
+          console.log(`✅ Simulation ${id} is ready after ${attempt} attempts!`);
+          return { 
+            data: { ready: true, attempts: attempt }
+          };
+        } else {
+          console.log(`⏳ Simulation ${id} not ready yet (attempt ${attempt}) - status: ${result.data?.status}`);
+        }
+        
+        if (result.error) {
+          console.log(`❌ Error on attempt ${attempt}: ${result.error}`);
+          // Continue trying unless it's the last attempt
+          if (attempt === maxAttempts) {
+            return { 
+              data: { ready: false, attempts: attempt },
+              error: result.error 
+            };
+          }
+        }
+        
+      } catch (error: any) {
+        console.log(`❌ Exception on attempt ${attempt}:`, error.message);
+        // Continue trying unless it's the last attempt
+        if (attempt === maxAttempts) {
+          return { 
+            data: { ready: false, attempts: attempt },
+            error: error.message || 'Unknown error'
+          };
+        }
+      }
+      
+      // Wait before next attempt (except on last attempt)
+      if (attempt < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+    
+    console.log(`⏰ Simulation ${id} failed to become ready after ${maxAttempts} attempts`);
+    return { 
+      data: { ready: false, attempts: maxAttempts },
+      error: `Simulation failed to become ready after ${maxAttempts} attempts`
+    };
+  },
   
   startSimulation: async (id: string) => {
     try {
@@ -305,6 +387,51 @@ export const SimulationUtils = {
     }
   },
 
+  // 🆕 NEW: Test the ready endpoint specifically
+  testReadyEndpoint: async (simulationId?: string): Promise<boolean> => {
+    try {
+      // Use provided simulation ID or try to create one
+      let testSimId = simulationId;
+      
+      if (!testSimId) {
+        console.log('🧪 Creating test simulation for ready endpoint test...');
+        const simResult = await SimulationApi.createSimulation({
+          initialPrice: 100,
+          duration: 30,
+          volatilityFactor: 1.0
+        });
+        
+        if (simResult.error || !simResult.data) {
+          console.log('❌ Failed to create test simulation:', simResult.error);
+          return false;
+        }
+        
+        testSimId = simResult.data.simulationId || simResult.data.data?.id;
+      }
+      
+      if (!testSimId) {
+        console.log('❌ No simulation ID available for ready endpoint test');
+        return false;
+      }
+      
+      console.log('🧪 Testing ready endpoint for simulation:', testSimId);
+      
+      const readyResult = await SimulationApi.checkSimulationReady(testSimId);
+      
+      if (readyResult.error) {
+        console.log('❌ Ready endpoint test failed:', readyResult.error);
+        return false;
+      }
+      
+      console.log('✅ Ready endpoint working! Response:', readyResult.data);
+      return true;
+      
+    } catch (error: any) {
+      console.error('❌ Ready endpoint test failed:', error);
+      return false;
+    }
+  },
+
   debugConfiguration: () => {
     console.log('🔍 Frontend Configuration Debug:', {
       apiBaseUrl: API_BASE_URL,
@@ -326,12 +453,14 @@ export const SimulationUtils = {
 if (typeof window !== 'undefined') {
   (window as any).testBackend = SimulationUtils.testBackendConnection;
   (window as any).testSimulation = SimulationUtils.testSimulationSystem;
+  (window as any).testReadyEndpoint = SimulationUtils.testReadyEndpoint;
   (window as any).debugConfig = SimulationUtils.debugConfiguration;
   (window as any).SimulationApi = SimulationApi;
   
   console.log('🛠️ Debug functions available:');
   console.log('  testBackend() - Test backend connection');
   console.log('  testSimulation() - Test full simulation system');
+  console.log('  testReadyEndpoint(simulationId?) - Test ready endpoint');
   console.log('  debugConfig() - Show configuration details');
 }
 

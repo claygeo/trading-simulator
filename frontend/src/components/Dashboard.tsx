@@ -1,4 +1,4 @@
-// frontend/src/components/Dashboard.tsx - CRITICAL FIXES for Race Conditions
+// frontend/src/components/Dashboard.tsx - COMPLETE FIXED VERSION WITH PROPER API USAGE
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -396,7 +396,7 @@ const Dashboard: React.FC = () => {
     return 'BTC/USDT';
   }, []);
 
-  // CRITICAL FIX: Enhanced simulation initialization with race condition prevention
+  // CRITICAL FIX: Enhanced simulation initialization with race condition prevention and proper API usage
   useEffect(() => {
     if (initializationRef.current) return;
     initializationRef.current = true;
@@ -446,40 +446,19 @@ const Dashboard: React.FC = () => {
           addDebugLog("Backend still registering simulation...");
         }
         
-        // STEP 3: Wait for simulation to be ready using new API endpoint
+        // STEP 3: ✅ FIXED - Use API service instead of direct fetch
         setInitializationStep('Verifying simulation readiness...');
-        addDebugLog("Checking simulation readiness with backend...");
+        addDebugLog("Checking simulation readiness with backend using API service...");
         
-        let isReady = false;
-        let attempts = 0;
-        const maxAttempts = 10;
+        const readyResult = await SimulationApi.waitForSimulationReady(simId, 10, 500);
         
-        while (!isReady && attempts < maxAttempts) {
-          attempts++;
-          addDebugLog(`Readiness check attempt ${attempts}/${maxAttempts}`);
-          
-          try {
-            const readyResponse = await fetch(`/api/simulation/${simId}/ready`);
-            const readyData = await readyResponse.json();
-            
-            if (readyData.ready) {
-              isReady = true;
-              addDebugLog(`✅ Simulation ${simId} confirmed ready by backend!`);
-              setSimulationRegistrationStatus('ready');
-              break;
-            } else {
-              addDebugLog(`⏳ Simulation ${simId} not ready yet (attempt ${attempts})`);
-              await new Promise(resolve => setTimeout(resolve, 500)); // 500ms delay
-            }
-          } catch (readyError) {
-            addDebugLog(`❌ Error checking readiness: ${readyError}`);
-            await new Promise(resolve => setTimeout(resolve, 1000)); // 1s delay on error
-          }
+        if (readyResult.error || !readyResult.data?.ready) {
+          const errorMsg = readyResult.error || `Simulation failed to become ready after ${readyResult.data?.attempts || 0} attempts`;
+          throw new Error(errorMsg);
         }
         
-        if (!isReady) {
-          throw new Error(`Simulation failed to become ready after ${maxAttempts} attempts`);
-        }
+        addDebugLog(`✅ Simulation ${simId} confirmed ready by backend after ${readyResult.data.attempts} attempts!`);
+        setSimulationRegistrationStatus('ready');
         
         // STEP 4: Get simulation data
         setInitializationStep('Loading simulation data...');
@@ -739,6 +718,9 @@ const Dashboard: React.FC = () => {
           <div className="mt-4 text-sm text-blue-400">
             ✅ Race condition prevention active
           </div>
+          <div className="mt-2 text-sm text-green-400">
+            ✅ Using proper API service
+          </div>
         </div>
       </div>
     );
@@ -834,6 +816,11 @@ const Dashboard: React.FC = () => {
               isWebSocketReady ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300'
             }`}>
               WS: {isWebSocketReady ? 'Ready' : 'Waiting'}
+            </div>
+            
+            {/* Fixed API indicator */}
+            <div className="ml-2 text-xs text-green-400">
+              ✅ API Fixed
             </div>
             
             {/* Race condition prevention indicator */}
