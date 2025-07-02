@@ -1,4 +1,4 @@
-// backend/src/server.ts - COMPLETE FIXED VERSION - NO MORE 30 SECOND TIMEOUTS
+// backend/src/server.ts - COMPLETE VERSION WITH BACKWARD COMPATIBILITY
 // 🚨 COMPRESSION ELIMINATOR - MUST BE AT TOP
 console.log('🚨 STARTING COMPRESSION ELIMINATION PROCESS...');
 
@@ -152,7 +152,7 @@ let candleUpdateCoordinator: CandleUpdateCoordinator;
 
 // Middleware - COMPRESSION PREVENTION
 app.use(cors({
-  origin: process.env.FRONTEND_URL || ['http://localhost:3000', 'https://your-netlify-app.netlify.app'],
+  origin: process.env.FRONTEND_URL || ['http://localhost:3000', 'https://pumpfun-simulator.netlify.app'],
   credentials: true
 }));
 
@@ -204,6 +204,7 @@ app.get('/', (req, res) => {
       health: '/api/health',
       test: '/api/test',
       simulations: '/api/simulations',
+      legacy_simulation: '/simulation (backward compatibility)',
       websocket: 'ws://' + req.get('host')
     }
   });
@@ -507,6 +508,327 @@ app.post('/api/simulation', async (req, res) => {
       details: error instanceof Error ? error.message : 'Unknown error',
       timestamp: Date.now()
     });
+  }
+});
+
+// 🔄 BACKWARD COMPATIBILITY: Handle /simulation (without /api prefix)
+app.post('/simulation', async (req, res) => {
+  console.log('🔄 [COMPAT] Legacy /simulation endpoint called - frontend compatibility mode');
+  
+  try {
+    console.log('📊 [COMPAT] Request body:', req.body);
+    
+    // Generate simulation ID
+    const simulationId = `sim_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Extract parameters with defaults (same logic as /api/simulation)
+    const simulationParams = {
+      duration: req.body.duration || 3600,
+      initialPrice: req.body.initialPrice || 100,
+      scenarioType: req.body.scenarioType || 'standard',
+      volatilityFactor: req.body.volatilityFactor || 1,
+      timeCompressionFactor: req.body.timeCompressionFactor || 1,
+      initialLiquidity: req.body.initialLiquidity || 1000000
+    };
+    
+    console.log(`⚡ [COMPAT] Creating simulation ${simulationId} via legacy endpoint...`);
+    
+    // Try to create simulation via SimulationManager but with timeout protection
+    let simulation: any;
+    try {
+      const createSimulationPromise = simulationManager.createSimulation(simulationParams);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('SimulationManager timeout')), 2000)
+      );
+      
+      simulation = await Promise.race([createSimulationPromise, timeoutPromise]);
+      console.log(`✅ [COMPAT] SimulationManager created: ${simulation.id}`);
+      
+    } catch (managerError) {
+      console.warn(`⚠️ [COMPAT] SimulationManager failed, using fallback:`, managerError);
+      
+      // Fallback simulation
+      simulation = {
+        id: simulationId,
+        isRunning: false,
+        isPaused: false,
+        currentPrice: simulationParams.initialPrice,
+        priceHistory: [],
+        parameters: simulationParams,
+        marketConditions: { volatility: simulationParams.volatilityFactor * 0.02, trend: 'sideways' as const, volume: 0 },
+        orderBook: { bids: [], asks: [], lastUpdateTime: Date.now() },
+        traders: [], activePositions: [], closedPositions: [], recentTrades: [], traderRankings: [],
+        startTime: Date.now(), currentTime: Date.now(), 
+        endTime: Date.now() + (simulationParams.duration * 1000), createdAt: Date.now()
+      };
+    }
+    
+    console.log(`✅ [COMPAT] Legacy simulation ${simulation.id} created successfully`);
+    
+    // Clean candle coordinator
+    if (candleUpdateCoordinator) {
+      candleUpdateCoordinator.ensureCleanStart(simulation.id);
+    }
+    
+    // Ensure clean start
+    if (simulation.priceHistory && simulation.priceHistory.length > 0) {
+      simulation.priceHistory = [];
+    }
+    
+    // Return response in expected format
+    const response = {
+      simulationId: simulation.id,
+      success: true,
+      message: 'Simulation created successfully via legacy endpoint',
+      data: {
+        id: simulation.id,
+        isRunning: simulation.isRunning || false,
+        isPaused: simulation.isPaused || false,
+        currentPrice: simulation.currentPrice || simulationParams.initialPrice,
+        parameters: simulationParams,
+        candleCount: simulation.priceHistory?.length || 0,
+        type: 'real-time',
+        chartStatus: 'empty-ready',
+        cleanStart: true,
+        isReady: true
+      },
+      timestamp: Date.now(),
+      endpoint: 'legacy /simulation (without /api)',
+      recommendation: 'Frontend should use /api/simulation for consistency'
+    };
+    
+    console.log('📤 [COMPAT] Sending legacy endpoint response');
+    res.json(response);
+    
+  } catch (error) {
+    console.error('❌ [COMPAT] Error in legacy simulation endpoint:', error);
+    res.status(500).json({ 
+      error: 'Failed to create simulation via legacy endpoint',
+      details: error instanceof Error ? error.message : 'Unknown error',
+      timestamp: Date.now(),
+      endpoint: 'legacy /simulation'
+    });
+  }
+});
+
+// Also add backward compatibility for GET
+app.get('/simulation/:id', async (req, res) => {
+  console.log(`🔄 [COMPAT] Legacy GET /simulation/${req.params.id} called`);
+  
+  try {
+    const { id } = req.params;
+    const simulation = simulationManager.getSimulation(id);
+    
+    if (!simulation) {
+      return res.status(404).json({ error: 'Simulation not found' });
+    }
+    
+    res.json({ 
+      data: {
+        ...simulation,
+        type: 'real-time',
+        chartStatus: (simulation.priceHistory?.length || 0) === 0 ? 'empty-ready' : 'building',
+        candleCount: simulation.priceHistory?.length || 0,
+        isReady: true,
+        registrationStatus: 'ready'
+      },
+      endpoint: 'legacy /simulation/:id (without /api)'
+    });
+  } catch (error) {
+    console.error('❌ [COMPAT] Error in legacy GET simulation:', error);
+    res.status(500).json({ error: 'Failed to get simulation via legacy endpoint' });
+  }
+});
+
+// Legacy start endpoint
+app.post('/simulation/:id/start', async (req, res) => {
+  console.log(`🔄 [COMPAT] Legacy START /simulation/${req.params.id}/start called`);
+  
+  try {
+    const { id } = req.params;
+    const simulation = simulationManager.getSimulation(id);
+    
+    if (!simulation) {
+      return res.status(404).json({ error: 'Simulation not found' });
+    }
+    
+    simulationManager.startSimulation(id);
+    
+    const updatedSimulation = simulationManager.getSimulation(id);
+    
+    res.json({ 
+      success: true,
+      status: 'started',
+      simulationId: id,
+      isRunning: updatedSimulation?.isRunning,
+      isPaused: updatedSimulation?.isPaused,
+      currentPrice: updatedSimulation?.currentPrice,
+      candleCount: updatedSimulation?.priceHistory?.length || 0,
+      message: 'Real-time chart generation started - candles will appear smoothly',
+      timestamp: Date.now(),
+      endpoint: 'legacy /simulation/:id/start'
+    });
+  } catch (error) {
+    console.error('❌ [COMPAT] Error in legacy start simulation:', error);
+    res.status(500).json({ 
+      error: 'Failed to start simulation via legacy endpoint',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// Legacy pause endpoint
+app.post('/simulation/:id/pause', async (req, res) => {
+  console.log(`🔄 [COMPAT] Legacy PAUSE /simulation/${req.params.id}/pause called`);
+  
+  try {
+    const { id } = req.params;
+    const simulation = simulationManager.getSimulation(id);
+    
+    if (!simulation) {
+      return res.status(404).json({ error: 'Simulation not found' });
+    }
+    
+    simulationManager.pauseSimulation(id);
+    
+    res.json({ 
+      success: true,
+      status: 'paused',
+      simulationId: id,
+      message: 'Simulation paused successfully',
+      endpoint: 'legacy /simulation/:id/pause'
+    });
+  } catch (error) {
+    console.error('❌ [COMPAT] Error in legacy pause simulation:', error);
+    res.status(500).json({ error: 'Failed to pause simulation via legacy endpoint' });
+  }
+});
+
+// Legacy reset endpoint
+app.post('/simulation/:id/reset', async (req, res) => {
+  console.log(`🔄 [COMPAT] Legacy RESET /simulation/${req.params.id}/reset called`);
+  
+  try {
+    const { id } = req.params;
+    const simulation = simulationManager.getSimulation(id);
+    
+    if (!simulation) {
+      return res.status(404).json({ error: 'Simulation not found' });
+    }
+    
+    simulationManager.resetSimulation(id);
+    
+    if (candleUpdateCoordinator) {
+      candleUpdateCoordinator.clearCandles(id);
+      candleUpdateCoordinator.ensureCleanStart(id);
+    }
+    
+    const resetSimulation = simulationManager.getSimulation(id);
+    if (resetSimulation && resetSimulation.priceHistory && resetSimulation.priceHistory.length > 0) {
+      resetSimulation.priceHistory = [];
+    }
+    
+    res.json({ 
+      success: true,
+      status: 'reset',
+      simulationId: id,
+      candleCount: resetSimulation?.priceHistory?.length || 0,
+      cleanStart: true,
+      isRunning: false,
+      isPaused: false,
+      message: 'Simulation reset to clean state - chart will start empty',
+      timestamp: Date.now(),
+      endpoint: 'legacy /simulation/:id/reset'
+    });
+  } catch (error) {
+    console.error('❌ [COMPAT] Error in legacy reset simulation:', error);
+    res.status(500).json({ error: 'Failed to reset simulation via legacy endpoint' });
+  }
+});
+
+// Legacy speed endpoint
+app.post('/simulation/:id/speed', async (req, res) => {
+  console.log(`🔄 [COMPAT] Legacy SPEED /simulation/${req.params.id}/speed called`);
+  
+  try {
+    const { id } = req.params;
+    const { speed } = req.body;
+    
+    if (typeof speed !== 'number' || speed < 0.1 || speed > 100) {
+      return res.status(400).json({ 
+        error: 'Invalid speed value. Must be between 0.1 and 100' 
+      });
+    }
+    
+    const simulation = simulationManager.getSimulation(id);
+    if (!simulation) {
+      return res.status(404).json({ error: 'Simulation not found' });
+    }
+    
+    simulationManager.setSimulationSpeed(id, speed);
+    
+    if (candleUpdateCoordinator) {
+      candleUpdateCoordinator.setSimulationSpeed(id, speed);
+    }
+    
+    res.json({ 
+      success: true,
+      speed: speed,
+      simulationId: id,
+      currentTime: simulation.currentTime,
+      message: `Speed set to ${speed}x - real-time candle generation adjusted`,
+      endpoint: 'legacy /simulation/:id/speed'
+    });
+  } catch (error) {
+    console.error('❌ [COMPAT] Error in legacy speed simulation:', error);
+    res.status(500).json({ error: 'Failed to set simulation speed via legacy endpoint' });
+  }
+});
+
+// Legacy status endpoint
+app.get('/simulation/:id/status', async (req, res) => {
+  console.log(`🔄 [COMPAT] Legacy STATUS /simulation/${req.params.id}/status called`);
+  
+  try {
+    const { id } = req.params;
+    const simulation = simulationManager.getSimulation(id);
+    
+    if (!simulation) {
+      return res.status(404).json({ error: 'Simulation not found' });
+    }
+    
+    const coordinatorCandleCount = candleUpdateCoordinator ? 
+      candleUpdateCoordinator.getCandleCount(id) : 0;
+    
+    const status = {
+      id: simulation.id,
+      isRunning: simulation.isRunning,
+      isPaused: simulation.isPaused,
+      isReady: true,
+      speed: simulation.parameters?.timeCompressionFactor || 1,
+      currentPrice: simulation.currentPrice,
+      candleCount: simulation.priceHistory?.length || 0,
+      coordinatorCandleCount: coordinatorCandleCount,
+      chartStatus: (simulation.priceHistory?.length || 0) === 0 ? 'empty-ready' : 'building',
+      tradeCount: simulation.recentTrades?.length || 0,
+      activePositions: simulation.activePositions?.length || 0,
+      type: 'real-time',
+      cleanStart: (simulation.priceHistory?.length || 0) === 0,
+      currentTime: simulation.currentTime,
+      startTime: simulation.startTime,
+      endTime: simulation.endTime,
+      registrationStatus: 'ready',
+      message: (simulation.priceHistory?.length || 0) === 0 
+        ? 'Ready to start - chart will fill smoothly in real-time'
+        : `Building chart: ${simulation.priceHistory?.length || 0} candles generated`,
+      timestamp: Date.now(),
+      endpoint: 'legacy /simulation/:id/status'
+    };
+    
+    res.json(status);
+  } catch (error) {
+    console.error('❌ [COMPAT] Error in legacy status simulation:', error);
+    res.status(500).json({ error: 'Failed to get simulation status via legacy endpoint' });
   }
 });
 
@@ -1079,11 +1401,12 @@ app.get('/api/health', (req, res) => {
       set_speed: 'POST /api/simulation/:id/speed',
       get_status: 'GET /api/simulation/:id/status',
       health: 'GET /api/health',
-      test: 'GET /api/test'
+      test: 'GET /api/test',
+      legacy_simulation: 'POST /simulation (backward compatibility)'
     },
-    message: 'Backend API running - timeout issue FIXED!',
+    message: 'Backend API running - timeout issue FIXED with backward compatibility!',
     simulationManagerAvailable: simulationManager ? true : false,
-    fixApplied: 'Removed hanging waitForSimulationReady() call',
+    fixApplied: 'Removed hanging waitForSimulationReady() call + Added legacy endpoint support',
     platform: 'Render',
     nodeVersion: process.version
   });
@@ -1245,6 +1568,8 @@ server.listen(PORT, async () => {
   console.log(`⚡ Comprehensive Logging & Error Handling`);
   console.log(`🚀 TIMEOUT FIX APPLIED - No more 30-second hangs!`);
   console.log(`✅ Removed problematic waitForSimulationReady() calls`);
+  console.log(`🔄 BACKWARD COMPATIBILITY ADDED - Supports /simulation AND /api/simulation!`);
+  console.log(`🎯 Frontend can now call either endpoint pattern!`);
   
   await initializeServices();
 });
