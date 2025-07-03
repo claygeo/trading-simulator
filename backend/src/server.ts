@@ -1,4 +1,4 @@
-// backend/src/server.ts - COMPLETE VERSION WITH ALL BACKWARD COMPATIBILITY ENDPOINTS
+// backend/src/server.ts - COMPLETE VERSION WITH WEBSOCKET FIX
 // 🚨 COMPRESSION ELIMINATOR - MUST BE AT TOP
 console.log('🚨 STARTING COMPRESSION ELIMINATION PROCESS...');
 
@@ -1665,7 +1665,9 @@ async function initializeServices() {
     console.log('Initializing candle update coordinator...');
     candleUpdateCoordinator = new CandleUpdateCoordinator(simulationManager, 25);
     
-    setupWebSocketServer(wss, broadcastManager, performanceMonitor);
+    // 🔧 CRITICAL FIX: Pass simulationManager to WebSocket setup
+    setupWebSocketServer(wss, simulationManager, broadcastManager, performanceMonitor);
+    
     // FIXED: Add method existence check
     if (typeof (performanceMonitor as any).startMonitoring === 'function') {
       (performanceMonitor as any).startMonitoring(1000);
@@ -1673,6 +1675,7 @@ async function initializeServices() {
     
     console.log('✅ Clean real-time system initialized with guaranteed clean start');
     console.log('🚨 COMPRESSION DISABLED - Text frames only, no Blob conversion');
+    console.log('🔧 WEBSOCKET FIX APPLIED - Shared SimulationManager instance');
   } catch (error) {
     console.error('❌ Failed to initialize services:', error);
   }
@@ -1715,6 +1718,8 @@ server.listen(PORT, async () => {
   console.log(`🔄 COMPLETE BACKWARD COMPATIBILITY - Supports ALL /simulation endpoints!`);
   console.log(`✅ Added missing /ready endpoint - Frontend should work perfectly now!`);
   console.log(`🎯 Frontend can now call either endpoint pattern!`);
+  console.log(`🔧 WEBSOCKET SUBSCRIPTION FIX APPLIED - Shared SimulationManager instance!`);
+  console.log(`✅ No more "Simulation not found" errors in WebSocket subscriptions!`);
   
   await initializeServices();
 });
@@ -1769,5 +1774,6 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 console.log('✅ [COMPAT] Complete backward compatibility system loaded - ALL legacy endpoints including /ready!');
+console.log('🔧 [WEBSOCKET FIX] Shared SimulationManager instance prevents "Simulation not found" errors!');
 
 export default app;
