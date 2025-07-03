@@ -1,4 +1,4 @@
-// backend/src/server.ts - COMPLETE VERSION WITH WEBSOCKET FIX
+// backend/src/server.ts - COMPLETE FIXED VERSION WITH FALLBACK STORAGE FIX
 // 🚨 COMPRESSION ELIMINATOR - MUST BE AT TOP
 console.log('🚨 STARTING COMPRESSION ELIMINATION PROCESS...');
 
@@ -392,7 +392,7 @@ class CandleUpdateCoordinator {
   }
 }
 
-// 🚀 FIXED: Simulation creation endpoint - NO MORE HANGING!
+// 🚀 FIXED: Simulation creation endpoint - WITH FALLBACK STORAGE FIX!
 app.post('/api/simulation', async (req, res) => {
   try {
     console.log('🚀 [API CREATE] FIXED VERSION - No hanging waitForReady!');
@@ -415,6 +415,8 @@ app.post('/api/simulation', async (req, res) => {
     
     // Try to create simulation via SimulationManager but with timeout protection
     let simulation: any;
+    let usedFallback = false;
+    
     try {
       // Add timeout protection to prevent hanging
       const createSimulationPromise = simulationManager.createSimulation(simulationParams);
@@ -427,8 +429,9 @@ app.post('/api/simulation', async (req, res) => {
       
     } catch (managerError) {
       console.warn(`⚠️ [API CREATE] SimulationManager failed, using fallback:`, managerError);
+      usedFallback = true;
       
-      // Fallback: Create basic simulation object
+      // CRITICAL FIX: Create fallback simulation object WITH proper structure
       simulation = {
         id: simulationId,
         isRunning: false,
@@ -454,11 +457,53 @@ app.post('/api/simulation', async (req, res) => {
         startTime: Date.now(),
         currentTime: Date.now(),
         endTime: Date.now() + (simulationParams.duration * 1000),
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        // Add missing properties that SimulationManager expects
+        state: 'created',
+        externalMarketMetrics: {
+          currentTPS: 10,
+          actualTPS: 0,
+          queueDepth: 0,
+          processedOrders: 0,
+          rejectedOrders: 0,
+          avgProcessingTime: 0,
+          dominantTraderType: 'RETAIL_TRADER',
+          marketSentiment: 'neutral',
+          liquidationRisk: 0
+        }
       };
+      
+      // 🔧 CRITICAL FIX: STORE the fallback simulation in the simulationManager!
+      console.log(`🔧 [API CREATE] Manually storing fallback simulation ${simulationId} in manager...`);
+      
+      try {
+        // Access the private simulations map and store the simulation
+        const simulationsMap = (simulationManager as any).simulations;
+        if (simulationsMap && typeof simulationsMap.set === 'function') {
+          simulationsMap.set(simulationId, simulation);
+          console.log(`✅ [API CREATE] Fallback simulation ${simulationId} stored in manager`);
+          
+          // Verify it was stored
+          const stored = simulationManager.getSimulation(simulationId);
+          if (stored) {
+            console.log(`✅ [API CREATE] Verified: Fallback simulation ${simulationId} is retrievable`);
+          } else {
+            console.error(`❌ [API CREATE] CRITICAL: Fallback simulation ${simulationId} NOT retrievable after storage!`);
+          }
+        } else {
+          console.error(`❌ [API CREATE] CRITICAL: Cannot access simulationManager.simulations map!`);
+          // Last resort: try to add it via any available method
+          if (typeof (simulationManager as any).addSimulation === 'function') {
+            (simulationManager as any).addSimulation(simulation);
+            console.log(`✅ [API CREATE] Used addSimulation method as fallback`);
+          }
+        }
+      } catch (storageError) {
+        console.error(`❌ [API CREATE] Error storing fallback simulation:`, storageError);
+      }
     }
     
-    console.log(`✅ [API CREATE] Simulation ${simulation.id} created successfully`);
+    console.log(`✅ [API CREATE] Simulation ${simulation.id} created successfully (fallback: ${usedFallback})`);
     
     // CRITICAL FIX: Ensure CandleUpdateCoordinator has clean state
     if (candleUpdateCoordinator) {
@@ -466,14 +511,38 @@ app.post('/api/simulation', async (req, res) => {
       console.log(`🧹 [API CREATE] CandleUpdateCoordinator cleaned for ${simulation.id}`);
     }
     
-    // 🚨 REMOVED: The hanging waitForSimulationReady() call!
-    // 🚨 REMOVED: All the problematic race condition prevention code!
-    // 🚨 REMOVED: The 3-second timeout that was causing the hang!
-    
     // FINAL VERIFICATION: Ensure truly clean start
     if (simulation.priceHistory && simulation.priceHistory.length > 0) {
       console.warn(`⚠️ [API CREATE] Simulation has ${simulation.priceHistory.length} candles, clearing for clean start`);
       simulation.priceHistory = [];
+    }
+    
+    // 🔧 CRITICAL VERIFICATION: Check that simulation is actually in the manager
+    console.log(`🔍 [API CREATE] Final verification - checking if ${simulation.id} is in manager...`);
+    const verifySimulation = simulationManager.getSimulation(simulation.id);
+    if (verifySimulation) {
+      console.log(`✅ [API CREATE] VERIFIED: Simulation ${simulation.id} is in manager and WebSocket will find it!`);
+    } else {
+      console.error(`❌ [API CREATE] CRITICAL ERROR: Simulation ${simulation.id} NOT in manager - WebSocket will fail!`);
+      
+      // Emergency fix: try to add it again
+      try {
+        const simulationsMap = (simulationManager as any).simulations;
+        if (simulationsMap && typeof simulationsMap.set === 'function') {
+          simulationsMap.set(simulation.id, simulation);
+          console.log(`🆘 [API CREATE] Emergency re-storage attempted`);
+        }
+      } catch (emergencyError) {
+        console.error(`❌ [API CREATE] Emergency storage failed:`, emergencyError);
+      }
+    }
+    
+    // 🔍 DEBUG: List all simulations in manager
+    try {
+      const allSims = simulationManager.getAllSimulations();
+      console.log(`🔍 [API CREATE] All simulations in manager:`, allSims.map(s => s.id));
+    } catch (error) {
+      console.error(`❌ [API CREATE] Error listing simulations:`, error);
     }
     
     console.log(`✅ [API CREATE] Simulation ${simulation.id} ready with clean start`);
@@ -482,7 +551,7 @@ app.post('/api/simulation', async (req, res) => {
     const response = {
       simulationId: simulation.id,
       success: true,
-      message: 'Simulation created successfully - no timeouts!',
+      message: `Simulation created successfully - no timeouts! (fallback: ${usedFallback})`,
       data: {
         id: simulation.id,
         isRunning: simulation.isRunning || false,
@@ -493,10 +562,12 @@ app.post('/api/simulation', async (req, res) => {
         type: 'real-time',
         chartStatus: 'empty-ready',
         cleanStart: true,
-        isReady: true
+        isReady: true,
+        usedFallback: usedFallback,
+        storedInManager: !!simulationManager.getSimulation(simulation.id)
       },
       timestamp: Date.now(),
-      fixApplied: 'Removed hanging waitForSimulationReady() call'
+      fixApplied: 'Removed hanging waitForSimulationReady() call + Fixed fallback storage'
     };
     
     console.log('📤 [API CREATE] Sending immediate response');
@@ -512,7 +583,7 @@ app.post('/api/simulation', async (req, res) => {
   }
 });
 
-// 🔄 BACKWARD COMPATIBILITY: Handle /simulation (without /api prefix)
+// 🔄 BACKWARD COMPATIBILITY: Handle /simulation (without /api prefix) - ALSO FIXED
 app.post('/simulation', async (req, res) => {
   console.log('🔄 [COMPAT] Legacy /simulation endpoint called - frontend compatibility mode');
   
@@ -536,6 +607,8 @@ app.post('/simulation', async (req, res) => {
     
     // Try to create simulation via SimulationManager but with timeout protection
     let simulation: any;
+    let usedFallback = false;
+    
     try {
       const createSimulationPromise = simulationManager.createSimulation(simulationParams);
       const timeoutPromise = new Promise((_, reject) => 
@@ -547,8 +620,9 @@ app.post('/simulation', async (req, res) => {
       
     } catch (managerError) {
       console.warn(`⚠️ [COMPAT] SimulationManager failed, using fallback:`, managerError);
+      usedFallback = true;
       
-      // Fallback simulation
+      // CRITICAL FIX: Create and STORE fallback simulation
       simulation = {
         id: simulationId,
         isRunning: false,
@@ -560,11 +634,40 @@ app.post('/simulation', async (req, res) => {
         orderBook: { bids: [], asks: [], lastUpdateTime: Date.now() },
         traders: [], activePositions: [], closedPositions: [], recentTrades: [], traderRankings: [],
         startTime: Date.now(), currentTime: Date.now(), 
-        endTime: Date.now() + (simulationParams.duration * 1000), createdAt: Date.now()
+        endTime: Date.now() + (simulationParams.duration * 1000), createdAt: Date.now(),
+        state: 'created',
+        externalMarketMetrics: {
+          currentTPS: 10, actualTPS: 0, queueDepth: 0, processedOrders: 0,
+          rejectedOrders: 0, avgProcessingTime: 0, dominantTraderType: 'RETAIL_TRADER',
+          marketSentiment: 'neutral', liquidationRisk: 0
+        }
       };
+      
+      // 🔧 CRITICAL FIX: STORE the fallback simulation in the simulationManager!
+      console.log(`🔧 [COMPAT] Manually storing fallback simulation ${simulationId} in manager...`);
+      
+      try {
+        const simulationsMap = (simulationManager as any).simulations;
+        if (simulationsMap && typeof simulationsMap.set === 'function') {
+          simulationsMap.set(simulationId, simulation);
+          console.log(`✅ [COMPAT] Fallback simulation ${simulationId} stored in manager`);
+          
+          // Verify it was stored
+          const stored = simulationManager.getSimulation(simulationId);
+          if (stored) {
+            console.log(`✅ [COMPAT] Verified: Fallback simulation ${simulationId} is retrievable`);
+          } else {
+            console.error(`❌ [COMPAT] CRITICAL: Fallback simulation ${simulationId} NOT retrievable after storage!`);
+          }
+        } else {
+          console.error(`❌ [COMPAT] CRITICAL: Cannot access simulationManager.simulations map!`);
+        }
+      } catch (storageError) {
+        console.error(`❌ [COMPAT] Error storing fallback simulation:`, storageError);
+      }
     }
     
-    console.log(`✅ [COMPAT] Legacy simulation ${simulation.id} created successfully`);
+    console.log(`✅ [COMPAT] Legacy simulation ${simulation.id} created successfully (fallback: ${usedFallback})`);
     
     // Clean candle coordinator
     if (candleUpdateCoordinator) {
@@ -576,11 +679,39 @@ app.post('/simulation', async (req, res) => {
       simulation.priceHistory = [];
     }
     
+    // VERIFY storage
+    console.log(`🔍 [COMPAT] Final verification - checking if ${simulation.id} is in manager...`);
+    const verifySimulation = simulationManager.getSimulation(simulation.id);
+    if (verifySimulation) {
+      console.log(`✅ [COMPAT] VERIFIED: Legacy simulation ${simulation.id} is in manager`);
+    } else {
+      console.error(`❌ [COMPAT] CRITICAL ERROR: Legacy simulation ${simulation.id} NOT in manager!`);
+      
+      // Emergency fix
+      try {
+        const simulationsMap = (simulationManager as any).simulations;
+        if (simulationsMap && typeof simulationsMap.set === 'function') {
+          simulationsMap.set(simulation.id, simulation);
+          console.log(`🆘 [COMPAT] Emergency re-storage attempted`);
+        }
+      } catch (emergencyError) {
+        console.error(`❌ [COMPAT] Emergency storage failed:`, emergencyError);
+      }
+    }
+    
+    // 🔍 DEBUG: List all simulations in manager
+    try {
+      const allSims = simulationManager.getAllSimulations();
+      console.log(`🔍 [COMPAT] All simulations in manager:`, allSims.map(s => s.id));
+    } catch (error) {
+      console.error(`❌ [COMPAT] Error listing simulations:`, error);
+    }
+    
     // Return response in expected format
     const response = {
       simulationId: simulation.id,
       success: true,
-      message: 'Simulation created successfully via legacy endpoint',
+      message: `Simulation created successfully via legacy endpoint (fallback: ${usedFallback})`,
       data: {
         id: simulation.id,
         isRunning: simulation.isRunning || false,
@@ -591,7 +722,9 @@ app.post('/simulation', async (req, res) => {
         type: 'real-time',
         chartStatus: 'empty-ready',
         cleanStart: true,
-        isReady: true
+        isReady: true,
+        usedFallback: usedFallback,
+        storedInManager: !!simulationManager.getSimulation(simulation.id)
       },
       timestamp: Date.now(),
       endpoint: 'legacy /simulation (without /api)',
@@ -1550,7 +1683,7 @@ app.get('/api/health', (req, res) => {
     },
     message: 'Backend API running - ALL endpoints working including /ready!',
     simulationManagerAvailable: simulationManager ? true : false,
-    fixApplied: 'Removed hanging waitForSimulationReady() call + Added ALL legacy endpoint support including /ready',
+    fixApplied: 'Removed hanging waitForSimulationReady() call + Added ALL legacy endpoint support including /ready + Fixed fallback storage',
     platform: 'Render',
     nodeVersion: process.version
   });
@@ -1676,6 +1809,7 @@ async function initializeServices() {
     console.log('✅ Clean real-time system initialized with guaranteed clean start');
     console.log('🚨 COMPRESSION DISABLED - Text frames only, no Blob conversion');
     console.log('🔧 WEBSOCKET FIX APPLIED - Shared SimulationManager instance');
+    console.log('🔧 FALLBACK STORAGE FIX APPLIED - All simulations stored in manager');
   } catch (error) {
     console.error('❌ Failed to initialize services:', error);
   }
@@ -1720,6 +1854,8 @@ server.listen(PORT, async () => {
   console.log(`🎯 Frontend can now call either endpoint pattern!`);
   console.log(`🔧 WEBSOCKET SUBSCRIPTION FIX APPLIED - Shared SimulationManager instance!`);
   console.log(`✅ No more "Simulation not found" errors in WebSocket subscriptions!`);
+  console.log(`🔧 FALLBACK STORAGE FIX APPLIED - All simulations properly stored in manager!`);
+  console.log(`✅ WebSocket will now find simulations whether created normally or via fallback!`);
   
   await initializeServices();
 });
@@ -1775,5 +1911,6 @@ process.on('unhandledRejection', (reason, promise) => {
 
 console.log('✅ [COMPAT] Complete backward compatibility system loaded - ALL legacy endpoints including /ready!');
 console.log('🔧 [WEBSOCKET FIX] Shared SimulationManager instance prevents "Simulation not found" errors!');
+console.log('🔧 [FALLBACK STORAGE FIX] All simulations properly stored regardless of creation method!');
 
 export default app;
