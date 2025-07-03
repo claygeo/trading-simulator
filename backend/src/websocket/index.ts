@@ -1,6 +1,6 @@
-// backend/src/websocket/index.ts - FIXED: Race condition prevention for subscriptions
+// backend/src/websocket/index.ts - COMPLETE FIXED VERSION
 import { WebSocket, WebSocketServer } from 'ws';
-import { simulationManager } from '../services/simulation';
+// REMOVED: import { simulationManager } from '../services/simulation';
 import { BroadcastManager } from '../services/broadcastManager';
 import { PerformanceMonitor } from '../monitoring/performanceMonitor';
 
@@ -29,12 +29,14 @@ const clientRetryTimers = new WeakMap<WebSocket, Map<string, NodeJS.Timeout>>();
 
 let clientCounter = 0;
 
+// CRITICAL FIX: Accept simulationManager as parameter instead of importing
 export function setupWebSocketServer(
   wss: WebSocketServer, 
+  simulationManager: any, // FIXED: Pass the instance from server.ts
   broadcastManager?: BroadcastManager,
   performanceMonitor?: PerformanceMonitor
 ) {
-  console.log('Setting up WebSocket server with race condition prevention...');
+  console.log('🔧 Setting up WebSocket server with SHARED SimulationManager instance...');
   
   // Log server status
   setInterval(() => {
@@ -110,7 +112,8 @@ export function setupWebSocketServer(
         
         switch (message.type) {
           case 'subscribe':
-            handleSubscriptionWithRetry(ws, message, clientId);
+            // CRITICAL FIX: Use the passed simulationManager instance
+            handleSubscriptionWithRetry(ws, message, clientId, simulationManager);
             break;
             
           case 'unsubscribe':
@@ -118,7 +121,7 @@ export function setupWebSocketServer(
             break;
             
           case 'requestMarketAnalysis':
-            handleMarketAnalysisRequest(ws, message);
+            handleMarketAnalysisRequest(ws, message, simulationManager);
             break;
             
           case 'setPauseState':
@@ -192,11 +195,16 @@ export function setupWebSocketServer(
     console.error('WebSocket server error:', error);
   });
   
-  console.log('WebSocket server setup complete with race condition prevention');
+  console.log('✅ WebSocket server setup complete with SHARED SimulationManager instance');
 }
 
-// CRITICAL FIX: Enhanced subscription with retry mechanism and simulation readiness check
-async function handleSubscriptionWithRetry(ws: WebSocket, message: WebSocketMessage, clientId: string) {
+// CRITICAL FIX: Enhanced subscription with the SAME simulationManager instance
+async function handleSubscriptionWithRetry(
+  ws: WebSocket, 
+  message: WebSocketMessage, 
+  clientId: string,
+  simulationManager: any // FIXED: Use the passed instance
+) {
   const { simulationId, preferences } = message;
   
   if (!simulationId) {
@@ -210,17 +218,27 @@ async function handleSubscriptionWithRetry(ws: WebSocket, message: WebSocketMess
   
   console.log(`🔔 [WS SUB] ${clientId} attempting to subscribe to simulation: ${simulationId}`);
   
-  // STEP 1: Check if simulation exists
+  // STEP 1: Check if simulation exists in the CORRECT instance
+  console.log(`🔍 [WS SUB] Checking simulation ${simulationId} in SHARED SimulationManager...`);
   const simulation = simulationManager.getSimulation(simulationId);
+  
   if (!simulation) {
-    console.error(`❌ [WS SUB] Simulation ${simulationId} not found for ${clientId}`);
+    console.error(`❌ [WS SUB] Simulation ${simulationId} not found in SHARED SimulationManager for ${clientId}`);
+    
+    // Debug: List all available simulations
+    const allSimulations = simulationManager.getAllSimulations();
+    console.log(`🔍 [WS SUB] Available simulations in manager:`, allSimulations.map(s => s.id));
+    
     ws.send(JSON.stringify({
       type: 'error',
       message: `Simulation ${simulationId} not found`,
+      availableSimulations: allSimulations.map(s => s.id),
       timestamp: Date.now()
     }), { binary: false, compress: false, fin: true });
     return;
   }
+  
+  console.log(`✅ [WS SUB] FOUND simulation ${simulationId} in SHARED SimulationManager!`);
   
   // STEP 2: Check if simulation is ready for subscriptions
   const isReady = simulationManager.isSimulationReady(simulationId);
@@ -275,7 +293,7 @@ async function handleSubscriptionWithRetry(ws: WebSocket, message: WebSocketMess
       
       const retryTimer = setTimeout(() => {
         console.log(`🔄 [WS SUB] Retrying subscription for ${simulationId} (attempt ${attempts + 1})`);
-        handleSubscriptionWithRetry(ws, message, clientId);
+        handleSubscriptionWithRetry(ws, message, clientId, simulationManager);
       }, retryDelay);
       
       retryTimers.set(simulationId, retryTimer);
@@ -365,16 +383,16 @@ async function handleSubscriptionWithRetry(ws: WebSocket, message: WebSocketMess
     timestamp: Date.now(),
     preferences: preferences,
     registrationStatus: 'ready',
-    message: 'Successfully subscribed to ready simulation'
+    message: 'Successfully subscribed to ready simulation using SHARED SimulationManager'
   }), { binary: false, compress: false, fin: true });
   
-  console.log(`✅ [WS SUB] Subscription confirmed for ${clientId} to ${simulationId}, trades: ${enhancedState.recentTrades.length}, candles: ${enhancedState.candleCount}`);
+  console.log(`🎉 [WS SUB] SUBSCRIPTION SUCCESS! ${clientId} subscribed to ${simulationId} using SHARED manager, trades: ${enhancedState.recentTrades.length}, candles: ${enhancedState.candleCount}`);
 }
 
 // Handle subscription with preferences (original function, modified to be race-condition aware)
-function handleSubscription(ws: WebSocket, message: WebSocketMessage, clientId: string) {
+function handleSubscription(ws: WebSocket, message: WebSocketMessage, clientId: string, simulationManager: any) {
   // Redirect to the new retry-enabled function
-  handleSubscriptionWithRetry(ws, message, clientId);
+  handleSubscriptionWithRetry(ws, message, clientId, simulationManager);
 }
 
 // Handle unsubscription
@@ -416,7 +434,7 @@ function handleUnsubscription(ws: WebSocket, message: WebSocketMessage, clientId
 }
 
 // Handle explicit market analysis requests
-function handleMarketAnalysisRequest(ws: WebSocket, message: WebSocketMessage) {
+function handleMarketAnalysisRequest(ws: WebSocket, message: WebSocketMessage, simulationManager: any) {
   const { simulationId } = message;
   
   if (!simulationId) {
@@ -502,7 +520,8 @@ function handleDebugRequest(ws: WebSocket, clientId: string, broadcastManager?: 
     serverStats: {
       totalClients: ws.readyState === WebSocket.OPEN ? 
         Array.from((ws as any)._server?.clients || []).length : 0,
-      raceConditionPrevention: true
+      raceConditionPrevention: true,
+      sharedSimulationManager: true
     }
   };
   
