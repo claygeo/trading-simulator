@@ -1,4 +1,4 @@
-// backend/src/services/simulation/SimulationManager.ts - AGGRESSIVE TIME & TRADING MODE
+// backend/src/services/simulation/SimulationManager.ts - PRODUCTION READY: Debug logs cleaned
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import {
@@ -59,19 +59,16 @@ export class SimulationManager {
   private transactionQueue?: TransactionQueue;
   private broadcastManager?: BroadcastManager;
 
-  // AGGRESSIVE TIMING CONFIGURATION
-  private readonly baseUpdateInterval: number = 50; // 50ms (was 100ms) - MUCH FASTER
-  private readonly processedTradesSyncIntervalTime: number = 25; // 25ms (was 50ms)
+  // PRODUCTION: Ultra-fast timing configuration
+  private readonly baseUpdateInterval: number = 50; // 50ms for ultra-fast mode
+  private readonly processedTradesSyncIntervalTime: number = 25; // 25ms sync
 
   constructor() {
     this.initializeEngines();
     this.startProcessedTradesSync();
-    
-    console.log('🚀 AGGRESSIVE SimulationManager initialized - ULTRA FAST MODE');
   }
 
   private initializeEngines(): void {
-    // Initialize managers and engines
     this.timeframeManager = new TimeframeManager();
     this.broadcastService = new BroadcastService();
     this.dataGenerator = new DataGenerator();
@@ -111,12 +108,10 @@ export class SimulationManager {
 
   private initializeCandleManager(simulationId: string, candleInterval: number): CandleManager {
     if (!this.candleManagers.has(simulationId)) {
-      // AGGRESSIVE MODE: Cap intervals at 10 seconds max
-      const aggressiveInterval = Math.min(candleInterval, 10000);
+      const aggressiveInterval = Math.min(candleInterval, 10000); // Cap at 10 seconds
       const manager = new CandleManager(aggressiveInterval);
-      manager.clear(); // Ensure clean start
+      manager.clear();
       this.candleManagers.set(simulationId, manager);
-      console.log(`⚡ AGGRESSIVE CandleManager: ${simulationId} with ${aggressiveInterval/1000}s intervals (RAPID MODE)`);
     }
     return this.candleManagers.get(simulationId)!;
   }
@@ -161,22 +156,18 @@ export class SimulationManager {
       this.traderEngine.integrateProcessedTrades(simulation, [trade]);
       this.simulations.set(simulationId, simulation);
     });
-    
-    console.log('Transaction queue connected to AGGRESSIVE SimulationManager');
   }
 
   registerClient(client: WebSocket): void {
     this.broadcastService.registerClient(client);
   }
 
-  // AGGRESSIVE SIMULATION CREATION with immediate trading activity
+  // PRODUCTION: Create simulation with error handling
   async createSimulation(parameters: Partial<SimulationParameters> = {}): Promise<ExtendedSimulationState> {
     const simulationId = uuidv4();
     
     try {
-      console.log(`🚀 Creating AGGRESSIVE simulation ${simulationId}...`);
-      
-      // STEP 1: Mark as creating
+      // Mark as creating
       this.simulationRegistrationStatus.set(simulationId, 'creating');
       
       const traders = await duneApi.getPumpFunTraders();
@@ -184,8 +175,6 @@ export class SimulationManager {
       let simulation: ExtendedSimulationState;
       
       if (traders && traders.length > 0) {
-        console.log(`Retrieved ${traders.length} traders from Dune API`);
-        
         const convertedTraders = traders.map(t => ({
           position: t.position,
           walletAddress: t.wallet_address,
@@ -201,50 +190,43 @@ export class SimulationManager {
         }));
         
         const traderProfiles = traderService.generateTraderProfiles(convertedTraders);
-        simulation = this.finalizeAggressiveSimulationCreation(simulationId, parameters, convertedTraders, traderProfiles);
+        simulation = this.finalizeSimulationCreation(simulationId, parameters, convertedTraders, traderProfiles);
       } else {
-        simulation = await this.createAggressiveSimulationWithDummyTraders(simulationId, parameters);
+        simulation = await this.createSimulationWithDummyTraders(simulationId, parameters);
       }
       
-      // STEP 2: Register with all systems
-      console.log(`⚡ Registering AGGRESSIVE simulation ${simulationId}...`);
+      // Register with all systems
       this.simulationRegistrationStatus.set(simulationId, 'registering');
       
-      // Register with all systems
       this.simulations.set(simulationId, simulation);
       this.simulationSpeeds.set(simulationId, simulation.parameters.timeCompressionFactor);
       
-      // AGGRESSIVE MODE: Use 1-minute timeframe for ultra-fast candles
       const aggressiveTimeframe: Timeframe = '1m';
       this.simulationTimeframes.set(simulationId, aggressiveTimeframe);
       
-      // Initialize candle manager with aggressive intervals (5-10 seconds)
-      const config = this.timeframeManager.getTimeframeConfig(aggressiveTimeframe);
-      const aggressiveInterval = 5000; // Force 5-second intervals
+      const aggressiveInterval = 5000; // 5-second intervals
       this.initializeCandleManager(simulationId, aggressiveInterval);
       
-      // STEP 3: Verification
+      // Verification
       await this.verifySimulationRegistration(simulationId);
       
-      // STEP 4: Mark as ready
+      // Mark as ready
       this.simulationRegistrationStatus.set(simulationId, 'ready');
-      console.log(`✅ AGGRESSIVE simulation ${simulationId} ready for ultra-fast trading`);
       
-      // STEP 5: Notify callbacks
+      // Notify callbacks
       this.notifyRegistrationCallbacks(simulationId, 'ready');
       
       return simulation;
       
     } catch (error) {
-      console.error(`❌ Error creating AGGRESSIVE simulation ${simulationId}:`, error);
+      console.error(`Error creating simulation ${simulationId}:`, error);
       this.simulationRegistrationStatus.set(simulationId, 'error');
       this.notifyRegistrationCallbacks(simulationId, 'error');
       
       // Create emergency fallback
-      const emergencySimulation = await this.createAggressiveSimulationWithDummyTraders(simulationId, parameters);
+      const emergencySimulation = await this.createSimulationWithDummyTraders(simulationId, parameters);
       this.simulationRegistrationStatus.set(simulationId, 'ready');
       
-      console.log(`🆘 Emergency AGGRESSIVE simulation ${simulationId} created`);
       return emergencySimulation;
     }
   }
@@ -259,43 +241,33 @@ export class SimulationManager {
       const speed = this.simulationSpeeds.get(simulationId);
       
       if (simulation && candleManager && speed !== undefined) {
-        console.log(`✅ AGGRESSIVE simulation ${simulationId} registration verified (attempt ${attempts + 1})`);
         return;
       }
       
       attempts++;
-      console.log(`⏳ AGGRESSIVE verification attempt ${attempts} for simulation ${simulationId}...`);
-      await new Promise(resolve => setTimeout(resolve, 50)); // 50ms delay
+      await new Promise(resolve => setTimeout(resolve, 50));
     }
     
-    throw new Error(`Failed to verify AGGRESSIVE simulation ${simulationId} registration after ${maxAttempts} attempts`);
+    throw new Error(`Failed to verify simulation ${simulationId} registration after ${maxAttempts} attempts`);
   }
 
   async isSimulationRegistered(simulationId: string): Promise<boolean> {
     try {
       const simulation = this.simulations.get(simulationId);
-      if (!simulation) {
-        console.log(`❌ [AGGRESSIVE CHECK] Simulation ${simulationId} not found`);
-        return false;
-      }
+      if (!simulation) return false;
       
       const status = this.simulationRegistrationStatus.get(simulationId);
       if (status !== 'ready' && status !== 'starting' && status !== 'running') {
-        console.log(`⏳ [AGGRESSIVE CHECK] Simulation ${simulationId} status: ${status}`);
         return false;
       }
       
       const candleManager = this.candleManagers.get(simulationId);
-      if (!candleManager) {
-        console.log(`❌ [AGGRESSIVE CHECK] Simulation ${simulationId} candle manager not initialized`);
-        return false;
-      }
+      if (!candleManager) return false;
       
-      console.log(`✅ [AGGRESSIVE CHECK] Simulation ${simulationId} is ready for ultra-fast trading`);
       return true;
       
     } catch (error) {
-      console.error(`❌ [AGGRESSIVE CHECK] Error checking registration for ${simulationId}:`, error);
+      console.error(`Error checking registration for ${simulationId}:`, error);
       return false;
     }
   }
@@ -314,7 +286,7 @@ export class SimulationManager {
     
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
-        console.error(`⏰ Timeout waiting for AGGRESSIVE simulation ${simulationId} to be ready`);
+        console.error(`Timeout waiting for simulation ${simulationId} to be ready`);
         resolve(false);
       }, timeoutMs);
       
@@ -342,16 +314,15 @@ export class SimulationManager {
     }
   }
 
-  private createAggressiveSimulationWithDummyTraders(simulationId: string, parameters: Partial<SimulationParameters> = {}): Promise<ExtendedSimulationState> {
-    console.log(`Creating AGGRESSIVE simulation ${simulationId} with dummy traders`);
+  private createSimulationWithDummyTraders(simulationId: string, parameters: Partial<SimulationParameters> = {}): Promise<ExtendedSimulationState> {
     const dummyTraders = this.dataGenerator.generateDummyTraders(10);
     const traderProfiles = traderService.generateTraderProfiles(dummyTraders);
     
-    return Promise.resolve(this.finalizeAggressiveSimulationCreation(simulationId, parameters, dummyTraders, traderProfiles));
+    return Promise.resolve(this.finalizeSimulationCreation(simulationId, parameters, dummyTraders, traderProfiles));
   }
 
-  // AGGRESSIVE SIMULATION CREATION with ultra-fast parameters
-  private finalizeAggressiveSimulationCreation(
+  // PRODUCTION: Finalize simulation creation
+  private finalizeSimulationCreation(
     simulationId: string,
     parameters: Partial<SimulationParameters>,
     traders: any[],
@@ -360,15 +331,14 @@ export class SimulationManager {
     
     const randomInitialPrice = parameters.initialPrice || this.marketEngine.generateRandomTokenPrice();
     
-    // AGGRESSIVE PARAMETERS for rapid candle generation
     const defaultParams: SimulationParameters = {
-      timeCompressionFactor: 50, // MUCH HIGHER: 50x speed (was 10x)
+      timeCompressionFactor: 50, // 50x speed for ultra-fast mode
       initialPrice: randomInitialPrice,
       initialLiquidity: randomInitialPrice < 1 ? 100000 : 
                        randomInitialPrice < 10 ? 1000000 : 
                        randomInitialPrice < 100 ? 10000000 : 
                        50000000,
-      volatilityFactor: 2.0, // HIGHER: More volatility for visible movement
+      volatilityFactor: 2.0,
       duration: 60 * 24,
       scenarioType: 'standard'
     };
@@ -377,19 +347,13 @@ export class SimulationManager {
     
     this.simulationSpeeds.set(simulationId, finalParams.timeCompressionFactor);
     
-    // AGGRESSIVE MODE: Force 1-minute timeframe with ultra-fast intervals
     const aggressiveTimeframe: Timeframe = '1m';
     this.simulationTimeframes.set(simulationId, aggressiveTimeframe);
     
     const timeframeConfig = this.timeframeManager.getTimeframeConfig(aggressiveTimeframe);
-    
-    // FORCE ULTRA-FAST INTERVALS: 5 seconds for immediate chart building
     const ultraFastInterval = 5000; // 5 seconds
     timeframeConfig.interval = ultraFastInterval;
     
-    console.log(`⚡ [AGGRESSIVE MODE] Using ${ultraFastInterval/1000}s intervals at ${finalParams.timeCompressionFactor}x speed`);
-    
-    // Initialize CandleManager with ultra-fast intervals
     const candleManager = this.initializeCandleManager(simulationId, ultraFastInterval);
     candleManager.clear();
     
@@ -397,7 +361,6 @@ export class SimulationManager {
     const simulationStartTime = currentRealTime;
     const currentPrice = finalParams.initialPrice;
     
-    // Create simulation state with AGGRESSIVE configuration
     const simulation: ExtendedSimulationState = {
       id: simulationId,
       startTime: simulationStartTime,
@@ -409,9 +372,9 @@ export class SimulationManager {
       marketConditions: {
         volatility: this.marketEngine.calculateBaseVolatility(currentPrice) * finalParams.volatilityFactor,
         trend: 'sideways',
-        volume: finalParams.initialLiquidity * 0.25 // HIGHER: More initial volume
+        volume: finalParams.initialLiquidity * 0.25
       },
-      priceHistory: [], // Empty start for rapid building
+      priceHistory: [],
       currentPrice: currentPrice,
       orderBook: {
         bids: this.orderBookManager.generateInitialOrderBook('bids', currentPrice, finalParams.initialLiquidity),
@@ -426,7 +389,7 @@ export class SimulationManager {
       _tickCounter: 0,
       currentTPSMode: TPSMode.NORMAL,
       externalMarketMetrics: {
-        currentTPS: 25, // HIGHER: Start with more TPS
+        currentTPS: 25,
         actualTPS: 0,
         queueDepth: 0,
         processedOrders: 0,
@@ -438,22 +401,12 @@ export class SimulationManager {
       }
     };
     
-    // Clear any previous data
+    // Clear previous data
     if (this.transactionQueue) {
       this.transactionQueue.clearProcessedTrades(simulationId);
     }
     
     this.timeframeManager.clearCache(simulationId);
-    
-    console.log(`✅ [AGGRESSIVE CREATE] Ultra-fast simulation created:`, {
-      id: simulationId,
-      price: `$${currentPrice.toFixed(6)}`,
-      speed: `${finalParams.timeCompressionFactor}x`,
-      interval: `${ultraFastInterval/1000}s`,
-      volatility: `${(simulation.marketConditions.volatility * 100).toFixed(2)}%`,
-      traders: traderProfiles.length,
-      mode: 'ULTRA_AGGRESSIVE'
-    });
     
     return simulation;
   }
@@ -473,8 +426,7 @@ export class SimulationManager {
       throw new Error(`Simulation with ID ${id} not found`);
     }
     
-    // AGGRESSIVE MODE: Allow much higher speeds
-    const maxSpeed = 200; // Allow up to 200x speed
+    const maxSpeed = 200;
     const validSpeed = Math.max(1, Math.min(maxSpeed, speed));
     
     this.simulationSpeeds.set(id, validSpeed);
@@ -484,7 +436,6 @@ export class SimulationManager {
       simulation._tickCounter = 0;
     }
     
-    // AGGRESSIVE MODE: Adjust candle intervals based on speed
     const candleManager = this.candleManagers.get(id);
     if (candleManager) {
       candleManager.adjustSpeed(validSpeed);
@@ -493,23 +444,19 @@ export class SimulationManager {
     if (validSpeed >= 50) {
       this.performanceOptimizer.enableHighFrequencyMode();
     }
-    
-    console.log(`⚡ AGGRESSIVE simulation ${id} speed set to ${validSpeed}x`);
   }
 
-  // AGGRESSIVE SIMULATION START with immediate forced activity
+  // PRODUCTION: Start simulation with error handling
   startSimulation(id: string): void {
-    console.log(`🚀 [AGGRESSIVE START] Ultra-fast simulation start: ${id}`);
-    
     const simulation = this.simulations.get(id);
     
     if (!simulation) {
-      console.error(`❌ [AGGRESSIVE START FAILED] Simulation ${id} not found`);
+      console.error(`Simulation ${id} not found`);
       throw new Error(`Simulation with ID ${id} not found`);
     }
     
     if (simulation.isRunning && !simulation.isPaused) {
-      console.warn(`⚠️ [AGGRESSIVE START SKIP] Simulation ${id} already running`);
+      console.warn(`Simulation ${id} already running`);
       throw new Error(`Simulation ${id} is already running`);
     }
     
@@ -522,14 +469,6 @@ export class SimulationManager {
       
       const speed = this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor;
       const timeframe = this.simulationTimeframes.get(id) || '1m';
-      
-      console.log(`✅ [AGGRESSIVE CONFIG]`, {
-        id,
-        speed: `${speed}x`,
-        timeframe,
-        price: `$${simulation.currentPrice.toFixed(6)}`,
-        mode: 'ULTRA_AGGRESSIVE'
-      });
       
       // Broadcast initial state
       const marketAnalysis = this.timeframeManager.analyzeMarketConditions(id, simulation);
@@ -548,31 +487,21 @@ export class SimulationManager {
         totalTradesProcessed: this.getTotalTradesProcessed(id)
       }, marketAnalysis);
       
-      // Start the AGGRESSIVE simulation loop
+      // Start simulation loop
       if (!this.simulationIntervals.has(id)) {
-        console.log(`🔄 [AGGRESSIVE LOOP] Creating ultra-fast simulation loop...`);
-        this.startAggressiveSimulationLoop(id);
+        this.startSimulationLoop(id);
       }
       
-      // Update status
       this.simulationRegistrationStatus.set(id, 'running');
       
-      // AGGRESSIVE KICKSTART: Force immediate massive trading activity
-      console.log(`⚡ [AGGRESSIVE KICKSTART] Forcing immediate ultra-fast activity...`);
+      // Force initial activity
       setTimeout(() => {
-        console.log(`🎯 [AGGRESSIVE WAVE 1] Forcing initial massive trades and time jump`);
-        
-        // Force time forward aggressively
-        simulation.currentTime += 60000; // Jump 1 minute forward
-        
-        // Force massive initial trades (50+ trades)
-        this.forceAggressiveTradingActivity(simulation, 50);
-        
-        // Force multiple candle updates
+        simulation.currentTime += 60000;
+        this.forceInitialTradingActivity(simulation, 50);
         const candleManager = this.candleManagers.get(id);
         if (candleManager) {
           for (let i = 0; i < 5; i++) {
-            const timeOffset = i * 10000; // 10-second intervals
+            const timeOffset = i * 10000;
             candleManager.updateCandle(
               simulation.currentTime + timeOffset, 
               simulation.currentPrice * (0.999 + Math.random() * 0.002), 
@@ -580,35 +509,25 @@ export class SimulationManager {
             );
           }
         }
-        
-        // Trigger market update
         this.marketEngine.updatePrice(simulation);
-        
-        console.log(`🚀 [AGGRESSIVE WAVE 1] Complete - Chart should build rapidly`);
       }, 100);
       
-      // Second aggressive wave
+      // Second wave
       setTimeout(() => {
-        console.log(`🎯 [AGGRESSIVE WAVE 2] Second massive trading wave...`);
-        simulation.currentTime += 120000; // Jump another 2 minutes
-        this.forceAggressiveTradingActivity(simulation, 30);
+        simulation.currentTime += 120000;
+        this.forceInitialTradingActivity(simulation, 30);
         this.marketEngine.updatePrice(simulation);
-        console.log(`🚀 [AGGRESSIVE WAVE 2] Complete - Chart accelerating`);
       }, 500);
       
-      // Third wave for sustained activity
+      // Third wave
       setTimeout(() => {
-        console.log(`🎯 [AGGRESSIVE WAVE 3] Sustained trading wave...`);
-        simulation.currentTime += 180000; // Jump another 3 minutes
-        this.forceAggressiveTradingActivity(simulation, 25);
+        simulation.currentTime += 180000;
+        this.forceInitialTradingActivity(simulation, 25);
         this.marketEngine.updatePrice(simulation);
-        console.log(`🚀 [AGGRESSIVE WAVE 3] Complete - Chart in full swing`);
       }, 1000);
       
-      console.log(`🎉 [AGGRESSIVE START COMPLETE] Ultra-fast simulation ${id} started with massive immediate activity`);
-      
     } catch (error) {
-      console.error(`💥 [AGGRESSIVE START ERROR] Failed to start simulation ${id}:`, error);
+      console.error(`Failed to start simulation ${id}:`, error);
       simulation.isRunning = false;
       simulation.isPaused = false;
       this.simulations.set(id, simulation);
@@ -617,24 +536,20 @@ export class SimulationManager {
     }
   }
 
-  private startAggressiveSimulationLoop(simulationId: string): void {
-    console.log(`🔄 Starting AGGRESSIVE simulation loop for ${simulationId}`);
-    
+  private startSimulationLoop(simulationId: string): void {
     const interval = setInterval(() => {
       try {
-        this.advanceAggressiveSimulation(simulationId);
+        this.advanceSimulation(simulationId);
       } catch (error) {
-        console.error(`❌ Error in AGGRESSIVE simulation loop for ${simulationId}:`, error);
-        // Don't clear the interval on error - let it continue
+        console.error(`Error in simulation loop for ${simulationId}:`, error);
       }
     }, this.baseUpdateInterval);
     
     this.simulationIntervals.set(simulationId, interval);
-    console.log(`✅ AGGRESSIVE simulation loop interval created for ${simulationId} (${this.baseUpdateInterval}ms)`);
   }
 
-  // AGGRESSIVE SIMULATION ADVANCEMENT with rapid time progression
-  private advanceAggressiveSimulation(id: string): void {
+  // PRODUCTION: Advance simulation with minimal logging
+  private advanceSimulation(id: string): void {
     const simulation = this.simulations.get(id);
     
     if (!simulation || !simulation.isRunning || simulation.isPaused) {
@@ -644,72 +559,42 @@ export class SimulationManager {
     try {
       const speed = this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor;
       const timeframe = this.simulationTimeframes.get(id) || '1m';
-      const timeframeConfig = this.timeframeManager.getTimeframeConfig(timeframe);
       
-      // AGGRESSIVE: Much faster tick progression
-      const aggressiveTicksPerUpdate = Math.max(1, Math.floor(speed / 5)); // More frequent updates
+      const aggressiveTicksPerUpdate = Math.max(1, Math.floor(speed / 5));
       
       if (simulation._tickCounter === undefined) simulation._tickCounter = 0;
       simulation._tickCounter++;
       
-      // AGGRESSIVE LOGGING: Track rapid progression
-      const isSignificantTick = simulation._tickCounter === 1 || simulation._tickCounter % 5 === 0;
-      
-      if (isSignificantTick) {
-        console.log(`⚡ [AGGRESSIVE TICK] ${simulation._tickCounter} | Speed: ${speed}x | Candles: ${simulation.priceHistory.length} | Mode: ULTRA_FAST`);
-      }
-      
       if (simulation._tickCounter >= aggressiveTicksPerUpdate) {
         simulation._tickCounter = 0;
         
-        // AGGRESSIVE TIME ADVANCEMENT: Much larger jumps
         const realTimeElapsed = this.baseUpdateInterval;
-        const aggressiveTimeAdvancement = realTimeElapsed * speed * 2; // DOUBLE the time advancement
-        const previousTime = simulation.currentTime;
+        const aggressiveTimeAdvancement = realTimeElapsed * speed * 2;
         simulation.currentTime += aggressiveTimeAdvancement;
         
-        // AGGRESSIVE LOGGING: Time progression tracking
-        console.log(`⚡ [AGGRESSIVE TIME] Simulation ${id}:`, {
-          advancement: `${aggressiveTimeAdvancement}ms`,
-          speed: `${speed}x`,
-          candleInterval: `${timeframeConfig.interval}ms`,
-          candlesExpected: Math.floor((simulation.currentTime - simulation.startTime) / timeframeConfig.interval),
-          actualCandles: simulation.priceHistory.length,
-          mode: 'ULTRA_AGGRESSIVE'
-        });
-        
         if (simulation.currentTime >= simulation.endTime) {
-          console.log(`⏰ [AGGRESSIVE COMPLETE] Simulation ${id} reached end time`);
           this.pauseSimulation(id);
           return;
         }
         
-        // Process simulation with aggressive parameters
-        console.log(`📈 [AGGRESSIVE MARKET] Ultra-fast market update...`);
+        // Process simulation
         this.marketEngine.updatePrice(simulation);
-        
-        console.log(`👥 [AGGRESSIVE TRADERS] Processing massive trader actions...`);
         this.traderEngine.processTraderActions(simulation);
         
         // Force additional trades if activity is low
         if (simulation.recentTrades.length < 50) {
-          console.log(`📊 [AGGRESSIVE BOOST] Low activity detected - forcing additional trades`);
-          this.forceAggressiveTradingActivity(simulation, 20);
+          this.forceInitialTradingActivity(simulation, 20);
         }
         
-        console.log(`📚 [AGGRESSIVE ORDERBOOK] Updating order book...`);
         this.orderBookManager.updateOrderBook(simulation);
-        
-        console.log(`💰 [AGGRESSIVE PNL] Updating positions P&L...`);
         this.traderEngine.updatePositionsPnL(simulation);
         
-        // AGGRESSIVE: Force initial trading activity if chart is empty
+        // Force initial trading activity if chart is empty
         if (simulation.priceHistory.length === 0) {
-          console.log(`🚨 [AGGRESSIVE EMPTY] No candles - forcing massive initial activity`);
-          this.forceAggressiveTradingActivity(simulation, 100);
+          this.forceInitialTradingActivity(simulation, 100);
         }
         
-        // Broadcast updates with enhanced data
+        // Broadcast updates
         const marketAnalysis = this.timeframeManager.analyzeMarketConditions(id, simulation);
         
         this.broadcastService.broadcastPriceUpdate(id, {
@@ -729,36 +614,26 @@ export class SimulationManager {
         }, marketAnalysis);
         
         this.simulations.set(id, simulation);
-        
-        // AGGRESSIVE PROGRESS LOGGING
-        const progressLog = this.generateAggressiveProgressLog(simulation, speed, timeframe);
-        if (progressLog.shouldLog) {
-          console.log(`🚀 [AGGRESSIVE PROGRESS] ${progressLog.message}`);
-        }
       }
       
     } catch (error) {
-      console.error(`❌ [AGGRESSIVE ERROR] Error advancing simulation ${id}:`, error);
-      // Don't stop the simulation on error
+      console.error(`Error advancing simulation ${id}:`, error);
     }
   }
 
-  // AGGRESSIVE TRADING ACTIVITY GENERATION
-  private forceAggressiveTradingActivity(simulation: ExtendedSimulationState, tradeCount: number): void {
-    console.log(`🎯 [AGGRESSIVE TRADES] Creating ${tradeCount} ultra-fast trades...`);
-    
+  // PRODUCTION: Force initial trading activity
+  private forceInitialTradingActivity(simulation: ExtendedSimulationState, tradeCount: number): void {
     for (let i = 0; i < tradeCount; i++) {
       const trader = simulation.traders[Math.floor(Math.random() * simulation.traders.length)];
       const action = Math.random() > 0.5 ? 'buy' : 'sell';
       
-      // Create aggressive trade with significant price variation
-      const priceVariation = (Math.random() - 0.5) * 0.01; // ±0.5% variation
+      const priceVariation = (Math.random() - 0.5) * 0.01;
       const price = simulation.currentPrice * (1 + priceVariation);
-      const quantity = 1000 + Math.random() * 4000; // 1000-5000 tokens (larger sizes)
+      const quantity = 1000 + Math.random() * 4000;
       
       const trade = {
-        id: `aggressive-${simulation.currentTime}-${i}-${Math.random().toString(36).substr(2, 6)}`,
-        timestamp: simulation.currentTime - (i * 100), // Spread trades over last few seconds
+        id: `init-${simulation.currentTime}-${i}-${Math.random().toString(36).substr(2, 6)}`,
+        timestamp: simulation.currentTime - (i * 100),
         trader: {
           walletAddress: trader.trader.walletAddress,
           preferredName: trader.trader.preferredName || trader.trader.walletAddress,
@@ -768,14 +643,10 @@ export class SimulationManager {
         price,
         quantity,
         value: price * quantity,
-        impact: action === 'buy' ? 0.0002 : -0.0002 // Higher impact
+        impact: action === 'buy' ? 0.0002 : -0.0002
       };
       
       simulation.recentTrades.unshift(trade as Trade);
-      
-      if (i < 5) {
-        console.log(`   ⚡ Aggressive trade ${i + 1}: ${action.toUpperCase()} ${quantity.toFixed(0)} @ $${price.toFixed(6)}`);
-      }
     }
     
     // Update current price based on trade momentum
@@ -784,47 +655,10 @@ export class SimulationManager {
     const sellVolume = recentTrades.filter(t => t.action === 'sell').reduce((sum, t) => sum + t.value, 0);
     
     if (buyVolume > sellVolume) {
-      simulation.currentPrice *= 1.001; // 0.1% increase
+      simulation.currentPrice *= 1.001;
     } else if (sellVolume > buyVolume) {
-      simulation.currentPrice *= 0.999; // 0.1% decrease
+      simulation.currentPrice *= 0.999;
     }
-    
-    console.log(`✅ [AGGRESSIVE TRADES] Generated ${tradeCount} high-impact trades`);
-  }
-
-  // Generate aggressive progress log
-  private generateAggressiveProgressLog(simulation: ExtendedSimulationState, speed: number, timeframe: string): {
-    shouldLog: boolean;
-    message: string;
-  } {
-    const shouldLog = Math.random() < 0.2 || // 20% chance
-                     simulation.priceHistory.length <= 15 || // First 15 candles
-                     simulation.priceHistory.length % 10 === 0; // Every 10 candles
-    
-    if (!shouldLog) {
-      return { shouldLog: false, message: '' };
-    }
-    
-    const elapsed = simulation.currentTime - simulation.startTime;
-    const elapsedMinutes = elapsed / 60000;
-    const candlesExpected = Math.floor(elapsed / this.timeframeManager.getTimeframeConfig(timeframe as Timeframe).interval);
-    
-    let message = `AGGRESSIVE ${simulation.id}: `;
-    message += `Time: ${elapsedMinutes.toFixed(1)}min | `;
-    message += `Speed: ${speed}x | `;
-    message += `Price: $${simulation.currentPrice.toFixed(6)} | `;
-    message += `Candles: ${simulation.priceHistory.length}/${candlesExpected} | `;
-    message += `Trades: ${simulation.recentTrades.length} | `;
-    message += `Mode: ULTRA_FAST`;
-    
-    if (simulation.priceHistory.length > 0) {
-      const firstCandle = simulation.priceHistory[0];
-      const lastCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
-      const priceChange = ((lastCandle.close - firstCandle.open) / firstCandle.open * 100);
-      message += ` | Change: ${priceChange > 0 ? '+' : ''}${priceChange.toFixed(3)}%`;
-    }
-    
-    return { shouldLog: true, message };
   }
 
   private getTotalTradesProcessed(simulationId: string): number {
@@ -834,7 +668,6 @@ export class SimulationManager {
     return simulation.recentTrades.length + simulation.closedPositions.length * 2;
   }
 
-  // Continue with rest of the methods (pause, reset, etc.) - keeping them similar but with aggressive logging
   pauseSimulation(id: string): void {
     const simulation = this.simulations.get(id);
     
@@ -862,8 +695,6 @@ export class SimulationManager {
       this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor,
       simulation.currentPrice
     );
-    
-    console.log(`⏸️ AGGRESSIVE simulation ${id} paused`);
   }
 
   resetSimulation(id: string): void {
@@ -911,11 +742,11 @@ export class SimulationManager {
     const currentRealTime = Date.now();
     const simulationStartTime = currentRealTime;
     
-    // Reset all simulation state
+    // Reset all simulation state completely
     simulation.startTime = simulationStartTime;
     simulation.currentTime = simulationStartTime;
     simulation.endTime = simulationStartTime + (params.duration * 60 * 1000);
-    simulation.priceHistory = [];
+    simulation.priceHistory = []; // CRITICAL: Clear price history
     simulation.currentPrice = params.initialPrice;
     simulation.marketConditions.volatility = this.marketEngine.calculateBaseVolatility(params.initialPrice) * params.volatilityFactor;
     
@@ -926,9 +757,9 @@ export class SimulationManager {
       asks: this.orderBookManager.generateInitialOrderBook('asks', simulation.currentPrice, simulation.parameters.initialLiquidity),
       lastUpdateTime: simulation.startTime
     };
-    simulation.activePositions = [];
-    simulation.closedPositions = [];
-    simulation.recentTrades = [];
+    simulation.activePositions = []; // CRITICAL: Clear positions
+    simulation.closedPositions = []; // CRITICAL: Clear closed positions
+    simulation.recentTrades = []; // CRITICAL: Clear trades
     simulation._tickCounter = 0;
     simulation.currentTPSMode = TPSMode.NORMAL;
     simulation.externalMarketMetrics = {
@@ -955,8 +786,6 @@ export class SimulationManager {
       timestamp: simulation.startTime,
       data: simulation
     });
-    
-    console.log(`🔄 AGGRESSIVE simulation ${id} reset to ultra-fast state`);
   }
 
   deleteSimulation(id: string): void {
@@ -991,8 +820,6 @@ export class SimulationManager {
     this.registrationCallbacks.delete(id);
     this.timeframeManager.clearCache(id);
     this.simulations.delete(id);
-    
-    console.log(`🗑️ AGGRESSIVE simulation ${id} deleted and cleaned up`);
   }
 
   cleanup(): void {
@@ -1015,11 +842,9 @@ export class SimulationManager {
     this.dataGenerator.cleanup();
     this.broadcastService.cleanup();
     this.externalMarketEngine.cleanup();
-    
-    console.log('AGGRESSIVE SimulationManager cleanup complete');
   }
 
-  // Additional helper methods for external use
+  // Additional methods for external use
   applyTraderBehaviorModifiers(simulationId: string, modifiers: any): void {
     this.traderEngine.applyTraderBehaviorModifiers(simulationId, modifiers);
   }
@@ -1074,8 +899,6 @@ export class SimulationManager {
         targetTPS: this.getTargetTPSForMode(mode)
       }
     });
-    
-    console.log(`⚡ AGGRESSIVE TPS mode for simulation ${simulationId} set to ${TPSMode[mode]}`);
   }
 
   enableHighFrequencyMode(simulationId: string): void {
