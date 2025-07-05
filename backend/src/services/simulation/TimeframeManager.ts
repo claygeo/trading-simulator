@@ -1,4 +1,4 @@
-// backend/src/services/simulation/TimeframeManager.ts - ULTRA FAST TIMEFRAMES FOR RAPID CANDLE GENERATION
+// backend/src/services/simulation/TimeframeManager.ts - ENHANCED: Second-level display options
 import { 
   Timeframe, 
   TimeframeConfig, 
@@ -8,10 +8,19 @@ import {
   ITimeframeManager 
 } from './types';
 
+export interface TimeDisplayOptions {
+  showSeconds: boolean;
+  format: 'HH:MM' | 'HH:MM:SS' | 'HH:MM:SS.mmm';
+  autoDetect: boolean; // Auto-detect based on interval speed
+}
+
 export class TimeframeManager implements ITimeframeManager {
   private marketAnalysisCache: Map<string, MarketAnalysis> = new Map();
   private lastAnalysisTime: Map<string, number> = new Map();
   private recentTradesBuffer: Map<string, Trade[]> = new Map();
+  
+  // NEW: Time display configuration per simulation
+  private timeDisplayOptions: Map<string, TimeDisplayOptions> = new Map();
 
   // ULTRA FAST TIMEFRAMES: Dramatically reduced intervals for rapid candle generation
   private readonly timeframeConfigs: Record<Timeframe, TimeframeConfig> = {
@@ -64,6 +73,92 @@ export class TimeframeManager implements ITimeframeManager {
     Object.entries(this.timeframeConfigs).forEach(([timeframe, config]) => {
       console.log(`   ${timeframe}: ${config.interval/1000}s intervals (${config.updateFrequency}ms updates)`);
     });
+  }
+
+  // NEW: Set time display options for a simulation
+  setTimeDisplayOptions(simulationId: string, options: Partial<TimeDisplayOptions>): void {
+    const currentOptions = this.timeDisplayOptions.get(simulationId) || {
+      showSeconds: false,
+      format: 'HH:MM',
+      autoDetect: true
+    };
+    
+    const newOptions = { ...currentOptions, ...options };
+    this.timeDisplayOptions.set(simulationId, newOptions);
+    
+    console.log(`⏰ Time display options for ${simulationId}:`, newOptions);
+  }
+
+  // NEW: Get appropriate time display format based on interval speed
+  getTimeDisplayFormat(simulationId: string, timeframe: Timeframe): string {
+    const options = this.timeDisplayOptions.get(simulationId) || {
+      showSeconds: false,
+      format: 'HH:MM',
+      autoDetect: true
+    };
+    
+    if (!options.autoDetect) {
+      return options.format;
+    }
+    
+    // Auto-detect based on interval speed
+    const config = this.timeframeConfigs[timeframe];
+    
+    if (config.interval <= 10000) { // 10 seconds or less
+      return 'HH:MM:SS.mmm'; // Show milliseconds for ultra-fast
+    } else if (config.interval <= 60000) { // 1 minute or less
+      return 'HH:MM:SS'; // Show seconds
+    } else {
+      return 'HH:MM'; // Traditional minute display
+    }
+  }
+
+  // NEW: Format timestamp according to display options
+  formatTimestamp(timestamp: number, simulationId: string, timeframe: Timeframe): string {
+    const format = this.getTimeDisplayFormat(simulationId, timeframe);
+    const date = new Date(timestamp);
+    
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+    const seconds = date.getSeconds().toString().padStart(2, '0');
+    const milliseconds = date.getMilliseconds().toString().padStart(3, '0');
+    
+    switch (format) {
+      case 'HH:MM:SS.mmm':
+        return `${hours}:${minutes}:${seconds}.${milliseconds}`;
+      case 'HH:MM:SS':
+        return `${hours}:${minutes}:${seconds}`;
+      case 'HH:MM':
+      default:
+        return `${hours}:${minutes}`;
+    }
+  }
+
+  // NEW: Get explanation for current time display
+  getTimeDisplayExplanation(simulationId: string, timeframe: Timeframe): string {
+    const config = this.timeframeConfigs[timeframe];
+    const format = this.getTimeDisplayFormat(simulationId, timeframe);
+    const options = this.timeDisplayOptions.get(simulationId);
+    
+    const intervalDescription = config.interval < 60000 
+      ? `${config.interval/1000}-second intervals`
+      : `${config.interval/60000}-minute intervals`;
+    
+    const explanations = {
+      'HH:MM:SS.mmm': `Ultra-high frequency trading display - ${intervalDescription} with millisecond precision`,
+      'HH:MM:SS': `High-frequency trading display - ${intervalDescription} with second precision`,
+      'HH:MM': `Traditional trading display - showing minute timestamps for ${intervalDescription}`
+    };
+    
+    let explanation = explanations[format] || explanations['HH:MM'];
+    
+    if (options?.autoDetect) {
+      explanation += ' (auto-detected based on interval speed)';
+    } else {
+      explanation += ' (manually configured)';
+    }
+    
+    return explanation;
   }
 
   analyzeMarketConditions(simulationId: string, simulation: SimulationState): MarketAnalysis {
@@ -167,6 +262,7 @@ export class TimeframeManager implements ITimeframeManager {
     this.marketAnalysisCache.delete(simulationId);
     this.lastAnalysisTime.delete(simulationId);
     this.recentTradesBuffer.delete(simulationId);
+    this.timeDisplayOptions.delete(simulationId);
   }
 
   private categorizePriceLevel(price: number): 'micro' | 'small' | 'mid' | 'large' | 'mega' {
