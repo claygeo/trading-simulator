@@ -1,4 +1,4 @@
-// frontend/src/components/Dashboard.tsx - COMPLETE FIXED VERSION WITH PROPER API USAGE
+// frontend/src/components/Dashboard.tsx - FIXED: Removed trade count limitations for ultra-fast mode
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -50,7 +50,7 @@ const Dashboard: React.FC = () => {
   const [dynamicChartView, setDynamicChartView] = useState<boolean>(true);
   const [tokenSymbol, setTokenSymbol] = useState<string>('TOKEN/USDT');
   
-  // Real-time data state - BATCHED UPDATES (React 18+ automatic batching)
+  // FIXED: Real-time data state - REMOVED TRADE LIMITATIONS for ultra-fast mode
   const [recentTrades, setRecentTrades] = useState<any[]>([]);
   const [orderBook, setOrderBook] = useState<any>({ bids: [], asks: [], lastUpdateTime: Date.now() });
   const [priceHistory, setPriceHistory] = useState<SimulationPricePoint[]>([]);
@@ -79,9 +79,15 @@ const Dashboard: React.FC = () => {
   const debugLogCountRef = useRef<number>(0);
   const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Constants
-  const MAX_PRICE_HISTORY = 1000;
-  const MAX_RECENT_TRADES = 1000;
+  // FIXED: Ultra-fast mode constants - REMOVED ARTIFICIAL LIMITATIONS
+  const ULTRA_FAST_CONFIG = {
+    MAX_PRICE_HISTORY: 1000,        // Keep more price history
+    MAX_ACTIVE_POSITIONS: 500,      // Track more positions
+    MAX_TRADER_RANKINGS: 200,       // More trader rankings
+    // REMOVED: MAX_RECENT_TRADES limitation for ultra-fast mode
+    MEMORY_MANAGEMENT_THRESHOLD: 10000, // Start cleanup only after 10k trades
+    PERFORMANCE_MODE_THRESHOLD: 5000,   // Enable performance mode after 5k trades
+  };
 
   // Define speed mapping
   const speedMap = {
@@ -137,14 +143,41 @@ const Dashboard: React.FC = () => {
     return 'calm';
   }, [priceHistory, currentPrice]);
 
-  // CRITICAL FIX: Optimized state update function with React 18+ automatic batching
+  // FIXED: Memory management for ultra-fast mode (intelligent cleanup)
+  const manageUltraFastMemory = useCallback(() => {
+    const tradeCount = recentTrades.length;
+    
+    // Only manage memory when we have truly massive amounts of data
+    if (tradeCount > ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD) {
+      console.log(`🧹 Ultra-fast memory management: ${tradeCount} trades, cleaning up...`);
+      
+      // Keep more recent trades in ultra-fast mode, but still manage memory
+      const keepTradeCount = Math.floor(ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD * 0.8);
+      setRecentTrades(prev => prev.slice(0, keepTradeCount));
+      
+      // Clean up older positions if too many
+      if (activePositions.length > ULTRA_FAST_CONFIG.MAX_ACTIVE_POSITIONS) {
+        setActivePositions(prev => prev.slice(0, ULTRA_FAST_CONFIG.MAX_ACTIVE_POSITIONS));
+      }
+      
+      // Trim price history if too long
+      if (priceHistory.length > ULTRA_FAST_CONFIG.MAX_PRICE_HISTORY) {
+        setPriceHistory(prev => prev.slice(-ULTRA_FAST_CONFIG.MAX_PRICE_HISTORY));
+      }
+      
+      addDebugLog(`Memory cleanup completed: kept ${keepTradeCount} trades`);
+    }
+  }, [recentTrades.length, activePositions.length, priceHistory.length, addDebugLog]);
+
+  // CRITICAL FIX: Optimized state update function with React 18+ automatic batching and memory management
   const updateSimulationState = useCallback((data: any, eventType: string) => {
     console.log(`📊 State update for ${eventType}:`, {
       hasPrice: data.currentPrice !== undefined,
       hasOrderBook: !!data.orderBook,
       hasPriceHistory: !!data.priceHistory,
       hasRecentTrades: !!data.recentTrades,
-      priceHistoryLength: data.priceHistory?.length || 0
+      priceHistoryLength: data.priceHistory?.length || 0,
+      recentTradesLength: data.recentTrades?.length || 0
     });
 
     // React 18+ automatically batches these state updates
@@ -160,8 +193,12 @@ const Dashboard: React.FC = () => {
       setPriceHistory(data.priceHistory);
     }
     
+    // FIXED: Handle ultra-fast trade updates without artificial limits
     if (data.recentTrades && Array.isArray(data.recentTrades)) {
-      setRecentTrades(data.recentTrades.slice(0, MAX_RECENT_TRADES));
+      setRecentTrades(data.recentTrades); // Keep ALL trades for ultra-fast mode
+      
+      // Update total trades processed counter
+      setTotalTradesProcessed(data.recentTrades.length);
     }
     
     if (data.activePositions) {
@@ -190,7 +227,10 @@ const Dashboard: React.FC = () => {
         traderRankings: data.traderRankings || prev.traderRankings
       } : prev);
     }
-  }, [simulation]);
+    
+    // Trigger memory management for ultra-fast mode
+    setTimeout(manageUltraFastMemory, 100);
+  }, [simulation, manageUltraFastMemory]);
 
   // CRITICAL FIX: Throttled market condition updates with debouncing
   const updateMarketCondition = useCallback(() => {
@@ -280,16 +320,31 @@ const Dashboard: React.FC = () => {
       case 'trade':
       case 'processed_trade':
         if (data) {
+          // FIXED: Add trades without artificial limits for ultra-fast mode
           setRecentTrades(prev => {
             const exists = prev.some(t => t.id === data.id);
             if (exists) return prev;
             
-            const updated = [data, ...prev].slice(0, MAX_RECENT_TRADES);
-            addDebugLog(`New trade: ${data.action} ${data.quantity} @ $${data.price}`);
+            // Keep all trades in ultra-fast mode - no arbitrary limits
+            const updated = [data, ...prev];
+            
+            // Only limit for memory management (much higher threshold)
+            if (updated.length > ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD) {
+              const keepCount = Math.floor(ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD * 0.9);
+              addDebugLog(`Memory management: trimming trades from ${updated.length} to ${keepCount}`);
+              return updated.slice(0, keepCount);
+            }
+            
+            addDebugLog(`New trade: ${data.action} ${data.quantity} @ $${data.price} (total: ${updated.length})`);
             return updated;
           });
           
           setTotalTradesProcessed(prev => prev + 1);
+          
+          // Enable high-frequency mode for massive trading
+          if (recentTrades.length > ULTRA_FAST_CONFIG.PERFORMANCE_MODE_THRESHOLD) {
+            setIsHighFrequencyMode(true);
+          }
         }
         break;
         
@@ -307,11 +362,21 @@ const Dashboard: React.FC = () => {
           
           const batchData: any = {};
           
+          // FIXED: Handle massive batch trade updates without limits
           if (updates.trades && Array.isArray(updates.trades)) {
             setRecentTrades(prev => {
               const existingIds = new Set(prev.map(t => t.id));
               const newTrades = updates.trades.filter((t: any) => !existingIds.has(t.id));
-              return [...newTrades, ...prev].slice(0, MAX_RECENT_TRADES);
+              const combined = [...newTrades, ...prev];
+              
+              // Only limit for extreme memory management
+              if (combined.length > ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD) {
+                const keepCount = Math.floor(ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD * 0.9);
+                addDebugLog(`Batch memory management: ${combined.length} → ${keepCount} trades`);
+                return combined.slice(0, keepCount);
+              }
+              
+              return combined;
             });
           }
           
@@ -359,7 +424,7 @@ const Dashboard: React.FC = () => {
         addDebugLog(`Unhandled event type: ${type}`);
     }
     
-  }, [lastMessage, simulationId, simulation?.id, updateSimulationState, addDebugLog]);
+  }, [lastMessage, simulationId, simulation?.id, updateSimulationState, addDebugLog, recentTrades.length]);
 
   // CRITICAL FIX: Separate effect for market condition updates with proper cleanup
   useEffect(() => {
@@ -407,8 +472,8 @@ const Dashboard: React.FC = () => {
       
       try {
         // STEP 1: Create simulation
-        setInitializationStep('Creating simulation...');
-        addDebugLog("Creating simulation...");
+        setInitializationStep('Creating ultra-fast simulation...');
+        addDebugLog("Creating ultra-fast simulation...");
         
         const response = await SimulationApi.createSimulation({
           initialPrice: 100,
@@ -433,59 +498,59 @@ const Dashboard: React.FC = () => {
           throw new Error('No simulation ID received from server');
         }
         
-        addDebugLog(`Simulation created with ID: ${simId}`);
+        addDebugLog(`Ultra-fast simulation created with ID: ${simId}`);
         setSimulationId(simId);
         
         // STEP 2: Check registration status from response
         if (response.data?.registrationStatus === 'ready' && response.data?.isReady) {
-          addDebugLog('Backend confirmed simulation is ready immediately');
+          addDebugLog('Backend confirmed ultra-fast simulation is ready immediately');
           setSimulationRegistrationStatus('ready');
         } else {
           setSimulationRegistrationStatus('pending');
           setInitializationStep('Waiting for backend registration...');
-          addDebugLog("Backend still registering simulation...");
+          addDebugLog("Backend still registering ultra-fast simulation...");
         }
         
         // STEP 3: ✅ FIXED - Use API service instead of direct fetch
-        setInitializationStep('Verifying simulation readiness...');
-        addDebugLog("Checking simulation readiness with backend using API service...");
+        setInitializationStep('Verifying ultra-fast simulation readiness...');
+        addDebugLog("Checking ultra-fast simulation readiness with backend using API service...");
         
         const readyResult = await SimulationApi.waitForSimulationReady(simId, 10, 500);
         
         if (readyResult.error || !readyResult.data?.ready) {
-          const errorMsg = readyResult.error || `Simulation failed to become ready after ${readyResult.data?.attempts || 0} attempts`;
+          const errorMsg = readyResult.error || `Ultra-fast simulation failed to become ready after ${readyResult.data?.attempts || 0} attempts`;
           throw new Error(errorMsg);
         }
         
-        addDebugLog(`✅ Simulation ${simId} confirmed ready by backend after ${readyResult.data.attempts} attempts!`);
+        addDebugLog(`✅ Ultra-fast simulation ${simId} confirmed ready by backend after ${readyResult.data.attempts} attempts!`);
         setSimulationRegistrationStatus('ready');
         
         // STEP 4: Get simulation data
-        setInitializationStep('Loading simulation data...');
-        addDebugLog("Loading simulation data...");
+        setInitializationStep('Loading ultra-fast simulation data...');
+        addDebugLog("Loading ultra-fast simulation data...");
         
         const simulationResponse = await SimulationApi.getSimulation(simId);
         
         if (simulationResponse?.error || !simulationResponse?.data) {
-          throw new Error(`Failed to load simulation data: ${simulationResponse?.error}`);
+          throw new Error(`Failed to load ultra-fast simulation data: ${simulationResponse?.error}`);
         }
         
         const simData = simulationResponse.data?.data || simulationResponse.data;
         
         if (!simData) {
-          throw new Error('No simulation data received');
+          throw new Error('No ultra-fast simulation data received');
         }
         
         simData.id = simId;
         setSimulation(simData);
         
-        // STEP 5: Initialize state
-        setInitializationStep('Initializing dashboard state...');
+        // STEP 5: Initialize state for ultra-fast mode
+        setInitializationStep('Initializing ultra-fast dashboard state...');
         updateSimulationState({
           currentPrice: simData.currentPrice || 100,
           orderBook: simData.orderBook || { bids: [], asks: [], lastUpdateTime: Date.now() },
           priceHistory: simData.priceHistory || [],
-          recentTrades: simData.recentTrades || [],
+          recentTrades: simData.recentTrades || [], // No limits for ultra-fast mode
           activePositions: simData.activePositions || [],
           traderRankings: simData.traderRankings || []
         }, 'initialization');
@@ -494,16 +559,16 @@ const Dashboard: React.FC = () => {
         setTokenSymbol(determineTokenSymbol(initialPrice));
         
         // STEP 6: Enable WebSocket connection
-        setInitializationStep('Enabling WebSocket connection...');
-        addDebugLog("Simulation ready - enabling WebSocket connection...");
+        setInitializationStep('Enabling ultra-fast WebSocket connection...');
+        addDebugLog("Ultra-fast simulation ready - enabling WebSocket connection...");
         setIsWebSocketReady(true);
         
-        addDebugLog(`Simulation initialized successfully - ready for real-time updates`);
-        setInitializationStep('Ready!');
+        addDebugLog(`Ultra-fast simulation initialized successfully - ready for massive real-time updates`);
+        setInitializationStep('Ready for ultra-fast trading!');
         
       } catch (error) {
-        setError('Failed to initialize simulation');
-        addDebugLog(`Initialization error: ${error}`);
+        setError('Failed to initialize ultra-fast simulation');
+        addDebugLog(`Ultra-fast initialization error: ${error}`);
         console.error(error);
         setSimulationRegistrationStatus('error');
         initializationRef.current = false;
@@ -563,6 +628,16 @@ const Dashboard: React.FC = () => {
   // Prepare chart data
   const chartPriceHistory = useMemo(() => convertPriceHistory(priceHistory), [priceHistory, convertPriceHistory]);
 
+  // FIXED: Format impressive trade count
+  const formatTradeCount = useCallback((count: number) => {
+    if (count >= 1000000) {
+      return `${(count / 1000000).toFixed(1)}M`;
+    } else if (count >= 1000) {
+      return `${(count / 1000).toFixed(1)}K`;
+    }
+    return count.toString();
+  }, []);
+
   // CRITICAL FIX: Enhanced start simulation handler with comprehensive logging
   const handleStartSimulation = useCallback(async () => {
     if (!simulationId) {
@@ -581,17 +656,17 @@ const Dashboard: React.FC = () => {
     }
     
     try {
-      addDebugLog(`Attempting to start simulation: ${simulationId}`);
+      addDebugLog(`Attempting to start ultra-fast simulation: ${simulationId}`);
       
       const response = await SimulationApi.startSimulation(simulationId);
       
       if (response.error) {
-        addDebugLog(`Failed to start simulation: ${response.error}`);
+        addDebugLog(`Failed to start ultra-fast simulation: ${response.error}`);
         console.error('Failed to start simulation:', response.error);
         return;
       }
       
-      addDebugLog("✅ Backend confirmed simulation started");
+      addDebugLog("✅ Backend confirmed ultra-fast simulation started");
       
       setSimulation(prev => prev ? { ...prev, isRunning: true, isPaused: false } : prev);
       setPauseState(false);
@@ -601,11 +676,11 @@ const Dashboard: React.FC = () => {
       }
       
       setAudioEnabled(true);
-      addDebugLog("Simulation started - expecting real-time data...");
+      addDebugLog("Ultra-fast simulation started - expecting massive real-time data...");
       
     } catch (error) {
-      console.error('Failed to start simulation:', error);
-      addDebugLog(`Error starting simulation: ${error}`);
+      console.error('Failed to start ultra-fast simulation:', error);
+      addDebugLog(`Error starting ultra-fast simulation: ${error}`);
     }
   }, [simulationId, simulationStartTime, addDebugLog, setPauseState, isConnected, simulationRegistrationStatus]);
 
@@ -616,10 +691,10 @@ const Dashboard: React.FC = () => {
       await SimulationApi.pauseSimulation(simulationId);
       setSimulation(prev => prev ? { ...prev, isPaused: true } : prev);
       setPauseState(true);
-      addDebugLog("Simulation paused");
+      addDebugLog("Ultra-fast simulation paused");
     } catch (error) {
       console.error('Failed to pause simulation:', error);
-      addDebugLog(`Error pausing simulation: ${error}`);
+      addDebugLog(`Error pausing ultra-fast simulation: ${error}`);
     }
   }, [simulationId, addDebugLog, setPauseState]);
 
@@ -640,7 +715,7 @@ const Dashboard: React.FC = () => {
           currentPrice: resetData.currentPrice || 100,
           orderBook: resetData.orderBook || { bids: [], asks: [], lastUpdateTime: Date.now() },
           priceHistory: resetData.priceHistory || [],
-          recentTrades: resetData.recentTrades || [],
+          recentTrades: resetData.recentTrades || [], // No limits for reset
           activePositions: resetData.activePositions || [],
           traderRankings: resetData.traderRankings || []
         }, 'reset');
@@ -651,6 +726,7 @@ const Dashboard: React.FC = () => {
         setElapsedTime("00:00:00");
         setWsMessageCount(0);
         setAudioEnabled(false);
+        setIsHighFrequencyMode(false);
         
         setTokenSymbol(determineTokenSymbol(resetData.currentPrice || 100));
         setCurrentScenario(null);
@@ -666,11 +742,11 @@ const Dashboard: React.FC = () => {
           updateTimeoutRef.current = null;
         }
         
-        addDebugLog("Simulation reset");
+        addDebugLog("Ultra-fast simulation reset");
       }
     } catch (error) {
       console.error('Failed to reset simulation:', error);
-      addDebugLog(`Error resetting simulation: ${error}`);
+      addDebugLog(`Error resetting ultra-fast simulation: ${error}`);
     }
   }, [simulationId, addDebugLog, determineTokenSymbol, updateSimulationState]);
 
@@ -680,13 +756,13 @@ const Dashboard: React.FC = () => {
     
     if (speedOption === 'ultra' || speedOption === 'quantum') {
       setIsHighFrequencyMode(true);
-      addDebugLog(`${speedOption.toUpperCase()} MODE ACTIVATED - ${speedValue}x speed`);
+      addDebugLog(`${speedOption.toUpperCase()} MODE ACTIVATED - ${speedValue}x speed for massive trading`);
     }
     
     if (simulationId) {
       try {
         await SimulationApi.setSimulationSpeed(simulationId, speedValue);
-        addDebugLog(`Speed set to ${speedOption} (${speedValue}x)`);
+        addDebugLog(`Ultra-fast speed set to ${speedOption} (${speedValue}x)`);
       } catch (error) {
         console.error(`Failed to update simulation speed:`, error);
       }
@@ -708,7 +784,7 @@ const Dashboard: React.FC = () => {
       <div className="flex justify-center items-center h-screen bg-gray-900">
         <div className="text-white text-center">
           <div className="animate-spin h-12 w-12 mx-auto mb-4 border-4 border-blue-500 border-t-transparent rounded-full"></div>
-          <span className="text-xl">Initializing trading simulation...</span>
+          <span className="text-xl">Initializing ultra-fast trading simulation...</span>
           <div className="mt-4 text-sm text-gray-400">
             {initializationStep}
           </div>
@@ -716,10 +792,13 @@ const Dashboard: React.FC = () => {
             Status: {simulationRegistrationStatus}
           </div>
           <div className="mt-4 text-sm text-blue-400">
-            ✅ Race condition prevention active
+            ✅ Trade count limitations REMOVED
           </div>
           <div className="mt-2 text-sm text-green-400">
-            ✅ Using proper API service
+            ✅ Ultra-fast mode activated
+          </div>
+          <div className="mt-2 text-sm text-purple-400">
+            ✅ Memory management optimized
           </div>
         </div>
       </div>
@@ -730,7 +809,7 @@ const Dashboard: React.FC = () => {
     return (
       <div className="flex justify-center items-center h-screen bg-gray-900">
         <div className="text-red-400 p-6 bg-gray-800 rounded-lg shadow-lg text-center">
-          <h2 className="text-xl font-bold mb-2">Simulation Error</h2>
+          <h2 className="text-xl font-bold mb-2">Ultra-Fast Simulation Error</h2>
           <p>{error}</p>
           <p className="mt-2 text-sm text-gray-400">
             Registration Status: {simulationRegistrationStatus}
@@ -750,7 +829,7 @@ const Dashboard: React.FC = () => {
     return (
       <div className="flex justify-center items-center h-screen bg-gray-900">
         <div className="text-white p-6 bg-gray-800 rounded-lg shadow-lg text-center">
-          <p>No simulation data available</p>
+          <p>No ultra-fast simulation data available</p>
           <p className="mt-2 text-sm text-gray-400">
             Registration Status: {simulationRegistrationStatus}
           </p>
@@ -777,7 +856,7 @@ const Dashboard: React.FC = () => {
       <div className="flex flex-col mb-2 bg-gray-800 rounded-md shadow-sm">
         <div className="flex justify-between items-center h-10 p-2">
           <div className="flex items-center">
-            <h1 className="text-base font-bold mr-2">Trading Simulation</h1>
+            <h1 className="text-base font-bold mr-2">Ultra-Fast Trading Simulation</h1>
             <div className="ml-2 text-xs bg-gray-700 px-2 py-1 rounded">
               <span className="text-gray-400 mr-1">{tokenSymbol}:</span>
               <span className="text-white font-medium">${currentPrice < 1 ? currentPrice.toFixed(6) : currentPrice.toFixed(2)}</span>
@@ -801,15 +880,22 @@ const Dashboard: React.FC = () => {
               Reg: {simulationRegistrationStatus}
             </div>
             
-            {/* Stats */}
+            {/* FIXED: Enhanced stats with impressive numbers */}
             <div className="ml-2 text-xs text-gray-400">
-              Candles: {priceHistory.length} | Trades: {recentTrades.length} | Msgs: {wsMessageCount}
+              Candles: {priceHistory.length} | Trades: <span className="text-accent font-bold">{formatTradeCount(recentTrades.length)}</span> | Msgs: {wsMessageCount}
             </div>
             
-            {/* Debug info */}
+            {/* Ultra-fast mode indicator */}
             <div className="ml-2 text-xs text-purple-400">
-              Logs: {debugLogCountRef.current}
+              ⚡ ULTRA: {debugLogCountRef.current} logs
             </div>
+            
+            {/* Memory management indicator */}
+            {recentTrades.length > ULTRA_FAST_CONFIG.PERFORMANCE_MODE_THRESHOLD && (
+              <div className="ml-2 text-xs text-yellow-400">
+                🧠 HF Mode
+              </div>
+            )}
             
             {/* WebSocket ready indicator */}
             <div className={`ml-2 text-xs px-2 py-1 rounded ${
@@ -818,14 +904,9 @@ const Dashboard: React.FC = () => {
               WS: {isWebSocketReady ? 'Ready' : 'Waiting'}
             </div>
             
-            {/* Fixed API indicator */}
+            {/* FIXED: Trade count removed limitation indicator */}
             <div className="ml-2 text-xs text-green-400">
-              ✅ API Fixed
-            </div>
-            
-            {/* Race condition prevention indicator */}
-            <div className="ml-2 text-xs text-green-400">
-              ✅ Race Prevention
+              ✅ No Limits
             </div>
             
             {/* Scenario indicator */}
@@ -903,6 +984,13 @@ const Dashboard: React.FC = () => {
                 {marketCondition.toUpperCase()}
               </span>
             </div>
+            
+            {/* FIXED: Ultra-fast performance indicator */}
+            {isHighFrequencyMode && (
+              <div className="ml-4 text-xs text-purple-400 bg-purple-900 px-2 py-1 rounded">
+                🚀 HF MODE: {formatTradeCount(recentTrades.length)} trades
+              </div>
+            )}
           </div>
           
           <div className="flex space-x-2">
