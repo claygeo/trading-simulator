@@ -1,4 +1,4 @@
-// backend/src/services/simulation/TraderEngine.ts - FIXED: Property initialization
+// backend/src/services/simulation/TraderEngine.ts - COMPLETE ENHANCED VERSION
 import { v4 as uuidv4 } from 'uuid';
 import { 
   SimulationState, 
@@ -15,7 +15,6 @@ import { ObjectPool } from '../../utils/objectPool';
 import { TransactionQueue } from '../transactionQueue';
 
 export class TraderEngine implements ITraderEngine {
-  // FIXED: Initialize in constructor
   private tradePool: ObjectPool<Trade>;
   private positionPool: ObjectPool<TraderPosition>;
   private transactionQueue?: TransactionQueue;
@@ -27,7 +26,7 @@ export class TraderEngine implements ITraderEngine {
     private broadcastEvent: (simulationId: string, event: any) => void,
     private updateTradesBuffer?: (simulationId: string, trades: Trade[]) => void
   ) {
-    // FIXED: Initialize object pools in constructor
+    // Initialize object pools
     this.tradePool = new ObjectPool<Trade>(
       () => ({
         id: '',
@@ -52,7 +51,6 @@ export class TraderEngine implements ITraderEngine {
       5000
     );
 
-    // Position object pool
     this.positionPool = new ObjectPool<TraderPosition>(
       () => ({
         trader: {} as any,
@@ -79,423 +77,567 @@ export class TraderEngine implements ITraderEngine {
     console.log('Transaction queue connected to TraderEngine');
   }
 
+  // CRITICAL FIX: Dramatically enhanced trading activity with 118 real participants
   processTraderActions(simulation: ExtendedSimulationState): void {
-    const traders = simulation.traders;
+    const traders = simulation.traders; // These are the 118 real Dune Analytics traders
     const speed = simulation.parameters.timeCompressionFactor;
     
-    // Smart trader selection based on market conditions
-    const { volatility, trend, volume } = simulation.marketConditions;
+    // ENHANCED: Calculate simulation mode based on speed
+    const simulationMode = this.getSimulationMode(speed);
+    console.log(`🎯 [TRADING MODE] ${simulationMode.name}: Targeting ${simulationMode.tradesPerTick} trades/tick from ${traders.length} real participants`);
     
-    // Different trader types are active in different market conditions
-    let activeTraderTypes: string[] = [];
-    
-    if (volatility > 0.02) {
-      activeTraderTypes.push('scalper', 'momentum');
-    }
-    
-    if (trend === 'bullish' || trend === 'bearish') {
-      activeTraderTypes.push('momentum', 'swing');
-    } else {
-      activeTraderTypes.push('contrarian', 'position');
-    }
-    
-    // If no specific types, use all
-    if (activeTraderTypes.length === 0) {
-      activeTraderTypes = ['scalper', 'momentum', 'swing', 'contrarian', 'position'];
-    }
-    
-    // Filter traders by active types
-    const activeTraders = traders.filter(t => 
-      activeTraderTypes.includes(t.strategy) || !t.strategy
-    );
-    
-    // SUPER ENHANCED: Much more aggressive trade generation
-    const marketActivityScore = this.calculateMarketActivityScore(simulation);
-    const basePercentage = 0.20 + (marketActivityScore * 0.30); // Increased from 0.10-0.25 to 0.20-0.50
-    const speedMultiplier = Math.log2(speed + 1) * 1.5; // More aggressive multiplier
-    const traderPercentage = Math.min(0.8, basePercentage * speedMultiplier); // Increased cap to 80%
-    
-    // Calculate number of traders to process
-    const numTradersToProcess = Math.max(
-      10, // Increased minimum from 5 to 10
-      Math.floor(activeTraders.length * traderPercentage)
-    );
-    
-    // Smart selection: prioritize traders who haven't traded recently
-    const sortedTraders = [...activeTraders].sort((a, b) => {
-      const aLastTrade = this.getLastTradeTime(simulation, a.trader.walletAddress);
-      const bLastTrade = this.getLastTradeTime(simulation, b.trader.walletAddress);
-      return aLastTrade - bLastTrade; // Prioritize traders who haven't traded in a while
-    });
-    
-    const selectedTraders = sortedTraders.slice(0, numTradersToProcess);
-    
-    // Track trades generated in this tick
+    // FORCE MASSIVE TRADING ACTIVITY
     const tradesGenerated: Trade[] = [];
     
-    // Process each selected trader with MUCH MORE aggressive probability
-    selectedTraders.forEach(traderProfile => {
-      // SUPER ENHANCED: Very aggressive trading probability
-      const opportunityExists = this.evaluateTradeOpportunity(simulation, traderProfile);
-      const baseProb = opportunityExists ? 0.9 : 0.5; // Increased from 0.8:0.3
-      const speedBonus = Math.min(0.2, speed / 100); // Bonus based on speed
-      const shouldTrade = Math.random() < (baseProb + speedBonus);
+    // 1. FORCE REAL PARTICIPANTS TO BE ACTIVE (118 Dune Analytics traders)
+    this.forceParticipantActivity(simulation, tradesGenerated, simulationMode);
+    
+    // 2. GENERATE MARKET MAKER ACTIVITY
+    this.generateMarketMakerActivity(simulation, tradesGenerated, simulationMode);
+    
+    // 3. GENERATE RETAIL TRADING ACTIVITY  
+    this.generateRetailActivity(simulation, tradesGenerated, simulationMode);
+    
+    // 4. GENERATE POSITION OPENINGS/CLOSINGS
+    this.generatePositionActivity(simulation, tradesGenerated, simulationMode);
+    
+    // 5. ENSURE MINIMUM ACTIVITY THRESHOLD
+    this.ensureMinimumActivity(simulation, tradesGenerated, simulationMode);
+    
+    // 6. UPDATE TRADER POSITIONS AND RANKINGS
+    this.updateTraderStatsFromTrades(simulation, tradesGenerated);
+    
+    // Convert and queue all trades
+    if (this.transactionQueue && tradesGenerated.length > 0) {
+      const convertedTrades = tradesGenerated.map(trade => ({
+        ...trade,
+        trader: {
+          ...trade.trader,
+          position: trade.trader.position || 0,
+          totalVolume: trade.trader.totalVolume || 0,
+          buyVolume: trade.trader.buyVolume || 0,
+          sellVolume: trade.trader.sellVolume || 0,
+          tradeCount: trade.trader.tradeCount || 0,
+          feesUsd: trade.trader.feesUsd || 0,
+          winRate: trade.trader.winRate || 0.5,
+          riskProfile: trade.trader.riskProfile || 'moderate' as const,
+          portfolioEfficiency: trade.trader.portfolioEfficiency || 0
+        }
+      }));
       
-      if (shouldTrade) {
-        const trade = this.processTraderDecision(simulation, traderProfile);
-        if (trade) {
-          tradesGenerated.push(trade);
-        }
-      }
-    });
-
-    // Force trades if too few
-    const minTradesPerTick = Math.max(5, Math.floor(speed / 10));
-    if (tradesGenerated.length < minTradesPerTick) {
-      const forcedCount = minTradesPerTick - tradesGenerated.length;
-      const forcedTraders = [...simulation.traders]
-        .sort(() => 0.5 - Math.random())
-        .slice(0, forcedCount);
-
-      forcedTraders.forEach(trader => {
-        const trade = this.processTraderDecision(simulation, trader);
-        if (trade) {
-          tradesGenerated.push(trade);
-        }
-      });
-    }
-
-    // Force initial trades if none exist
-    if (simulation.recentTrades.length === 0 && simulation.traders.length > 0) {
-      const forcedTraderCount = Math.min(5, simulation.traders.length); // Increased from 3 to 5
-      const randomTraders = [...simulation.traders].sort(() => 0.5 - Math.random()).slice(0, forcedTraderCount);
-
-      randomTraders.forEach(trader => {
-        const trade = this.processTraderDecision(simulation, trader);
-        if (trade) {
-          tradesGenerated.push(trade);
-        }
-      });
-
-      console.log(`Forced ${forcedTraderCount} initial trades`);
-    }
-    
-    // SUPER ENHANCED: Much more aggressive market maker activity
-    const mmTrades = this.generateMarketMakerTrades(simulation, speed);
-    tradesGenerated.push(...mmTrades);
-    
-    // FIXED: Convert to main Trade type before sending to queue
-    const convertedTrades = tradesGenerated.map(trade => ({
-      ...trade,
-      trader: {
-        ...trade.trader,
-        position: trade.trader.position || 0,
-        totalVolume: trade.trader.totalVolume || 0,
-        buyVolume: trade.trader.buyVolume || 0,
-        sellVolume: trade.trader.sellVolume || 0,
-        tradeCount: trade.trader.tradeCount || 0,
-        feesUsd: trade.trader.feesUsd || 0,
-        winRate: trade.trader.winRate || 0.5,
-        riskProfile: trade.trader.riskProfile || 'moderate' as const,
-        portfolioEfficiency: trade.trader.portfolioEfficiency || 0
-      }
-    }));
-    
-    // Send all generated trades to transaction queue if available
-    if (this.transactionQueue && convertedTrades.length > 0) {
       this.transactionQueue.addTrades(convertedTrades as any[], simulation.id).catch(err => {
         console.error('Failed to queue trades:', err);
       });
     }
     
-    // Log trading activity periodically
-    if (Math.random() < 0.05) { // 5% chance
-      console.log(`Trading activity: ${tradesGenerated.length} trades from ${numTradersToProcess} traders (${activeTraderTypes.join(', ')} strategies active)`);
+    // Add trades to simulation for immediate candle volume
+    tradesGenerated.forEach(trade => {
+      simulation.recentTrades.unshift(trade);
+    });
+    
+    // Limit recent trades to prevent memory issues
+    if (simulation.recentTrades.length > 2000) {
+      simulation.recentTrades = simulation.recentTrades.slice(0, 2000);
+    }
+    
+    console.log(`🚀 [TRADING COMPLETE] Generated ${tradesGenerated.length} trades in ${simulationMode.name} mode`);
+    console.log(`📊 [CHART IMPACT] Total volume: ${tradesGenerated.reduce((sum, t) => sum + t.quantity, 0).toFixed(0)} tokens`);
+  }
+
+  // NEW: Determine simulation mode based on speed (Normal/Medium/Fast)
+  private getSimulationMode(speed: number): {
+    name: string;
+    tradesPerTick: number;
+    participantActivityRate: number;
+    positionActivityRate: number;
+    marketMakerMultiplier: number;
+  } {
+    if (speed <= 5) {
+      return {
+        name: "NORMAL",
+        tradesPerTick: 25,
+        participantActivityRate: 0.20, // 20% of 118 participants active per tick
+        positionActivityRate: 0.15,
+        marketMakerMultiplier: 1
+      };
+    } else if (speed <= 15) {
+      return {
+        name: "MEDIUM", 
+        tradesPerTick: 75,
+        participantActivityRate: 0.35, // 35% active
+        positionActivityRate: 0.25,
+        marketMakerMultiplier: 2
+      };
+    } else {
+      return {
+        name: "FAST",
+        tradesPerTick: 150,
+        participantActivityRate: 0.50, // 50% active
+        positionActivityRate: 0.35,
+        marketMakerMultiplier: 3
+      };
     }
   }
 
-  // Calculate market activity score
-  private calculateMarketActivityScore(simulation: ExtendedSimulationState): number {
-    const recentTrades = simulation.recentTrades.filter(t => 
-      simulation.currentTime - t.timestamp < 60000 // Last minute in simulation time
-    );
+  // NEW: Force real 118 Dune Analytics participants to be active
+  private forceParticipantActivity(
+    simulation: ExtendedSimulationState, 
+    tradesGenerated: Trade[], 
+    mode: any
+  ): void {
+    const { traders } = simulation; // These are the 118 real Dune Analytics traders
+    const activeCount = Math.max(10, Math.floor(traders.length * mode.participantActivityRate));
     
-    const tradeFrequency = recentTrades.length / 60; // Trades per second
-    const priceMovement = Math.abs(
-      (simulation.currentPrice - simulation.priceHistory[simulation.priceHistory.length - 10]?.close || simulation.currentPrice) 
-      / simulation.currentPrice
-    );
+    // Shuffle traders to get random selection each tick
+    const shuffledTraders = [...traders].sort(() => 0.5 - Math.random());
+    const activeTraders = shuffledTraders.slice(0, activeCount);
     
-    const volumeScore = Math.min(1, simulation.marketConditions.volume / simulation.parameters.initialLiquidity);
+    console.log(`👥 [REAL PARTICIPANTS] Activating ${activeCount}/${traders.length} real Dune Analytics traders`);
     
-    // Combine factors
-    return Math.min(1, tradeFrequency * 0.3 + priceMovement * 50 + volumeScore * 0.2);
+    activeTraders.forEach((trader, index) => {
+      // Determine if trader should open/close position or just trade
+      const hasPosition = simulation.activePositions.some(p => 
+        p.trader.walletAddress === trader.trader.walletAddress
+      );
+      
+      let action: 'buy' | 'sell';
+      
+      if (hasPosition && Math.random() < 0.3) {
+        // 30% chance to close existing position
+        action = this.getPositionCloseAction(simulation, trader);
+      } else {
+        // Regular trading action
+        action = this.determineTraderAction(simulation, trader);
+      }
+      
+      const trade = this.createTraderTrade(simulation, trader, action);
+      
+      if (trade) {
+        tradesGenerated.push(trade);
+        
+        // Create/update position for this trader
+        this.updateTraderPosition(simulation, trader, trade);
+        
+        // Log first few for debugging
+        if (index < 3) {
+          console.log(`   💰 Real Trader ${trader.trader.walletAddress.slice(0, 8)}: ${action.toUpperCase()} ${trade.quantity.toFixed(0)} @ $${trade.price.toFixed(6)}`);
+        }
+      }
+    });
+    
+    console.log(`✅ [REAL PARTICIPANTS] Generated ${activeCount} real participant trades`);
   }
 
-  // Get last trade time for a trader
-  private getLastTradeTime(simulation: ExtendedSimulationState, walletAddress: string): number {
-    const lastTrade = simulation.recentTrades.find(t => 
-      t.trader && t.trader.walletAddress === walletAddress
-    );
-    return lastTrade ? lastTrade.timestamp : 0;
-  }
-
-  // Evaluate if trader should trade based on their strategy
-  private evaluateTradeOpportunity(simulation: ExtendedSimulationState, trader: TraderProfile): boolean {
+  // NEW: Determine what action a real trader should take
+  private determineTraderAction(simulation: ExtendedSimulationState, trader: TraderProfile): 'buy' | 'sell' {
     const { strategy } = trader;
-    const { volatility, trend } = simulation.marketConditions;
-    const priceHistory = simulation.priceHistory.slice(-20);
+    const { trend, volatility } = simulation.marketConditions;
+    const priceHistory = simulation.priceHistory.slice(-10);
     
-    if (priceHistory.length < 5) return false;
+    // Use real trader's historical performance to influence decisions
+    const traderWinRate = trader.trader.winRate || 0.5;
+    const traderRisk = trader.trader.riskProfile || 'moderate';
     
-    // Calculate technical indicators
-    const sma5 = TechnicalIndicators.calculateSMA(priceHistory.slice(-5));
-    const sma20 = TechnicalIndicators.calculateSMA(priceHistory);
-    const rsi = TechnicalIndicators.calculateRSI(priceHistory);
-    
-    // Strategy-specific opportunity detection
+    // Strategy-based decisions with risk profile influence
     switch (strategy) {
-      case 'scalper':
-        // Scalpers love volatility and quick moves
-        const priceChange = Math.abs((simulation.currentPrice - priceHistory[priceHistory.length - 2].close) / simulation.currentPrice);
-        return volatility > 0.015 && priceChange > 0.001;
-        
-      case 'swing':
-        // Swing traders look for trend confirmations
-        if (trend === 'bullish' && simulation.currentPrice > sma5 && sma5 > sma20) {
-          return true;
-        }
-        if (trend === 'bearish' && simulation.currentPrice < sma5 && sma5 < sma20) {
-          return true;
-        }
-        return false;
-        
       case 'momentum':
-        // Momentum traders follow strong moves
-        const momentum = (simulation.currentPrice - priceHistory[priceHistory.length - 5].close) / simulation.currentPrice;
-        return Math.abs(momentum) > 0.01 && (
-          (momentum > 0 && rsi < 70) || (momentum < 0 && rsi > 30)
-        );
+        if (trend === 'bullish' && traderWinRate > 0.6) return 'buy';
+        if (trend === 'bearish' && traderWinRate > 0.6) return 'sell';
+        return Math.random() > 0.5 ? 'buy' : 'sell';
         
       case 'contrarian':
-        // Contrarians trade against extremes
-        return rsi > 75 || rsi < 25;
+        if (trend === 'bullish' && volatility > 0.03) return 'sell';
+        if (trend === 'bearish' && volatility > 0.03) return 'buy';
+        return Math.random() > 0.5 ? 'buy' : 'sell';
+        
+      case 'scalper':
+        // Scalpers trade more frequently on any movement
+        return volatility > 0.01 ? (Math.random() > 0.5 ? 'buy' : 'sell') : 'buy';
         
       default:
-        // Default traders are less sophisticated
-        return volatility > 0.01 && Math.random() < 0.3;
-    }
-  }
-
-  // Generate smarter market maker trades with SUPER ENHANCED logic
-  private generateMarketMakerTrades(simulation: ExtendedSimulationState, speed: number): Trade[] {
-    const trades: Trade[] = [];
-    const { volatility, volume } = simulation.marketConditions;
-    
-    // SUPER ENHANCED: Many more market maker trades
-    const baseMMTrades = volatility > 0.02 ? 10 : 5; // Increased from 5:3
-    const speedAdjusted = Math.ceil(baseMMTrades * Math.log2(speed + 1) * 2); // More aggressive
-    
-    for (let i = 0; i < speedAdjusted; i++) {
-      if (Math.random() < 0.95) { // Increased from 0.9 to 0.95
-        const spread = this.calculateOptimalSpread(simulation);
-        const side = this.determineMakerSide(simulation);
-        
-        const trade = this.tradePool.acquire();
-        trade.id = `mm-${simulation.currentTime}-${Math.random().toString(36).substr(2, 9)}`;
-        trade.timestamp = simulation.currentTime; // Use simulation time
-        trade.trader = {
-          walletAddress: 'market-maker',
-          avatarUrl: '',
-          preferredName: 'Market Maker',
-          netPnl: 0
-        };
-        trade.action = side;
-        
-        // Market makers trade at the spread
-        trade.price = side === 'buy' 
-          ? simulation.currentPrice * (1 - spread)
-          : simulation.currentPrice * (1 + spread);
-        
-        // Larger sizes for more volume
-        const baseSize = simulation.currentPrice < 1 ? 20000 : 5000; // Increased sizes
-        const volatilityMultiplier = 1 + volatility * 30; // Increased multiplier
-        trade.quantity = (Math.random() * baseSize * volatilityMultiplier) + 500;
-        
-        trade.value = trade.price * trade.quantity;
-        trade.impact = (trade.quantity / simulation.parameters.initialLiquidity) * 0.0003; // Increased impact
-        
-        trades.push(trade);
-        
-        // Update price immediately for market maker trades
-        simulation.currentPrice *= (1 + (side === 'buy' ? trade.impact : -trade.impact));
-      }
-    }
-    
-    return trades;
-  }
-
-  // Calculate optimal spread based on market conditions
-  private calculateOptimalSpread(simulation: ExtendedSimulationState): number {
-    const { volatility } = simulation.marketConditions;
-    const baseSpread = 0.001; // 0.1% base
-    const volatilityAdjustment = volatility * 0.5;
-    return Math.min(0.005, baseSpread + volatilityAdjustment); // Max 0.5% spread
-  }
-
-  // Determine which side market maker should take
-  private determineMakerSide(simulation: ExtendedSimulationState): 'buy' | 'sell' {
-    const { trend } = simulation.marketConditions;
-    const orderImbalance = this.calculateOrderImbalance(simulation);
-    
-    // Market makers provide liquidity against the flow
-    if (orderImbalance > 0.1) return 'sell'; // Too many buyers, provide sells
-    if (orderImbalance < -0.1) return 'buy'; // Too many sellers, provide buys
-    
-    // Otherwise, slight bias based on trend
-    if (trend === 'bullish') return Math.random() < 0.6 ? 'sell' : 'buy';
-    if (trend === 'bearish') return Math.random() < 0.6 ? 'buy' : 'sell';
-    
-    return Math.random() > 0.5 ? 'buy' : 'sell';
-  }
-
-  // Calculate order book imbalance
-  private calculateOrderImbalance(simulation: ExtendedSimulationState): number {
-    const { bids, asks } = simulation.orderBook;
-    
-    const bidVolume = bids.slice(0, 5).reduce((sum, bid) => sum + bid.quantity, 0);
-    const askVolume = asks.slice(0, 5).reduce((sum, ask) => sum + ask.quantity, 0);
-    
-    const totalVolume = bidVolume + askVolume;
-    if (totalVolume === 0) return 0;
-    
-    return (bidVolume - askVolume) / totalVolume;
-  }
-
-  // Add method to simulate market maker activity
-  private processMarketMakerActivity(simulation: ExtendedSimulationState): void {
-    const speed = simulation.parameters.timeCompressionFactor;
-    
-    // Market makers trade more frequently at higher speeds
-    const mmTradesPerTick = Math.ceil(speed / 2);
-    
-    for (let i = 0; i < mmTradesPerTick; i++) {
-      if (Math.random() < 0.7) { // 70% chance per attempt
-        const trade = this.generateMarketMakerTrade(simulation);
-        if (trade) {
-          simulation.recentTrades.unshift(trade);
-          this.updatePriceFromTrade(simulation, trade);
+        // Default behavior based on trader's historical success
+        if (traderRisk === 'aggressive') {
+          return trend === 'bullish' ? 'buy' : 'sell';
+        } else if (traderRisk === 'conservative') {
+          return Math.random() > 0.7 ? 'buy' : 'sell'; // Less frequent trading
+        } else {
+          return Math.random() > 0.5 ? 'buy' : 'sell';
         }
-      }
     }
   }
 
-  // Generate market maker trades
-  private generateMarketMakerTrade(simulation: ExtendedSimulationState): Trade | null {
-    const currentPrice = simulation.currentPrice;
-    const action = Math.random() > 0.5 ? 'buy' : 'sell';
+  // NEW: Get action to close existing position
+  private getPositionCloseAction(simulation: ExtendedSimulationState, trader: TraderProfile): 'buy' | 'sell' {
+    const position = simulation.activePositions.find(p => 
+      p.trader.walletAddress === trader.trader.walletAddress
+    );
     
-    // Market makers trade near the spread
-    const spreadPercentage = 0.001; // 0.1% spread
-    const price = action === 'buy' 
-      ? currentPrice * (1 - spreadPercentage)
-      : currentPrice * (1 + spreadPercentage);
+    if (!position) return 'buy';
+    
+    // Close position = opposite action
+    return position.quantity > 0 ? 'sell' : 'buy';
+  }
+
+  // NEW: Create a trade for a specific trader
+  private createTraderTrade(
+    simulation: ExtendedSimulationState, 
+    trader: TraderProfile, 
+    action: 'buy' | 'sell'
+  ): Trade | null {
+    const currentPrice = simulation.currentPrice;
+    
+    // Calculate trade size based on trader's historical volume and risk profile
+    const baseSize = this.calculateTradeSize(trader, currentPrice);
+    const priceVariation = (Math.random() - 0.5) * 0.002; // ±0.1% price variation
+    const tradePrice = currentPrice * (1 + priceVariation);
     
     const trade = this.tradePool.acquire();
-    trade.id = `mm-${simulation.currentTime}-${Math.random().toString(36).substr(2, 9)}`;
-    trade.timestamp = simulation.currentTime; // Use simulation time
+    trade.id = `${trader.trader.walletAddress.slice(0, 8)}-${simulation.currentTime}-${Math.random().toString(36).substr(2, 6)}`;
+    trade.timestamp = simulation.currentTime;
     trade.trader = {
-      walletAddress: 'market-maker',
-      avatarUrl: '',
-      preferredName: 'Market Maker',
-      netPnl: 0
+      walletAddress: trader.trader.walletAddress,
+      preferredName: trader.trader.preferredName || trader.trader.walletAddress.slice(0, 8),
+      netPnl: trader.trader.netPnl || 0,
+      position: trader.trader.position || 0,
+      totalVolume: trader.trader.totalVolume || 0,
+      buyVolume: trader.trader.buyVolume || 0,
+      sellVolume: trader.trader.sellVolume || 0,
+      tradeCount: trader.trader.tradeCount || 0,
+      feesUsd: trader.trader.feesUsd || 0,
+      winRate: trader.trader.winRate || 0.5,
+      riskProfile: trader.trader.riskProfile || 'moderate',
+      portfolioEfficiency: trader.trader.portfolioEfficiency || 0
     };
     trade.action = action;
-    trade.price = price;
-    trade.quantity = Math.random() * 1000 + 100;
-    trade.value = trade.price * trade.quantity;
-    trade.impact = (trade.quantity / 100000) * 0.0005; // Smaller impact for MM trades
+    trade.price = tradePrice;
+    trade.quantity = baseSize;
+    trade.value = tradePrice * baseSize;
+    trade.impact = this.calculateTradeImpact(simulation, trade.value);
     
     return trade;
   }
 
-  // Helper method to update price from trade
-  private updatePriceFromTrade(simulation: ExtendedSimulationState, trade: Trade): void {
-    // Update current price based on trade
-    const priceImpact = trade.action === 'buy' ? trade.impact : -trade.impact;
-    simulation.currentPrice = simulation.currentPrice * (1 + priceImpact);
+  // NEW: Calculate realistic trade size based on trader's profile
+  private calculateTradeSize(trader: TraderProfile, currentPrice: number): number {
+    const traderVolume = trader.trader.totalVolume || 10000;
+    const riskProfile = trader.trader.riskProfile || 'moderate';
     
-    // Update volume on current candle
-    const currentCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
-    if (currentCandle) {
-      currentCandle.volume += trade.quantity;
+    // Base trade size as percentage of trader's historical volume
+    let basePercentage = 0.05; // 5% of total volume
+    
+    // Adjust based on risk profile
+    switch (riskProfile) {
+      case 'aggressive':
+        basePercentage = 0.15; // 15% of volume
+        break;
+      case 'conservative':
+        basePercentage = 0.02; // 2% of volume
+        break;
+      default:
+        basePercentage = 0.05; // 5% of volume
+    }
+    
+    // Calculate token quantity
+    const dollarAmount = traderVolume * basePercentage * (0.5 + Math.random()); // ±50% variation
+    const tokenQuantity = dollarAmount / currentPrice;
+    
+    // Ensure minimum and maximum bounds
+    const minTokens = 100;
+    const maxTokens = currentPrice < 1 ? 50000 : currentPrice < 10 ? 10000 : 5000;
+    
+    return Math.max(minTokens, Math.min(maxTokens, tokenQuantity));
+  }
+
+  // NEW: Calculate trade impact on price
+  private calculateTradeImpact(simulation: ExtendedSimulationState, tradeValue: number): number {
+    const liquidity = simulation.parameters.initialLiquidity;
+    const volatility = simulation.marketConditions.volatility;
+    
+    // Base impact from trade size relative to liquidity
+    let impact = (tradeValue / liquidity) * 0.001;
+    
+    // Increase impact in volatile conditions
+    impact *= (1 + volatility * 5);
+    
+    // Cap maximum impact
+    return Math.min(0.005, impact); // Max 0.5% impact per trade
+  }
+
+  // NEW: Update trader position based on trade
+  private updateTraderPosition(
+    simulation: ExtendedSimulationState, 
+    trader: TraderProfile, 
+    trade: Trade
+  ): void {
+    let position = simulation.activePositions.find(p => 
+      p.trader.walletAddress === trader.trader.walletAddress
+    );
+    
+    if (!position) {
+      // Create new position
+      position = this.positionPool.acquire();
+      position.trader = trade.trader;
+      position.entryPrice = trade.price;
+      position.quantity = trade.action === 'buy' ? trade.quantity : -trade.quantity;
+      position.entryTime = trade.timestamp;
+      position.currentPnl = 0;
+      position.currentPnlPercentage = 0;
+      
+      simulation.activePositions.push(position);
+    } else {
+      // Update existing position
+      const currentQuantity = position.quantity;
+      const newQuantity = trade.action === 'buy' ? trade.quantity : -trade.quantity;
+      
+      if ((currentQuantity > 0 && newQuantity > 0) || (currentQuantity < 0 && newQuantity < 0)) {
+        // Same direction - increase position
+        const totalValue = Math.abs(currentQuantity) * position.entryPrice + Math.abs(newQuantity) * trade.price;
+        const totalQuantity = Math.abs(currentQuantity) + Math.abs(newQuantity);
+        
+        position.entryPrice = totalValue / totalQuantity;
+        position.quantity = currentQuantity + newQuantity;
+      } else {
+        // Opposite direction - reduce or close position
+        position.quantity = currentQuantity + newQuantity;
+        
+        // If position is closed or flipped, update entry price
+        if ((currentQuantity > 0 && position.quantity <= 0) || (currentQuantity < 0 && position.quantity >= 0)) {
+          if (Math.abs(position.quantity) > 0) {
+            position.entryPrice = trade.price;
+            position.entryTime = trade.timestamp;
+          }
+        }
+      }
+      
+      // Remove position if quantity is very small
+      if (Math.abs(position.quantity) < 1) {
+        const index = simulation.activePositions.indexOf(position);
+        if (index > -1) {
+          simulation.activePositions.splice(index, 1);
+          this.positionPool.release(position);
+        }
+      }
     }
   }
 
-  processTraderActionsBatch(simulation: SimulationState, batchSize: number): void {
-    // Increase action probability based on batch size
-    const actionMultiplier = Math.min(batchSize, 10);
+  // NEW: Generate market maker activity
+  private generateMarketMakerActivity(
+    simulation: ExtendedSimulationState, 
+    tradesGenerated: Trade[], 
+    mode: any
+  ): void {
+    const mmTradeCount = Math.floor(mode.tradesPerTick * 0.3 * mode.marketMakerMultiplier);
+    
+    for (let i = 0; i < mmTradeCount; i++) {
+      const trade = this.createMarketMakerTrade(simulation);
+      if (trade) {
+        tradesGenerated.push(trade);
+      }
+    }
+    
+    console.log(`🏪 [MARKET MAKERS] Generated ${mmTradeCount} market maker trades`);
+  }
 
-    // Sample a subset of traders for efficiency
-    const traderSample = this.getRandomTraderSample(simulation.traders, Math.min(50, simulation.traders.length));
+  // NEW: Create market maker trade
+  private createMarketMakerTrade(simulation: ExtendedSimulationState): Trade | null {
+    const currentPrice = simulation.currentPrice;
+    const spread = this.calculateMarketSpread(simulation);
+    const action = Math.random() > 0.5 ? 'buy' : 'sell';
+    
+    const trade = this.tradePool.acquire();
+    trade.id = `mm-${simulation.currentTime}-${Math.random().toString(36).substr(2, 9)}`;
+    trade.timestamp = simulation.currentTime;
+    trade.trader = {
+      walletAddress: 'market-maker',
+      preferredName: 'Market Maker',
+      netPnl: 0
+    };
+    trade.action = action;
+    trade.price = action === 'buy' 
+      ? currentPrice * (1 - spread)
+      : currentPrice * (1 + spread);
+    trade.quantity = 200 + Math.random() * 800; // 200-1000 tokens
+    trade.value = trade.price * trade.quantity;
+    trade.impact = 0.0001; // Minimal impact for MM trades
+    
+    return trade;
+  }
 
-    // Track trades generated in this batch
-    const tradesGenerated: Trade[] = [];
+  // NEW: Calculate market spread
+  private calculateMarketSpread(simulation: ExtendedSimulationState): number {
+    const volatility = simulation.marketConditions.volatility;
+    const baseSpread = 0.001; // 0.1%
+    return Math.min(0.005, baseSpread + volatility * 2); // Max 0.5% spread
+  }
 
-    traderSample.forEach((trader: TraderProfile) => {
-      const { tradingFrequency } = trader;
+  // NEW: Generate retail trading activity
+  private generateRetailActivity(
+    simulation: ExtendedSimulationState, 
+    tradesGenerated: Trade[], 
+    mode: any
+  ): void {
+    const retailTradeCount = Math.floor(mode.tradesPerTick * 0.4);
+    
+    for (let i = 0; i < retailTradeCount; i++) {
+      const trade = this.createRetailTrade(simulation);
+      if (trade) {
+        tradesGenerated.push(trade);
+      }
+    }
+    
+    console.log(`🏪 [RETAIL] Generated ${retailTradeCount} retail trades`);
+  }
 
-      // Adjusted probability for batch processing
-      const actionProbability = tradingFrequency * 0.05 * actionMultiplier;
+  // NEW: Create retail trade
+  private createRetailTrade(simulation: ExtendedSimulationState): Trade | null {
+    const currentPrice = simulation.currentPrice;
+    const priceVariation = (Math.random() - 0.5) * 0.01; // ±0.5% variation
+    const action = Math.random() > 0.5 ? 'buy' : 'sell';
+    
+    const trade = this.tradePool.acquire();
+    trade.id = `retail-${simulation.currentTime}-${Math.random().toString(36).substr(2, 9)}`;
+    trade.timestamp = simulation.currentTime;
+    trade.trader = {
+      walletAddress: `retail-${Math.random().toString(36).substr(2, 8)}`,
+      preferredName: 'Retail Trader',
+      netPnl: 0
+    };
+    trade.action = action;
+    trade.price = currentPrice * (1 + priceVariation);
+    trade.quantity = 50 + Math.random() * 500; // 50-550 tokens
+    trade.value = trade.price * trade.quantity;
+    trade.impact = this.calculateTradeImpact(simulation, trade.value);
+    
+    return trade;
+  }
 
-      if (Math.random() < actionProbability) {
-        const trade = this.processTraderDecision(simulation, trader);
-        if (trade) {
-          tradesGenerated.push(trade);
+  // NEW: Generate position-related activity
+  private generatePositionActivity(
+    simulation: ExtendedSimulationState, 
+    tradesGenerated: Trade[], 
+    mode: any
+  ): void {
+    // Randomly close some existing positions
+    const positionsToClose = simulation.activePositions
+      .filter(() => Math.random() < mode.positionActivityRate)
+      .slice(0, 5); // Limit to 5 closures per tick
+    
+    positionsToClose.forEach(position => {
+      const closeTrade = this.createPositionCloseTrade(simulation, position);
+      if (closeTrade) {
+        tradesGenerated.push(closeTrade);
+        
+        // Remove position
+        const index = simulation.activePositions.indexOf(position);
+        if (index > -1) {
+          simulation.activePositions.splice(index, 1);
+          this.positionPool.release(position);
         }
       }
     });
-
-    // Force initial trades if needed
-    if (simulation.recentTrades.length === 0 && simulation.traders.length > 0) {
-      const forcedTraderCount = Math.min(3, simulation.traders.length);
-      const randomTraders = [...simulation.traders].sort(() => 0.5 - Math.random()).slice(0, forcedTraderCount);
-
-      randomTraders.forEach(trader => {
-        const trade = this.processTraderDecision(simulation, trader);
-        if (trade) {
-          tradesGenerated.push(trade);
-        }
-      });
-    }
-
-    // FIXED: Convert trades before sending to queue
-    const convertedTrades = tradesGenerated.map(trade => ({
-      ...trade,
-      trader: {
-        ...trade.trader,
-        position: trade.trader.position || 0,
-        totalVolume: trade.trader.totalVolume || 0,
-        buyVolume: trade.trader.buyVolume || 0,
-        sellVolume: trade.trader.sellVolume || 0,
-        tradeCount: trade.trader.tradeCount || 0,
-        feesUsd: trade.trader.feesUsd || 0,
-        winRate: trade.trader.winRate || 0.5,
-        riskProfile: trade.trader.riskProfile || 'moderate' as const,
-        portfolioEfficiency: trade.trader.portfolioEfficiency || 0
-      }
-    }));
-
-    // Send batch to transaction queue
-    if (this.transactionQueue && convertedTrades.length > 0) {
-      this.transactionQueue.addTrades(convertedTrades as any[], simulation.id).catch(err => {
-        console.error('Failed to queue batch trades:', err);
-      });
+    
+    if (positionsToClose.length > 0) {
+      console.log(`📍 [POSITIONS] Closed ${positionsToClose.length} positions`);
     }
   }
 
+  // NEW: Create position close trade
+  private createPositionCloseTrade(
+    simulation: ExtendedSimulationState, 
+    position: TraderPosition
+  ): Trade | null {
+    const trade = this.tradePool.acquire();
+    trade.id = `close-${simulation.currentTime}-${Math.random().toString(36).substr(2, 9)}`;
+    trade.timestamp = simulation.currentTime;
+    trade.trader = position.trader;
+    trade.action = position.quantity > 0 ? 'sell' : 'buy';
+    trade.price = simulation.currentPrice;
+    trade.quantity = Math.abs(position.quantity);
+    trade.value = trade.price * trade.quantity;
+    trade.impact = this.calculateTradeImpact(simulation, trade.value);
+    
+    return trade;
+  }
+
+  // NEW: Ensure minimum activity threshold
+  private ensureMinimumActivity(
+    simulation: ExtendedSimulationState, 
+    tradesGenerated: Trade[], 
+    mode: any
+  ): void {
+    const currentCount = tradesGenerated.length;
+    const targetCount = mode.tradesPerTick;
+    
+    if (currentCount < targetCount) {
+      const additionalTrades = targetCount - currentCount;
+      
+      for (let i = 0; i < additionalTrades; i++) {
+        const trade = this.createRandomTrade(simulation);
+        if (trade) {
+          tradesGenerated.push(trade);
+        }
+      }
+      
+      console.log(`⚡ [MINIMUM] Added ${additionalTrades} trades to reach target of ${targetCount}`);
+    }
+  }
+
+  // NEW: Create random trade to fill minimum
+  private createRandomTrade(simulation: ExtendedSimulationState): Trade | null {
+    const currentPrice = simulation.currentPrice;
+    const action = Math.random() > 0.5 ? 'buy' : 'sell';
+    
+    const trade = this.tradePool.acquire();
+    trade.id = `random-${simulation.currentTime}-${Math.random().toString(36).substr(2, 9)}`;
+    trade.timestamp = simulation.currentTime;
+    trade.trader = {
+      walletAddress: `trader-${Math.random().toString(36).substr(2, 8)}`,
+      preferredName: 'Random Trader',
+      netPnl: 0
+    };
+    trade.action = action;
+    trade.price = currentPrice * (0.999 + Math.random() * 0.002); // ±0.1% variation
+    trade.quantity = 100 + Math.random() * 400; // 100-500 tokens
+    trade.value = trade.price * trade.quantity;
+    trade.impact = this.calculateTradeImpact(simulation, trade.value);
+    
+    return trade;
+  }
+
+  // NEW: Update trader stats from generated trades
+  private updateTraderStatsFromTrades(
+    simulation: ExtendedSimulationState, 
+    trades: Trade[]
+  ): void {
+    trades.forEach(trade => {
+      const trader = simulation.traders.find(t => 
+        t.trader.walletAddress === trade.trader.walletAddress
+      );
+      
+      if (trader) {
+        // Update trader statistics
+        trader.trader.tradeCount = (trader.trader.tradeCount || 0) + 1;
+        trader.trader.totalVolume = (trader.trader.totalVolume || 0) + trade.value;
+        
+        if (trade.action === 'buy') {
+          trader.trader.buyVolume = (trader.trader.buyVolume || 0) + trade.value;
+        } else {
+          trader.trader.sellVolume = (trader.trader.sellVolume || 0) + trade.value;
+        }
+      }
+    });
+    
+    // Update trader rankings
+    this.updateTraderRankings(simulation);
+  }
+
+  // Existing methods with minimal changes...
+  processTraderActionsBatch(simulation: SimulationState, batchSize: number): void {
+    // Use the enhanced processTraderActions instead
+    this.processTraderActions(simulation as ExtendedSimulationState);
+  }
+
   applyTraderBehaviorModifiers(simulationId: string, modifiers: any): void {
-    // This would need access to the simulation - implement in main manager
     console.log(`Applying trader behavior modifiers for simulation ${simulationId}:`, modifiers);
   }
 
@@ -512,108 +654,13 @@ export class TraderEngine implements ITraderEngine {
     return decisions;
   }
 
-  updatePositionsPnL(simulation: SimulationState): void {
-    const { currentPrice } = simulation;
-
-    simulation.activePositions.forEach(position => {
-      const isLong = position.quantity > 0;
-      const entryValue = Math.abs(position.quantity) * position.entryPrice;
-      const currentValue = Math.abs(position.quantity) * currentPrice;
-
-      position.currentPnl = isLong ? 
-        currentValue - entryValue :
-        entryValue - currentValue;
-      position.currentPnlPercentage = position.currentPnl / entryValue;
-    });
-  }
-
-  updateTraderRankings(simulation: SimulationState): void {
-    // Sort traders by net PnL
-    simulation.traderRankings = [...simulation.traders]
-      .map(profile => profile.trader)
-      .sort((a, b) => (b.netPnl || 0) - (a.netPnl || 0));
-  }
-
-  // Method to integrate processed trades from the transaction queue
-  integrateProcessedTrades(simulation: ExtendedSimulationState, processedTrades: Trade[]): void {
-    if (!this.processedTradesCache.has(simulation.id)) {
-      this.processedTradesCache.set(simulation.id, new Set());
-    }
-    
-    const cache = this.processedTradesCache.get(simulation.id)!;
-    
-    processedTrades.forEach(trade => {
-      // Skip if we've already integrated this trade
-      if (cache.has(trade.id)) return;
-      
-      cache.add(trade.id);
-      
-      // Add to recent trades if not already there
-      const exists = simulation.recentTrades.some(t => t.id === trade.id);
-      if (!exists) {
-        simulation.recentTrades.unshift(trade);
-        
-        // Update volume on current candle
-        const currentCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
-        if (currentCandle) {
-          currentCandle.volume += Math.abs(trade.quantity);
-        }
-        
-        // Broadcast the trade
-        this.broadcastEvent(simulation.id, {
-          type: 'processed_trade',
-          timestamp: simulation.currentTime, // Use simulation time
-          data: trade
-        });
-      }
-    });
-    
-    // Maintain cache size
-    if (cache.size > 10000) {
-      const entriesToDelete = Array.from(cache).slice(0, 5000);
-      entriesToDelete.forEach(id => cache.delete(id));
-    }
-    
-    // Keep recent trades limited
-    if (simulation.recentTrades.length > 500) {
-      const removed = simulation.recentTrades.splice(500);
-      removed.forEach(trade => this.tradePool.release(trade));
-    }
-  }
-
-  private processTraderDecision(simulation: SimulationState, trader: TraderProfile): Trade | null {
-    const existingPosition = simulation.activePositions.find(
-      p => p.trader.walletAddress === trader.trader.walletAddress
-    );
-
-    if (existingPosition) {
-      // Trader has a position - decide if they should exit
-      const shouldExit = this.shouldExitPosition(simulation, trader, existingPosition);
-
-      if (shouldExit) {
-        return this.closePosition(simulation, existingPosition, trader);
-      }
-    } else {
-      // Trader has no position - decide if they should enter
-      const shouldEnter = this.shouldEnterPosition(simulation, trader);
-
-      if (shouldEnter) {
-        return this.openPosition(simulation, trader);
-      }
-    }
-
-    return null;
-  }
-
   private evaluateTraderDecision(trader: TraderProfile, marketData: any): TraderDecision {
-    // Simplified decision logic for parallel processing
-    const { currentPrice, priceHistory, marketConditions } = marketData;
+    const { currentPrice, marketConditions } = marketData;
     const hasPosition = marketData.activePositions.some(
       (p: any) => p.walletAddress === trader.trader.walletAddress
     );
 
     if (hasPosition) {
-      // Evaluate exit conditions
       const position = marketData.activePositions.find(
         (p: any) => p.walletAddress === trader.trader.walletAddress
       );
@@ -628,7 +675,6 @@ export class TraderEngine implements ITraderEngine {
         };
       }
     } else {
-      // Evaluate entry conditions
       if (this.shouldEnterBasedOnStrategy(trader, marketData)) {
         const quantity = this.calculatePositionSize(trader, currentPrice);
         return {
@@ -640,7 +686,6 @@ export class TraderEngine implements ITraderEngine {
       }
     }
 
-    // FIXED: Add required reason property
     return {
       action: 'hold',
       walletAddress: trader.trader.walletAddress,
@@ -648,112 +693,9 @@ export class TraderEngine implements ITraderEngine {
     };
   }
 
-  private shouldEnterPosition(simulation: SimulationState, trader: TraderProfile): boolean {
-    const { marketConditions, currentPrice, priceHistory } = simulation;
-    const { strategy } = trader;
-
-    // Get recent price data
-    const recentPrices = priceHistory.slice(-20);
-    if (recentPrices.length < 5) return false;
-
-    // Calculate technical indicators
-    const sma5 = TechnicalIndicators.calculateSMA(recentPrices.slice(-5));
-    const sma20 = TechnicalIndicators.calculateSMA(recentPrices);
-    const rsi = TechnicalIndicators.calculateRSI(recentPrices);
-
-    // Adjust entry thresholds based on price level
-    const priceLevel = currentPrice;
-    const volatilityThreshold = priceLevel < 1 ? 0.03 : 0.015;
-
-    // Strategy-based entry logic
-    switch (strategy) {
-      case 'scalper':
-        return Math.random() < 0.3 && marketConditions.volatility > volatilityThreshold;
-
-      case 'swing':
-        if (marketConditions.trend === 'bullish' && currentPrice > sma5) {
-          return Math.random() < 0.4;
-        } else if (marketConditions.trend === 'bearish' && currentPrice < sma5) {
-          return Math.random() < 0.4;
-        }
-        return false;
-
-      case 'momentum':
-        if (marketConditions.trend === 'bullish' && currentPrice > sma20 && rsi < 70) {
-          return Math.random() < 0.5;
-        } else if (marketConditions.trend === 'bearish' && currentPrice < sma20 && rsi > 30) {
-          return Math.random() < 0.5;
-        }
-        return false;
-
-      case 'contrarian':
-        if (rsi > 70 || rsi < 30) {
-          return Math.random() < 0.6;
-        }
-        return false;
-
-      default:
-        return Math.random() < 0.2;
-    }
-  }
-
-  private shouldExitPosition(
-    simulation: SimulationState, 
-    trader: TraderProfile, 
-    position: TraderPosition
-  ): boolean {
-    const { currentPrice } = simulation;
-    const { strategy } = trader;
-
-    // Calculate P&L
-    const isLong = position.quantity > 0;
-    const entryValue = Math.abs(position.quantity) * position.entryPrice;
-    const currentValue = Math.abs(position.quantity) * currentPrice;
-    const pnl = isLong ? currentValue - entryValue : entryValue - currentValue;
-    const pnlPercentage = pnl / entryValue;
-
-    // Time in position (using simulation time)
-    const timeInPosition = simulation.currentTime - position.entryTime;
-    const minutesInPosition = timeInPosition / (60 * 1000);
-
-    // Adjust exit thresholds based on price level
-    const priceLevel = currentPrice;
-    const profitMultiplier = priceLevel < 1 ? 2 : 1;
-    const lossMultiplier = priceLevel < 1 ? 1.5 : 1;
-
-    // Strategy-based exit logic
-    switch (strategy) {
-      case 'scalper':
-        if (pnlPercentage > 0.005 * profitMultiplier || pnlPercentage < -0.003 * lossMultiplier) return true;
-        if (minutesInPosition > 30) return true;
-        return false;
-
-      case 'swing':
-        if (pnlPercentage > 0.02 * profitMultiplier || pnlPercentage < -0.01 * lossMultiplier) return true;
-        if (minutesInPosition > 180) return Math.random() < 0.3;
-        return false;
-
-      case 'momentum':
-        if (pnlPercentage > 0.03 * profitMultiplier || pnlPercentage < -0.015 * lossMultiplier) return true;
-        if (minutesInPosition > 120 && pnlPercentage > 0) return Math.random() < 0.2;
-        return false;
-
-      case 'contrarian':
-        if (pnlPercentage > 0.015 * profitMultiplier || pnlPercentage < -0.02 * lossMultiplier) return true;
-        if (minutesInPosition > 90) return Math.random() < 0.4;
-        return false;
-
-      default:
-        if (pnlPercentage > 0.01 * profitMultiplier || pnlPercentage < -0.005 * lossMultiplier) return true;
-        if (minutesInPosition > 60) return Math.random() < 0.5;
-        return false;
-    }
-  }
-
   private shouldEnterBasedOnStrategy(trader: TraderProfile, marketData: any): boolean {
-    // Simplified entry logic for parallel processing
     const { strategy } = trader;
-    const { marketConditions, currentPrice } = marketData;
+    const { marketConditions } = marketData;
 
     switch (strategy) {
       case 'scalper':
@@ -769,7 +711,7 @@ export class TraderEngine implements ITraderEngine {
 
   private shouldExitBasedOnStrategy(trader: TraderProfile, pnlPercentage: number, position: any): boolean {
     const { strategy } = trader;
-    const timeInPosition = position.entryTime ? Date.now() - position.entryTime : 0; // Fallback if simulation time not available
+    const timeInPosition = position.entryTime ? Date.now() - position.entryTime : 0;
     const minutesInPosition = timeInPosition / (60 * 1000);
 
     switch (strategy) {
@@ -797,172 +739,67 @@ export class TraderEngine implements ITraderEngine {
     return positionValue / currentPrice;
   }
 
-  private openPosition(simulation: SimulationState, trader: TraderProfile): Trade | null {
-    const { currentPrice, marketConditions } = simulation;
-    const { positionSizing, trader: traderData } = trader;
-
-    // CRITICAL FIX: Ensure we use consistent simulation time
-    const tradeTimestamp = simulation.currentTime;
-
-    // Determine position direction
-    let isLong = true;
-    switch (trader.strategy) {
-      case 'momentum':
-        isLong = marketConditions.trend === 'bullish';
-        break;
-      case 'contrarian':
-        isLong = marketConditions.trend === 'bearish';
-        break;
-      default:
-        isLong = Math.random() > 0.5;
-    }
-
-    // Calculate position size
-    const quantity = this.calculatePositionSize(trader, currentPrice);
-    const positionQuantity = isLong ? quantity : -quantity;
-
-    // Create position using object pool
-    const position = this.positionPool.acquire();
-    position.trader = traderData;
-    position.entryPrice = currentPrice;
-    position.quantity = positionQuantity;
-    position.entryTime = tradeTimestamp; // FIXED: Use consistent timestamp
-    position.currentPnl = 0;
-    position.currentPnlPercentage = 0;
-
-    // Add to active positions
-    simulation.activePositions.push(position);
-
-    // Create trade record
-    const trade = this.tradePool.acquire();
-    trade.id = uuidv4();
-    trade.timestamp = tradeTimestamp; // FIXED: Use consistent timestamp
-    trade.trader = traderData;
-    trade.action = isLong ? 'buy' : 'sell';
-    trade.price = currentPrice;
-    trade.quantity = Math.abs(positionQuantity);
-    trade.value = currentPrice * Math.abs(positionQuantity);
-    trade.impact = 0.0001 * trade.value / marketConditions.volume;
-
-    // Add to recent trades
-    simulation.recentTrades.unshift(trade);
-    if (simulation.recentTrades.length > 500) {
-      const removed = simulation.recentTrades.pop();
-      if (removed) this.tradePool.release(removed);
-    }
-
-    // Update trades buffer if callback provided
-    if (this.updateTradesBuffer) {
-      this.updateTradesBuffer(simulation.id, [trade]);
-    }
-
-    // Update volume on current candle
-    const currentCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
-    if (currentCandle) {
-      currentCandle.volume += Math.abs(positionQuantity);
-    }
-
-    // Broadcast trade event
-    this.broadcastEvent(simulation.id, {
-      type: 'trade',
-      timestamp: tradeTimestamp, // FIXED: Use consistent timestamp
-      data: trade
-    });
-
-    return trade;
-  }
-
-  private closePosition(simulation: SimulationState, position: TraderPosition, trader: TraderProfile): Trade | null {
+  updatePositionsPnL(simulation: SimulationState): void {
     const { currentPrice } = simulation;
-    const exitTime = simulation.currentTime; // Use simulation time
 
-    // Calculate final P&L
-    const isLong = position.quantity > 0;
-    const entryValue = Math.abs(position.quantity) * position.entryPrice;
-    const exitValue = Math.abs(position.quantity) * currentPrice;
-    const pnl = isLong ? exitValue - entryValue : entryValue - exitValue;
-    const pnlPercentage = pnl / entryValue;
+    simulation.activePositions.forEach(position => {
+      const isLong = position.quantity > 0;
+      const entryValue = Math.abs(position.quantity) * position.entryPrice;
+      const currentValue = Math.abs(position.quantity) * currentPrice;
 
-    // Create exit trade
-    const trade = this.tradePool.acquire();
-    trade.id = uuidv4();
-    trade.timestamp = exitTime; // Use simulation time
-    trade.trader = position.trader;
-    trade.action = isLong ? 'sell' : 'buy';
-    trade.price = currentPrice;
-    trade.quantity = Math.abs(position.quantity);
-    trade.value = currentPrice * Math.abs(position.quantity);
-    trade.impact = 0.0001 * trade.value / simulation.marketConditions.volume;
-
-    // Add to recent trades
-    simulation.recentTrades.unshift(trade);
-    if (simulation.recentTrades.length > 500) {
-      const removed = simulation.recentTrades.pop();
-      if (removed) this.tradePool.release(removed);
-    }
-
-    // Update trades buffer if callback provided
-    if (this.updateTradesBuffer) {
-      this.updateTradesBuffer(simulation.id, [trade]);
-    }
-
-    // Move to closed positions
-    const closedPosition: TraderPosition & { exitPrice: number, exitTime: number } = {
-      ...position,
-      exitPrice: currentPrice,
-      exitTime: exitTime,
-      currentPnl: pnl,
-      currentPnlPercentage: pnlPercentage
-    };
-
-    simulation.closedPositions.push(closedPosition);
-
-    // Remove from active positions
-    const index = simulation.activePositions.indexOf(position);
-    if (index > -1) {
-      simulation.activePositions.splice(index, 1);
-    }
-
-    // Release position back to pool
-    this.positionPool.release(position);
-
-    // Update trader's PnL
-    const traderProfile = simulation.traders.find(
-      t => t.trader.walletAddress === position.trader.walletAddress
-    );
-    if (traderProfile) {
-      traderProfile.trader.netPnl = (traderProfile.trader.netPnl || 0) + pnl;
-    }
-
-    // Update volume on current candle
-    const currentCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
-    if (currentCandle) {
-      currentCandle.volume += Math.abs(position.quantity);
-    }
-
-    // Update trader rankings
-    this.updateTraderRankings(simulation);
-
-    // Broadcast trade event
-    this.broadcastEvent(simulation.id, {
-      type: 'trade',
-      timestamp: exitTime, // Use simulation time
-      data: trade
+      position.currentPnl = isLong ? 
+        currentValue - entryValue :
+        entryValue - currentValue;
+      position.currentPnlPercentage = position.currentPnl / entryValue;
     });
-
-    return trade;
   }
 
-  private getRandomTraderSample(traders: TraderProfile[], sampleSize: number): TraderProfile[] {
-    const shuffled = [...traders];
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  updateTraderRankings(simulation: SimulationState): void {
+    simulation.traderRankings = [...simulation.traders]
+      .map(profile => profile.trader)
+      .sort((a, b) => (b.netPnl || 0) - (a.netPnl || 0));
+  }
+
+  integrateProcessedTrades(simulation: ExtendedSimulationState, processedTrades: Trade[]): void {
+    if (!this.processedTradesCache.has(simulation.id)) {
+      this.processedTradesCache.set(simulation.id, new Set());
     }
-    return shuffled.slice(0, sampleSize);
+    
+    const cache = this.processedTradesCache.get(simulation.id)!;
+    
+    processedTrades.forEach(trade => {
+      if (cache.has(trade.id)) return;
+      
+      cache.add(trade.id);
+      
+      const exists = simulation.recentTrades.some(t => t.id === trade.id);
+      if (!exists) {
+        simulation.recentTrades.unshift(trade);
+        
+        const currentCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
+        if (currentCandle) {
+          currentCandle.volume += Math.abs(trade.quantity);
+        }
+        
+        this.broadcastEvent(simulation.id, {
+          type: 'processed_trade',
+          timestamp: simulation.currentTime,
+          data: trade
+        });
+      }
+    });
+    
+    if (cache.size > 10000) {
+      const entriesToDelete = Array.from(cache).slice(0, 5000);
+      entriesToDelete.forEach(id => cache.delete(id));
+    }
+    
+    if (simulation.recentTrades.length > 2000) {
+      const removed = simulation.recentTrades.splice(2000);
+      removed.forEach(trade => this.tradePool.release(trade));
+    }
   }
 
-  // Cleanup method
   cleanup(): void {
     this.processedTradesCache.clear();
     console.log('TraderEngine cleanup complete');
