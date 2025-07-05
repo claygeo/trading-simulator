@@ -1,5 +1,5 @@
 // frontend/src/components/ParticipantsOverview.tsx - FIXED: Position sizes correlated with order book
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Trader, TraderPosition } from '../types';
 
 interface ParticipantsOverviewProps {
