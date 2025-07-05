@@ -1,4 +1,4 @@
-// frontend/src/components/RecentTrades.tsx - FIXED: Show actual trade count beyond 1000
+// frontend/src/components/RecentTrades.tsx - OPTIMIZED: Clean professional layout, exact dimensions
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 
 interface Trader {
@@ -32,7 +32,6 @@ interface RecentTradesProps {
 }
 
 const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
-  // FIXED: Separate display count from storage limit
   const [displayCount, setDisplayCount] = useState<number>(50);
   const [showAllTrades, setShowAllTrades] = useState<boolean>(false);
   
@@ -40,11 +39,10 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
   const lastTradeCountRef = useRef<number>(trades.length);
   
-  // FIXED: Track total trades received vs displayed
-  const actualTradeCount = trades.length; // Actual count from backend
+  const actualTradeCount = trades.length;
   const displayedTradeCount = showAllTrades ? actualTradeCount : Math.min(displayCount, actualTradeCount);
   
-  // Calculate volume statistics for color scaling
+  // Calculate volume statistics for color intensity
   const volumeStats = useMemo(() => {
     if (trades.length === 0) return { min: 0, max: 0, avg: 0 };
     
@@ -56,64 +54,53 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
     return { min, max, avg };
   }, [trades]);
   
-  // Calculate color intensity based on trade value
+  // ENHANCED: Calculate color intensity for larger trades = darker colors
   const getTradeColorIntensity = (trade: Trade) => {
     const { min, max } = volumeStats;
-    if (max === min) return 0.5; // Default if all trades are same size
+    if (max === min) return 0.5;
     
-    // Normalize value between 0 and 1
     const normalized = (trade.value - min) / (max - min);
-    
-    // Scale between 0.2 (lightest) and 1.0 (darkest)
-    // Larger trades get darker colors
-    return 0.2 + (normalized * 0.8);
+    return 0.2 + (normalized * 0.8); // 0.2 (lightest) to 1.0 (darkest)
   };
   
-  // Get background color with intensity for trade rows
+  // ENHANCED: Background color with darker shades for larger trades
   const getTradeBackgroundColor = (trade: Trade) => {
     const intensity = getTradeColorIntensity(trade);
     
     if (trade.action === 'buy') {
-      // Green for buys - darker green for larger buys
-      return `rgba(34, 197, 94, ${intensity * 0.3})`; // Tailwind green-500 with opacity
+      return `rgba(34, 197, 94, ${intensity * 0.25})`; // Green with variable opacity
     } else {
-      // Red for sells - darker red for larger sells
-      return `rgba(239, 68, 68, ${intensity * 0.3})`; // Tailwind red-500 with opacity
+      return `rgba(239, 68, 68, ${intensity * 0.25})`; // Red with variable opacity
     }
   };
   
-  // Get text color with intensity
+  // ENHANCED: Text color with intensity for larger trades
   const getTradeTextColor = (trade: Trade) => {
     const intensity = getTradeColorIntensity(trade);
     
     if (trade.action === 'buy') {
-      // Brighter green for larger trades
       const greenValue = Math.floor(150 + (intensity * 105)); // 150-255
       return `rgb(34, ${greenValue}, 94)`;
     } else {
-      // Brighter red for larger trades
       const redValue = Math.floor(150 + (intensity * 105)); // 150-255
       return `rgb(${redValue}, 68, 68)`;
     }
   };
   
-  // Auto-scroll to bottom when new trades come in
+  // Auto-scroll to newest trades
   useEffect(() => {
     if (autoScroll && scrollContainerRef.current && trades.length > lastTradeCountRef.current) {
-      scrollContainerRef.current.scrollTop = 0; // Scroll to top since newest trades are first
+      scrollContainerRef.current.scrollTop = 0;
     }
     lastTradeCountRef.current = trades.length;
   }, [trades, autoScroll]);
   
-  // Format functions
+  // OPTIMIZED: Essential format functions only
   const formatPrice = (price: number) => `$${price.toFixed(2)}`;
-  const formatQuantity = (quantity: number) => quantity.toFixed(2);
+  const formatQuantity = (quantity: number) => quantity.toFixed(0);
   const formatValue = (value: number) => {
-    if (value >= 1000000) {
-      return `$${(value / 1000000).toFixed(2)}M`;
-    } else if (value >= 1000) {
-      return `$${(value / 1000).toFixed(1)}K`;
-    }
+    if (value >= 1000000) return `$${(value / 1000000).toFixed(2)}M`;
+    if (value >= 1000) return `$${(value / 1000).toFixed(1)}K`;
     return `$${value.toFixed(2)}`;
   };
   
@@ -125,46 +112,32 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
     });
   };
   
-  const formatImpact = (impact: number) => {
-    const percentage = impact * 100;
-    return `${percentage.toFixed(3)}%`;
-  };
-  
   const truncateAddress = (address: string) => {
     if (address.length <= 8) return address;
     return `${address.slice(0, 4)}...${address.slice(-4)}`;
   };
   
-  // FIXED: Format actual trade count with impressive large numbers
+  // ENHANCED: Format impressive trade count
   const formatTradeCount = (count: number) => {
-    if (count >= 1000000) {
-      return `${(count / 1000000).toFixed(1)}M`;
-    } else if (count >= 1000) {
-      return `${(count / 1000).toFixed(1)}K`;
-    }
+    if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`;
+    if (count >= 1000) return `${(count / 1000).toFixed(1)}K`;
     return count.toString();
   };
   
-  // Handle scroll to detect if user is manually scrolling
   const handleScroll = () => {
     if (scrollContainerRef.current) {
       const { scrollTop } = scrollContainerRef.current;
-      // If user scrolls away from top, disable auto-scroll
       setAutoScroll(scrollTop < 50);
     }
   };
   
-  // FIXED: Enhanced load more functionality
   const loadMore = () => {
     if (showAllTrades) {
-      // If showing all, go back to paged view
       setShowAllTrades(false);
       setDisplayCount(50);
     } else {
-      // Load more in chunks
       const newCount = displayCount + 50;
       if (newCount >= actualTradeCount) {
-        // If we're close to showing all, just show all
         setShowAllTrades(true);
       } else {
         setDisplayCount(newCount);
@@ -172,7 +145,7 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
     }
   };
   
-  // Calculate trade velocity for impressive stats
+  // Trading velocity calculation
   const tradeVelocity = useMemo(() => {
     if (trades.length < 2) return 0;
     
@@ -183,11 +156,10 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
     const timeSpanSeconds = timeSpan / 1000;
     
     if (timeSpanSeconds <= 0) return 0;
-    
-    return recentTrades.length / timeSpanSeconds; // trades per second
+    return recentTrades.length / timeSpanSeconds;
   }, [trades]);
   
-  // FIXED: Calculate impressive trading stats
+  // ENHANCED: Trading statistics
   const tradingStats = useMemo(() => {
     const buyTrades = trades.filter(t => t.action === 'buy');
     const sellTrades = trades.filter(t => t.action === 'sell');
@@ -204,8 +176,8 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
   
   return (
     <div className="bg-surface p-2 rounded-lg shadow-lg h-full flex flex-col">
+      {/* OPTIMIZED: Clean header with essential info only */}
       <div className="flex justify-between items-center mb-1">
-        {/* FIXED: Show actual impressive trade count */}
         <h2 className="text-xs font-semibold text-text-primary">
           Recent Trades {actualTradeCount > 0 && (
             <span className="text-accent font-bold">
@@ -224,17 +196,12 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
           >
             {autoScroll ? 'Auto' : 'Manual'}
           </button>
-          <div className="flex space-x-1">
-            <span className="text-[9px] text-chart-up">● Buys</span>
-            <span className="text-[9px] text-chart-down">● Sells</span>
-          </div>
         </div>
       </div>
       
-      {/* FIXED: Enhanced trade flow indicator showing impressive activity */}
+      {/* OPTIMIZED: Simplified activity indicator */}
       {actualTradeCount > 0 && (
-        <div className="mb-1 space-y-1">
-          {/* Volume bar */}
+        <div className="mb-1">
           <div className="h-1 bg-panel rounded overflow-hidden">
             <div 
               className="h-full bg-accent transition-all duration-1000 animate-pulse"
@@ -244,8 +211,7 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
             />
           </div>
           
-          {/* FIXED: Impressive stats display */}
-          <div className="flex justify-between text-[9px] text-text-secondary">
+          <div className="flex justify-between text-[9px] text-text-secondary mt-0.5">
             <div>
               <span className="text-accent font-semibold">{formatTradeCount(actualTradeCount)}</span> total
               {tradeVelocity > 0 && (
@@ -294,28 +260,28 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
           `
         }} />
         <div className="min-w-max">
+          {/* OPTIMIZED: Essential columns only - Trader | Size | Price | Value */}
           <table className="w-full text-[10px]">
             <thead className="bg-surface sticky top-0 z-10">
               <tr className="border-b border-border">
                 <th className="py-0.5 px-1 text-left text-text-secondary">Time</th>
                 <th className="py-0.5 px-1 text-left text-text-secondary">Trader</th>
                 <th className="py-0.5 px-1 text-center text-text-secondary">Type</th>
+                <th className="py-0.5 px-1 text-right text-text-secondary">Size</th>
                 <th className="py-0.5 px-1 text-right text-text-secondary">Price</th>
-                <th className="py-0.5 px-1 text-right text-text-secondary">Quantity</th>
                 <th className="py-0.5 px-1 text-right text-text-secondary">Value</th>
-                <th className="py-0.5 px-1 text-right text-text-secondary">Impact</th>
               </tr>
             </thead>
             <tbody>
               {actualTradeCount === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-4 text-text-muted">
+                  <td colSpan={6} className="text-center py-4 text-text-muted">
                     Waiting for ultra-fast trades...
                   </td>
                 </tr>
               ) : (
                 trades.slice(0, displayedTradeCount).map((trade, index) => {
-                  const isNewTrade = index < 5; // Highlight most recent trades
+                  const isNewTrade = index < 5;
                   
                   return (
                     <tr 
@@ -344,17 +310,14 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
                         {trade.action.toUpperCase()}
                       </td>
                       <td className="py-0.5 px-1 text-right text-text-primary font-mono">
-                        {formatPrice(trade.price)}
+                        {formatQuantity(trade.quantity)}
                       </td>
                       <td className="py-0.5 px-1 text-right text-text-primary font-mono">
-                        {formatQuantity(trade.quantity)}
+                        {formatPrice(trade.price)}
                       </td>
                       <td className="py-0.5 px-1 text-right font-mono font-semibold"
                           style={{ color: getTradeTextColor(trade) }}>
                         {formatValue(trade.value)}
-                      </td>
-                      <td className="py-0.5 px-1 text-right text-[9px] text-text-muted font-mono">
-                        {formatImpact(trade.impact)}
                       </td>
                     </tr>
                   );
@@ -365,7 +328,7 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
         </div>
       </div>
       
-      {/* FIXED: Enhanced load more with impressive numbers */}
+      {/* OPTIMIZED: Load more button */}
       {displayedTradeCount < actualTradeCount && (
         <div className="mt-1 text-center">
           <button 
@@ -384,11 +347,10 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
         </div>
       )}
       
-      {/* FIXED: Enhanced footer with impressive ultra-fast trading stats */}
+      {/* OPTIMIZED: Clean footer with essential stats */}
       {actualTradeCount > 0 && (
         <div className="mt-1 text-[9px] text-text-secondary border-t border-border pt-1">
           <div className="space-y-1">
-            {/* Buy/Sell breakdown */}
             <div className="flex justify-between">
               <div>
                 <span className="text-chart-up font-medium">Buy: {formatTradeCount(tradingStats.buyCount)}</span>
@@ -400,7 +362,6 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
               </div>
             </div>
             
-            {/* Ultra-fast trading velocity */}
             {tradeVelocity > 0 && (
               <div className="flex justify-between">
                 <div className="text-purple-400">
@@ -412,7 +373,6 @@ const RecentTrades: React.FC<RecentTradesProps> = ({ trades }) => {
               </div>
             )}
             
-            {/* Impressive activity indicator */}
             <div className="text-center">
               <span className="text-yellow-400 font-medium">
                 🚀 ULTRA-FAST MODE: {formatTradeCount(actualTradeCount)} total trades processed
