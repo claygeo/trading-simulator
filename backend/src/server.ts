@@ -1,4 +1,4 @@
-// backend/src/server.ts - COMPLETE UPDATED VERSION WITH CANDLEMANAGER CONSTRUCTOR FIXES
+// backend/src/server.ts - COMPLETE UPDATED VERSION WITH CANDLEMANAGER CONSTRUCTOR FIXES AND NEW CORS DOMAIN
 // 🚨 COMPRESSION ELIMINATOR - MUST BE AT TOP
 console.log('🚨 STARTING COMPRESSION ELIMINATION PROCESS...');
 
@@ -158,11 +158,86 @@ let broadcastManager: BroadcastManager;
 const performanceMonitor = new PerformanceMonitor();
 let candleUpdateCoordinator: CandleUpdateCoordinator;
 
-// Middleware - COMPRESSION PREVENTION
+// 🌐 CORS CONFIGURATION - UPDATED FOR NEW DOMAIN tradeterm.app
+console.log('🌐 Configuring CORS for multiple domains with new tradeterm.app support...');
+
+// Define allowed origins for CORS - supports both old and new domains
+const allowedOrigins = [
+  'https://tradeterm.app',                    // NEW production domain (primary)
+  'https://pumpfun-simulator.netlify.app',   // OLD domain (for transition period)
+  'http://localhost:3000',                   // Local development frontend (primary)
+  'http://localhost:3001',                   // Alternative local development port
+  'http://127.0.0.1:3000',                   // Alternative localhost format
+  'http://127.0.0.1:3001'                    // Alternative localhost format
+];
+
+console.log('✅ CORS allowed origins configured:', allowedOrigins);
+
+// Enhanced CORS configuration with proper origin handling
 app.use(cors({
-  origin: process.env.FRONTEND_URL || ['http://localhost:3000', 'https://pumpfun-simulator.netlify.app'],
-  credentials: true
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) {
+      console.log('🔓 CORS: Allowing request with no origin (mobile/curl/postman)');
+      return callback(null, true);
+    }
+    
+    // Check if the origin is in our allowed list
+    if (allowedOrigins.includes(origin)) {
+      console.log(`✅ CORS: Allowing origin: ${origin}`);
+      return callback(null, true);
+    }
+    
+    // Log blocked origins for debugging
+    console.error(`❌ CORS: Blocking origin: ${origin}`);
+    console.error(`🔍 CORS: Allowed origins are:`, allowedOrigins);
+    
+    // Return CORS error
+    const corsError = new Error(`CORS policy violation: Origin ${origin} not allowed`);
+    (corsError as any).statusCode = 403;
+    return callback(corsError, false);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: [
+    'Origin',
+    'X-Requested-With', 
+    'Content-Type', 
+    'Accept',
+    'Authorization',
+    'Cache-Control',
+    'Pragma'
+  ],
+  optionsSuccessStatus: 200 // Support legacy browsers
 }));
+
+console.log('✅ CORS middleware configured with enhanced origin handling');
+
+// Additional CORS headers for WebSocket compatibility
+app.use((req, res, next) => {
+  const origin = req.get('Origin');
+  
+  // Set CORS headers for WebSocket upgrade requests
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cache-Control, Pragma');
+    
+    // For WebSocket upgrade requests
+    if (req.method === 'GET' && req.get('Upgrade') === 'websocket') {
+      console.log(`🔌 CORS: WebSocket upgrade request from allowed origin: ${origin}`);
+    }
+  }
+  
+  // Handle preflight requests
+  if (req.method === 'OPTIONS') {
+    console.log(`🔍 CORS: Preflight request from: ${origin || 'unknown'}`);
+    return res.status(200).end();
+  }
+  
+  next();
+});
 
 // Override helmet to prevent compression
 app.use(helmet({
@@ -203,6 +278,12 @@ app.get('/', (req, res) => {
     timestamp: Date.now(),
     environment: process.env.NODE_ENV || 'development',
     version: '1.0.0',
+    corsConfiguration: {
+      newDomain: 'https://tradeterm.app',
+      oldDomain: 'https://pumpfun-simulator.netlify.app',
+      allowedOrigins: allowedOrigins,
+      status: 'UPDATED - Domain change complete'
+    },
     services: {
       websocket: 'active',
       simulations: 'active',
@@ -220,7 +301,8 @@ app.get('/', (req, res) => {
     fixes: {
       candleManagerConstructor: 'applied',
       compressionElimination: 'active',
-      fallbackStorage: 'enhanced'
+      fallbackStorage: 'enhanced',
+      corsDomainUpdate: 'applied - supports tradeterm.app'
     }
   });
 });
@@ -783,10 +865,10 @@ app.post('/api/simulation', async (req, res) => {
         constructorErrorPrevented: true
       },
       timestamp: Date.now(),
-      fixApplied: 'CandleManager constructor error prevention + Enhanced fallback storage + Global CandleManager availability'
+      fixApplied: 'CandleManager constructor error prevention + Enhanced fallback storage + Global CandleManager availability + CORS domain update'
     };
     
-    console.log('📤 [API CREATE] Sending enhanced response with CandleManager fixes');
+    console.log('📤 [API CREATE] Sending enhanced response with CandleManager fixes and CORS update');
     res.json(response);
     
   } catch (error) {
@@ -958,7 +1040,7 @@ app.post('/simulation', async (req, res) => {
       timestamp: Date.now(),
       endpoint: 'enhanced legacy /simulation (without /api)',
       recommendation: 'Frontend should use /api/simulation for consistency',
-      fixApplied: 'CandleManager constructor error prevention + Enhanced fallback storage'
+      fixApplied: 'CandleManager constructor error prevention + Enhanced fallback storage + CORS domain update'
     };
     
     console.log('📤 [COMPAT] Sending enhanced legacy endpoint response');
@@ -1996,17 +2078,28 @@ app.get('/api/test', (req, res) => {
     uptime: process.uptime(),
     candleManagerFixed: true,
     constructorErrorPrevented: true,
-    fixApplied: 'CandleManager constructor error prevention + Enhanced error handling'
+    corsConfiguration: {
+      newDomain: 'https://tradeterm.app',
+      oldDomain: 'https://pumpfun-simulator.netlify.app',
+      status: 'UPDATED'
+    },
+    fixApplied: 'CandleManager constructor error prevention + Enhanced error handling + CORS domain update'
   });
 });
 
-// Enhanced health check
+// Enhanced health check with CORS status
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'healthy',
     timestamp: Date.now(),
     uptime: process.uptime(),
     memory: process.memoryUsage(),
+    corsConfiguration: {
+      newDomain: 'https://tradeterm.app',
+      oldDomain: 'https://pumpfub-simulator.netlify.app',
+      allowedOrigins: allowedOrigins,
+      status: 'UPDATED - Domain change complete'
+    },
     endpoints: {
       create_simulation: 'POST /api/simulation',
       get_simulation: 'GET /api/simulation/:id',
@@ -2020,12 +2113,12 @@ app.get('/api/health', (req, res) => {
       legacy_simulation: 'POST /simulation (backward compatibility)',
       legacy_ready: 'GET /simulation/:id/ready (backward compatibility)'
     },
-    message: 'Backend API running - ALL endpoints working including /ready!',
+    message: 'Backend API running - ALL endpoints working including /ready and NEW DOMAIN SUPPORT!',
     simulationManagerAvailable: simulationManager ? true : false,
     candleManagerFixed: true,
     constructorErrorPrevented: true,
     globalCandleManagerAvailable: typeof (globalThis as any).CandleManager === 'function',
-    fixApplied: 'CandleManager constructor error prevention + Enhanced fallback storage + Global CandleManager availability + Comprehensive error handling',
+    fixApplied: 'CandleManager constructor error prevention + Enhanced fallback storage + Global CandleManager availability + Comprehensive error handling + CORS domain update',
     platform: 'Render',
     nodeVersion: process.version
   });
@@ -2042,7 +2135,8 @@ app.post('/api/test-simulation', (req, res) => {
     timestamp: Date.now(),
     responseTime: '< 100ms',
     candleManagerReady: true,
-    constructorErrorPrevented: true
+    constructorErrorPrevented: true,
+    corsUpdated: true
   };
   
   console.log('✅ Test simulation created:', testSim.id);
@@ -2070,6 +2164,7 @@ app.get('/api/test-candle-manager', (req, res) => {
       directImport: true,
       globalAccess: true,
       constructorErrorPrevented: true,
+      corsUpdated: true,
       timestamp: Date.now()
     });
     
@@ -2103,7 +2198,8 @@ app.get('/api/metrics', (req, res) => {
     res.json({
       ...metrics,
       candleManagerFixed: true,
-      constructorErrorPrevented: true
+      constructorErrorPrevented: true,
+      corsUpdated: true
     });
   }
 });
@@ -2139,11 +2235,20 @@ console.log('Server options:', {
   perMessageDeflate: (wss as any).options?.perMessageDeflate || 'undefined'
 });
 
-// Add connection handler to verify no compression
+// Add connection handler to verify no compression and CORS compliance
 wss.on('connection', (ws: WebSocket, req) => {
-  console.log('🔌 New WebSocket connection - Compression Check:');
+  const origin = req.headers.origin;
+  console.log('🔌 New WebSocket connection - CORS & Compression Check:');
+  console.log('Origin:', origin);
   console.log('Extensions:', (ws as any).extensions);
   console.log('Protocol:', ws.protocol);
+  
+  // Verify origin is allowed for WebSocket connections
+  if (origin && !allowedOrigins.includes(origin)) {
+    console.error(`❌ WebSocket CORS violation: Origin ${origin} not allowed`);
+    ws.close(1008, 'CORS policy violation');
+    return;
+  }
   
   // Verify no compression extensions
   if ((ws as any).extensions && Object.keys((ws as any).extensions).length > 0) {
@@ -2160,11 +2265,13 @@ wss.on('connection', (ws: WebSocket, req) => {
       compressionStatus: 'DISABLED',
       candleManagerFixed: true,
       constructorErrorPrevented: true,
-      message: 'This should be a TEXT frame with NO compression'
+      corsUpdated: true,
+      allowedOrigin: origin,
+      message: 'This should be a TEXT frame with NO compression from new CORS-enabled backend'
     });
     
     ws.send(testMessage);
-    console.log('✅ Test TEXT message sent successfully');
+    console.log('✅ Test TEXT message sent successfully with CORS verification');
   } catch (error) {
     console.error('💥 Error sending test message:', error);
   }
@@ -2245,12 +2352,14 @@ async function initializeServices() {
       (performanceMonitor as any).startMonitoring(1000);
     }
     
-    console.log('✅ Enhanced real-time system initialized with CandleManager constructor error prevention');
+    console.log('✅ Enhanced real-time system initialized with CandleManager constructor error prevention and CORS domain support');
     console.log('🚨 COMPRESSION DISABLED - Text frames only, no Blob conversion');
     console.log('🔧 WEBSOCKET FIX APPLIED - Shared SimulationManager instance');
     console.log('🔧 CANDLEMANAGER FIXES APPLIED - Constructor error prevention');
     console.log('🛡️ Enhanced error handling for all CandleManager operations');
     console.log('🌍 Global CandleManager availability for legacy compatibility');
+    console.log('🌐 CORS DOMAIN UPDATE APPLIED - New domain tradeterm.app supported');
+    console.log('✅ Both domains supported during transition period');
   } catch (error) {
     console.error('❌ Failed to initialize services:', error);
     
@@ -2309,6 +2418,13 @@ server.listen(PORT, async () => {
   console.log(`🛡️ Comprehensive error resilience in CandleUpdateCoordinator!`);
   console.log(`📊 Real-time charts should now work continuously without crashes!`);
   console.log(`🎉 Server should now run for hours without CandleManager-related interruptions!`);
+  console.log(`🌐 🌐 🌐 CORS DOMAIN UPDATE COMPLETE! 🌐 🌐 🌐`);
+  console.log(`✅ NEW DOMAIN SUPPORTED: https://tradeterm.app`);
+  console.log(`✅ OLD DOMAIN MAINTAINED: https://pumpfun-simulator.netlify.app`);
+  console.log(`✅ DEVELOPMENT SUPPORTED: localhost:3000 and localhost:3001`);
+  console.log(`🔄 Transition period enabled - both domains work simultaneously!`);
+  console.log(`📡 WebSocket CORS also updated for seamless real-time communication!`);
+  console.log(`🎯 Frontend at tradeterm.app should now connect successfully!`);
   
   await initializeServices();
 });
@@ -2387,5 +2503,12 @@ console.log('✅ [CANDLEMANAGER] Global scope availability for legacy compatibil
 console.log('✅ [CANDLEMANAGER] Enhanced error handling prevents server crashes');
 console.log('🛡️ [CANDLEMANAGER] Comprehensive error resilience in all components');
 console.log('📊 [CANDLEMANAGER] Real-time chart generation should now work continuously!');
+console.log('🌐 🌐 🌐 [CORS UPDATE] Domain transition system loaded! 🌐 🌐 🌐');
+console.log('✅ [CORS] NEW DOMAIN: https://tradeterm.app (primary)');
+console.log('✅ [CORS] OLD DOMAIN: https://pumpfun-simulator.netlify.app (transition)');
+console.log('✅ [CORS] DEVELOPMENT: localhost:3000 and localhost:3001');
+console.log('🔄 [CORS] Seamless transition - both domains work simultaneously!');
+console.log('📡 [CORS] WebSocket connections supported for all allowed origins!');
+console.log('🎯 [CORS] Your frontend at tradeterm.app should connect successfully!');
 
 export default app;
