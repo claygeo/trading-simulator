@@ -1,4 +1,4 @@
-// frontend/src/components/mobile/MobileChart.tsx
+// frontend/src/components/mobile/MobileChart.tsx - ISSUE 3 FIX: Dynamic Chart Resizing
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { 
   createChart, 
@@ -40,6 +40,7 @@ interface MobileChartProps {
   scenarioData?: any;
   symbol?: string;
   dynamicView?: boolean;
+  isTabContentExpanded?: boolean;  // ISSUE 3 FIX: New prop for expansion state
 }
 
 const MobileChart: React.FC<MobileChartProps> = ({
@@ -48,7 +49,8 @@ const MobileChart: React.FC<MobileChartProps> = ({
   trades = [],
   scenarioData,
   symbol = 'TOKEN/USDT',
-  dynamicView = true
+  dynamicView = true,
+  isTabContentExpanded = false  // ISSUE 3 FIX: Default to collapsed
 }) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -61,10 +63,15 @@ const MobileChart: React.FC<MobileChartProps> = ({
   const [isLiveBuilding, setIsLiveBuilding] = useState(false);
   const [buildingStartTime, setBuildingStartTime] = useState<number | null>(null);
 
+  // ISSUE 3 FIX: State for chart dimensions tracking
+  const [chartDimensions, setChartDimensions] = useState({ width: 0, height: 0 });
+  const [isResizing, setIsResizing] = useState(false);
+
   const lastUpdateRef = useRef<number>(0);
   const lastCandleCountRef = useRef<number>(0);
   const updateThrottleRef = useRef<NodeJS.Timeout | null>(null);
   const isUpdatingRef = useRef<boolean>(false);
+  const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const initialZoomSetRef = useRef<boolean>(false);
   const shouldAutoFitRef = useRef<boolean>(true);
@@ -75,6 +82,21 @@ const MobileChart: React.FC<MobileChartProps> = ({
     buildStarted: false,
     initialRenderComplete: false
   });
+
+  // ISSUE 3 FIX: Calculate dynamic chart height based on expansion state
+  const calculateChartHeight = useCallback(() => {
+    if (!chartContainerRef.current) return 300;
+    
+    const containerWidth = chartContainerRef.current.clientWidth;
+    
+    if (isTabContentExpanded) {
+      // When expanded, use more space for better chart visibility
+      return Math.max(400, Math.min(600, containerWidth * 0.6));
+    } else {
+      // When collapsed, use standard mobile height
+      return Math.max(250, Math.min(350, containerWidth * 0.5));
+    }
+  }, [isTabContentExpanded]);
 
   // Mobile-optimized visible range calculation
   const calculateOptimalVisibleRange = useCallback((candleCount: number): { from: number; to: number } => {
@@ -131,15 +153,66 @@ const MobileChart: React.FC<MobileChartProps> = ({
     return { candleData, volumeData };
   }, [priceHistory]);
 
+  // ISSUE 3 FIX: Dynamic chart resize function
+  const resizeChart = useCallback(() => {
+    if (!chartRef.current || !chartContainerRef.current) return;
+
+    setIsResizing(true);
+    
+    const newWidth = chartContainerRef.current.clientWidth;
+    const newHeight = calculateChartHeight();
+    
+    try {
+      chartRef.current.applyOptions({
+        width: newWidth,
+        height: newHeight,
+      });
+      
+      setChartDimensions({ width: newWidth, height: newHeight });
+      
+      // Call TradingView chart.resize() method for proper resizing
+      chartRef.current.timeScale().fitContent();
+      
+    } catch (error) {
+      console.error('Error resizing chart:', error);
+    } finally {
+      // Clear resizing state after animation
+      setTimeout(() => setIsResizing(false), 300);
+    }
+  }, [calculateChartHeight]);
+
+  // ISSUE 3 FIX: Effect to handle expansion state changes
+  useEffect(() => {
+    if (chartRef.current && chartContainerRef.current) {
+      // Clear any existing timeout
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current);
+      }
+      
+      // Debounce resize to prevent excessive calls
+      resizeTimeoutRef.current = setTimeout(() => {
+        resizeChart();
+      }, 100);
+    }
+    
+    return () => {
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current);
+      }
+    };
+  }, [isTabContentExpanded, resizeChart]);
+
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
     setChartStatus('initializing');
 
     try {
+      const initialHeight = calculateChartHeight();
+      
       const chart = createChart(chartContainerRef.current, {
         width: chartContainerRef.current.clientWidth,
-        height: chartContainerRef.current.clientHeight,
+        height: initialHeight,
         layout: {
           background: { type: ColorType.Solid, color: '#0B1426' },
           textColor: '#9CA3AF',
@@ -222,6 +295,11 @@ const MobileChart: React.FC<MobileChartProps> = ({
       lastCandleCountRef.current = 0;
       lastUpdateRef.current = 0;
       
+      setChartDimensions({ 
+        width: chartContainerRef.current.clientWidth, 
+        height: initialHeight 
+      });
+      
       setIsChartReady(true);
       setChartStatus('empty');
       setCandleCount(0);
@@ -237,6 +315,11 @@ const MobileChart: React.FC<MobileChartProps> = ({
       if (updateThrottleRef.current) {
         clearTimeout(updateThrottleRef.current);
         updateThrottleRef.current = null;
+      }
+      
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current);
+        resizeTimeoutRef.current = null;
       }
       
       if (chartRef.current) {
@@ -267,7 +350,7 @@ const MobileChart: React.FC<MobileChartProps> = ({
       setBuildingStartTime(null);
       isUpdatingRef.current = false;
     };
-  }, []);
+  }, [calculateChartHeight]);
 
   const setOptimalZoom = useCallback((candleData: CandlestickData[], force: boolean = false) => {
     if (!chartRef.current || !candleData.length) return;
@@ -420,32 +503,33 @@ const MobileChart: React.FC<MobileChartProps> = ({
     updateChart(candleData, volumeData);
   }, [convertPriceHistory, updateChart]);
 
+  // ISSUE 3 FIX: Enhanced resize handling with orientation change support
   useEffect(() => {
     const handleResize = () => {
-      if (chartRef.current && chartContainerRef.current) {
-        try {
-          chartRef.current.applyOptions({
-            width: chartContainerRef.current.clientWidth,
-            height: chartContainerRef.current.clientHeight,
-          });
-        } catch (error) {
-          // Ignore resize errors
-        }
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current);
       }
+      
+      resizeTimeoutRef.current = setTimeout(() => {
+        resizeChart();
+      }, 100);
+    };
+
+    const handleOrientationChange = () => {
+      // Orientation change needs longer delay for mobile browsers
+      setTimeout(() => {
+        resizeChart();
+      }, 300);
     };
 
     window.addEventListener('resize', handleResize);
-    
-    // Also listen for orientation changes on mobile
-    window.addEventListener('orientationchange', () => {
-      setTimeout(handleResize, 100);
-    });
+    window.addEventListener('orientationchange', handleOrientationChange);
     
     return () => {
       window.removeEventListener('resize', handleResize);
-      window.removeEventListener('orientationchange', handleResize);
+      window.removeEventListener('orientationchange', handleOrientationChange);
     };
-  }, []);
+  }, [resizeChart]);
 
   const resetView = useCallback(() => {
     try {
@@ -530,7 +614,18 @@ const MobileChart: React.FC<MobileChartProps> = ({
 
   return (
     <div className="relative w-full h-full bg-[#0B1426] rounded-lg overflow-hidden">
-      <div ref={chartContainerRef} className="w-full h-full" />
+      {/* ISSUE 3 FIX: Dynamic container with smooth transitions */}
+      <div 
+        ref={chartContainerRef} 
+        className={`w-full transition-all duration-300 ease-in-out ${
+          isResizing ? 'opacity-90' : 'opacity-100'
+        }`}
+        style={{ 
+          height: calculateChartHeight(),
+          minHeight: '250px',
+          maxHeight: '600px'
+        }}
+      />
       
       {/* Mobile-optimized overlay */}
       <div className="absolute top-2 left-2 pointer-events-none">
@@ -545,6 +640,13 @@ const MobileChart: React.FC<MobileChartProps> = ({
               'bg-yellow-400 animate-pulse'
             }`}></div>
             <span>{statusInfo.text}</span>
+          </div>
+          
+          {/* ISSUE 3 FIX: Chart size indicator */}
+          <div className="bg-purple-900 bg-opacity-75 px-2 py-1 rounded text-xs">
+            <span className="text-purple-300">
+              {isTabContentExpanded ? 'Expanded' : 'Standard'}
+            </span>
           </div>
           
           {currentPrice > 0 && (
@@ -573,6 +675,19 @@ const MobileChart: React.FC<MobileChartProps> = ({
         >
           🔄
         </button>
+        {/* ISSUE 3 FIX: Manual resize trigger */}
+        <button
+          onClick={resizeChart}
+          disabled={isResizing}
+          className={`px-2 py-1 text-xs rounded transition ${
+            isResizing 
+              ? 'bg-yellow-700 bg-opacity-80 text-yellow-300 cursor-not-allowed' 
+              : 'bg-purple-700 bg-opacity-80 text-purple-300 hover:bg-opacity-100'
+          }`}
+          title="Manual resize"
+        >
+          {isResizing ? '↻' : '📐'}
+        </button>
       </div>
       
       {/* Mobile building indicator */}
@@ -581,6 +696,21 @@ const MobileChart: React.FC<MobileChartProps> = ({
           <div className="bg-green-900 bg-opacity-75 px-2 py-1 rounded">
             <div className="text-green-300 text-xs font-medium">
               🔴 LIVE: {buildingStats.candlesPerSecond}/sec
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* ISSUE 3 FIX: Resize indicator */}
+      {isResizing && (
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+          <div className="bg-purple-900 bg-opacity-90 px-4 py-2 rounded-lg border border-purple-500">
+            <div className="text-purple-300 text-sm font-medium flex items-center space-x-2">
+              <div className="w-4 h-4 border-2 border-purple-300 border-t-transparent rounded-full animate-spin"></div>
+              <span>Resizing Chart...</span>
+            </div>
+            <div className="text-purple-400 text-xs text-center mt-1">
+              {chartDimensions.width} × {chartDimensions.height}
             </div>
           </div>
         </div>
@@ -608,15 +738,15 @@ const MobileChart: React.FC<MobileChartProps> = ({
           <div className="text-center text-gray-400">
             <div className="text-4xl mb-4">📊</div>
             <h3 className="text-lg font-bold mb-2">Mobile Chart Ready</h3>
-            <p className="text-sm mb-3">Optimized for touch interaction</p>
+            <p className="text-sm mb-3">Dynamic resizing enabled</p>
             <div className="space-y-1 text-xs">
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
                 <span>Waiting for candle data...</span>
               </div>
-              <div>📱 Mobile optimized</div>
-              <div>🤏 Pinch to zoom</div>
-              <div>📈 Professional display</div>
+              <div>📱 Mobile optimized • Dynamic sizing</div>
+              <div>🤏 Pinch to zoom • Touch friendly</div>
+              <div>📐 Responsive: {isTabContentExpanded ? 'Expanded' : 'Standard'} mode</div>
             </div>
           </div>
         </div>
