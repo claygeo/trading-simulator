@@ -1,4 +1,4 @@
-// frontend/src/components/PriceChart.tsx - FIXED CHART ZOOM & PROPER CANDLE PROPORTIONS
+// frontend/src/components/PriceChart.tsx - Production version
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { 
   createChart, 
@@ -61,17 +61,14 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const [isLiveBuilding, setIsLiveBuilding] = useState(false);
   const [buildingStartTime, setBuildingStartTime] = useState<number | null>(null);
 
-  // Performance optimization refs
   const lastUpdateRef = useRef<number>(0);
   const lastCandleCountRef = useRef<number>(0);
   const updateThrottleRef = useRef<NodeJS.Timeout | null>(null);
   const isUpdatingRef = useRef<boolean>(false);
   
-  // FIXED: Chart zoom state management
   const initialZoomSetRef = useRef<boolean>(false);
   const shouldAutoFitRef = useRef<boolean>(true);
 
-  // Track chart state for clean start verification
   const chartState = useRef({
     lastCandleCount: 0,
     hasEverHadData: false,
@@ -79,42 +76,29 @@ const PriceChart: React.FC<PriceChartProps> = ({
     initialRenderComplete: false
   });
 
-  // FIXED: Professional candle width calculation
   const calculateOptimalVisibleRange = useCallback((candleCount: number): { from: number; to: number } => {
-    // Professional trading chart standards:
-    // - Show 50-100 candles for optimal viewing
-    // - Maintain consistent candle width regardless of total count
-    // - Similar to TradingView's default zoom level
-    
-    const MIN_VISIBLE_CANDLES = 25;  // Minimum for meaningful view
-    const MAX_VISIBLE_CANDLES = 80;  // Maximum for readable candles
-    const PREFERRED_VISIBLE_CANDLES = 50; // Ideal candle count
+    const MIN_VISIBLE_CANDLES = 25;
+    const MAX_VISIBLE_CANDLES = 80;
+    const PREFERRED_VISIBLE_CANDLES = 50;
     
     if (candleCount <= MIN_VISIBLE_CANDLES) {
-      // Show all candles if we have very few
       return { from: 0, to: Math.max(1, candleCount - 1) };
     }
     
     let visibleCandles = PREFERRED_VISIBLE_CANDLES;
     
-    // Adjust based on candle count
     if (candleCount < PREFERRED_VISIBLE_CANDLES) {
       visibleCandles = candleCount;
     } else if (candleCount > 200) {
-      // For many candles, show slightly more for context
       visibleCandles = Math.min(MAX_VISIBLE_CANDLES, candleCount * 0.4);
     }
     
-    // Always show the most recent candles
     const from = Math.max(0, candleCount - visibleCandles);
     const to = candleCount - 1;
-    
-    console.log(`📊 Optimal view: showing ${visibleCandles} candles (${from} to ${to}) out of ${candleCount} total`);
     
     return { from, to };
   }, []);
 
-  // OPTIMIZED: Throttled chart data converter
   const convertPriceHistory = useMemo((): { candleData: CandlestickData[]; volumeData: HistogramData[] } => {
     if (!priceHistory || priceHistory.length === 0) {
       return { candleData: [], volumeData: [] };
@@ -145,11 +129,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return { candleData, volumeData };
   }, [priceHistory]);
 
-  // Create chart instance
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    console.log('🚀 Creating professional chart with fixed zoom...');
     setChartStatus('initializing');
 
     try {
@@ -175,11 +157,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
           borderColor: '#1C2951',
           timeVisible: true,
           secondsVisible: false,
-          // FIXED: Proper time scale options for consistent candle width
-          barSpacing: 12, // Optimal candle spacing (6-20 range)
-          minBarSpacing: 0.5, // Minimum spacing to prevent over-compression
-          rightOffset: 5, // Small right margin
-          shiftVisibleRangeOnNewBar: false, // Prevent auto-shifting that causes zoom issues
+          barSpacing: 12,
+          minBarSpacing: 0.5,
+          rightOffset: 5,
+          shiftVisibleRangeOnNewBar: false,
         },
         handleScroll: {
           mouseWheel: true,
@@ -192,7 +173,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
         },
       });
 
-      // Create candlestick series with professional styling
       const candlestickSeries = chart.addCandlestickSeries({
         upColor: '#22C55E',
         downColor: '#EF4444',
@@ -207,7 +187,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
         },
       });
 
-      // Create volume series
       const volumeSeries = chart.addHistogramSeries({
         color: '#26a69a',
         priceFormat: { 
@@ -221,20 +200,16 @@ const PriceChart: React.FC<PriceChartProps> = ({
         scaleMargins: { top: 0.85, bottom: 0 },
       });
 
-      // Store references
       chartRef.current = chart;
       candlestickSeriesRef.current = candlestickSeries;
       volumeSeriesRef.current = volumeSeries;
       
-      // Start with empty chart
       candlestickSeries.setData([]);
       volumeSeries.setData([]);
       
-      // Reset zoom state
       initialZoomSetRef.current = false;
       shouldAutoFitRef.current = true;
       
-      // Reset state
       chartState.current = {
         lastCandleCount: 0,
         hasEverHadData: false,
@@ -250,18 +225,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
       setCandleCount(0);
       setIsLiveBuilding(false);
       setBuildingStartTime(null);
-      
-      console.log('✅ Professional chart created with fixed zoom settings');
 
     } catch (error) {
-      console.error('❌ Failed to create chart:', error);
+      console.error('Failed to create chart:', error);
       setChartStatus('error');
     }
 
-    // Cleanup function
     return () => {
-      console.log('🧹 Cleaning up chart...');
-      
       if (updateThrottleRef.current) {
         clearTimeout(updateThrottleRef.current);
         updateThrottleRef.current = null;
@@ -271,7 +241,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         try {
           chartRef.current.remove();
         } catch (error) {
-          console.warn('Chart cleanup warning:', error);
+          // Ignore cleanup errors
         }
       }
       
@@ -281,7 +251,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
       setIsChartReady(false);
       setChartStatus('initializing');
       
-      // Reset all state
       chartState.current = {
         lastCandleCount: 0,
         hasEverHadData: false,
@@ -296,52 +265,40 @@ const PriceChart: React.FC<PriceChartProps> = ({
       setBuildingStartTime(null);
       isUpdatingRef.current = false;
     };
-  }, []); // Only create once
+  }, []);
 
-  // FIXED: Professional chart zoom management
   const setOptimalZoom = useCallback((candleData: CandlestickData[], force: boolean = false) => {
     if (!chartRef.current || !candleData.length) return;
 
     const candleCount = candleData.length;
     
-    // Set initial zoom only once, or if forced (reset)
     if (!initialZoomSetRef.current || force) {
-      console.log(`🎯 Setting initial professional zoom for ${candleCount} candles...`);
-      
       const { from, to } = calculateOptimalVisibleRange(candleCount);
       
       try {
-        // Set the optimal visible range for professional appearance
         chartRef.current.timeScale().setVisibleLogicalRange({ from, to });
-        
         initialZoomSetRef.current = true;
-        shouldAutoFitRef.current = false; // Disable auto-fit after manual zoom
-        
-        console.log(`✅ Professional zoom set: showing candles ${from} to ${to}`);
+        shouldAutoFitRef.current = false;
       } catch (error) {
-        console.warn('Initial zoom setting failed:', error);
-        // Fallback to fit content
         try {
           chartRef.current.timeScale().fitContent();
           initialZoomSetRef.current = true;
         } catch (fallbackError) {
-          console.warn('Fallback zoom failed:', fallbackError);
+          // Ignore zoom errors
         }
       }
     } else if (dynamicView && shouldAutoFitRef.current && candleCount > lastCandleCountRef.current) {
-      // Only do subtle adjustments for new candles in dynamic view
-      if (Math.random() < 0.1) { // Throttle to 10% of updates
+      if (Math.random() < 0.1) {
         try {
           const { from, to } = calculateOptimalVisibleRange(candleCount);
           chartRef.current.timeScale().setVisibleLogicalRange({ from, to });
         } catch (error) {
-          console.warn('Dynamic zoom adjustment failed:', error);
+          // Ignore dynamic zoom errors
         }
       }
     }
   }, [calculateOptimalVisibleRange, dynamicView]);
 
-  // OPTIMIZED: Throttled chart update function
   const updateChart = useCallback((candleData: CandlestickData[], volumeData: HistogramData[]) => {
     if (!isChartReady || !candlestickSeriesRef.current || !volumeSeriesRef.current || isUpdatingRef.current) {
       return;
@@ -350,7 +307,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const now = Date.now();
     const timeSinceLastUpdate = now - lastUpdateRef.current;
     
-    // Throttle updates to max 30fps for performance
     if (timeSinceLastUpdate < 33) {
       if (updateThrottleRef.current) {
         clearTimeout(updateThrottleRef.current);
@@ -367,12 +323,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
     try {
       const incomingCandleCount = candleData.length;
-      
-      console.log(`📊 Chart update: ${incomingCandleCount} candles`);
 
-      // Handle empty state
       if (incomingCandleCount === 0) {
-        console.log('🎯 Empty state: clearing chart');
         candlestickSeriesRef.current.setData([]);
         volumeSeriesRef.current.setData([]);
         
@@ -384,17 +336,14 @@ const PriceChart: React.FC<PriceChartProps> = ({
         chartState.current.lastCandleCount = 0;
         chartState.current.buildStarted = false;
         lastCandleCountRef.current = 0;
-        initialZoomSetRef.current = false; // Reset zoom state
+        initialZoomSetRef.current = false;
         shouldAutoFitRef.current = true;
         
         isUpdatingRef.current = false;
         return;
       }
 
-      // Handle first data
       if (incomingCandleCount > 0 && lastCandleCountRef.current === 0) {
-        console.log('🚀 First candles received - starting professional live build');
-        
         if (!chartState.current.hasEverHadData) {
           chartState.current.hasEverHadData = true;
           chartState.current.buildStarted = true;
@@ -404,9 +353,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         }
       }
 
-      // Handle reset detection
       if (incomingCandleCount < lastCandleCountRef.current) {
-        console.log('🔄 Reset detected - clearing chart and zoom state');
         candlestickSeriesRef.current.setData([]);
         volumeSeriesRef.current.setData([]);
         
@@ -419,67 +366,56 @@ const PriceChart: React.FC<PriceChartProps> = ({
         chartState.current.buildStarted = false;
         chartState.current.hasEverHadData = false;
         lastCandleCountRef.current = 0;
-        initialZoomSetRef.current = false; // FIXED: Reset zoom on reset
+        initialZoomSetRef.current = false;
         shouldAutoFitRef.current = true;
         
         isUpdatingRef.current = false;
         return;
       }
 
-      // Validate data ordering (quick check)
       let isOrdered = true;
       if (candleData.length > 1) {
         for (let i = 1; i < Math.min(candleData.length, 10); i++) {
           if (candleData[i].time <= candleData[i - 1].time) {
             isOrdered = false;
-            console.error(`❌ Data ordering issue at index ${i}`);
             break;
           }
         }
       }
 
       if (!isOrdered) {
-        console.error('💥 Chart data not ordered - skipping update');
         isUpdatingRef.current = false;
         return;
       }
 
-      // Apply data efficiently
       candlestickSeriesRef.current.setData(candleData);
       volumeSeriesRef.current.setData(volumeData);
 
-      // FIXED: Apply professional zoom management
       setOptimalZoom(candleData);
 
-      // Update state
       chartState.current.lastCandleCount = incomingCandleCount;
       lastCandleCountRef.current = incomingCandleCount;
       setCandleCount(incomingCandleCount);
 
-      // Update status
       if (incomingCandleCount >= 50) {
         setChartStatus('ready');
       } else if (incomingCandleCount > 0) {
         setChartStatus('building');
       }
 
-      console.log(`✅ Professional chart updated: ${candleData.length} candles with optimal zoom`);
-
     } catch (error) {
-      console.error('❌ Error updating chart:', error);
+      console.error('Error updating chart:', error);
       setChartStatus('error');
     } finally {
       isUpdatingRef.current = false;
     }
   }, [isChartReady, setOptimalZoom]);
 
-  // OPTIMIZED: Chart data update effect
   useEffect(() => {
     const { candleData, volumeData } = convertPriceHistory;
     updateChart(candleData, volumeData);
   }, [convertPriceHistory, updateChart]);
 
-  // Handle resize
   useEffect(() => {
     const handleResize = () => {
       if (chartRef.current && chartContainerRef.current) {
@@ -489,7 +425,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
             height: chartContainerRef.current.clientHeight,
           });
         } catch (error) {
-          console.warn('Resize failed:', error);
+          // Ignore resize errors
         }
       }
     };
@@ -498,25 +434,20 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // FIXED: Enhanced control functions
   const resetView = useCallback(() => {
     try {
       if (chartRef.current) {
         chartRef.current.timeScale().resetTimeScale();
-        // Reset zoom state to allow re-optimization
         initialZoomSetRef.current = false;
         shouldAutoFitRef.current = true;
         
-        // Reapply optimal zoom if we have data
         const { candleData } = convertPriceHistory;
         if (candleData.length > 0) {
           setTimeout(() => setOptimalZoom(candleData, true), 100);
         }
-        
-        console.log('🔄 Chart view reset with professional zoom');
       }
     } catch (error) {
-      console.warn('Reset view failed:', error);
+      // Ignore reset errors
     }
   }, [convertPriceHistory, setOptimalZoom]);
 
@@ -524,13 +455,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
     try {
       if (chartRef.current) {
         chartRef.current.timeScale().fitContent();
-        // Mark that manual fitting was done
         initialZoomSetRef.current = true;
         shouldAutoFitRef.current = false;
-        console.log('📏 Chart content fitted manually');
       }
     } catch (error) {
-      console.warn('Fit content failed:', error);
+      // Ignore fit content errors
     }
   }, []);
 
@@ -538,11 +467,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const { candleData } = convertPriceHistory;
     if (candleData.length > 0) {
       setOptimalZoom(candleData, true);
-      console.log('🎯 Professional zoom optimization applied');
     }
   }, [convertPriceHistory, setOptimalZoom]);
 
-  // Calculate building stats
   const buildingStats = useMemo(() => {
     if (!isLiveBuilding || !buildingStartTime) {
       return null;
@@ -561,7 +488,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
     };
   }, [isLiveBuilding, buildingStartTime, candleCount]);
 
-  // Status indicator
   const getStatusInfo = () => {
     switch (chartStatus) {
       case 'initializing':
@@ -591,15 +517,12 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
   return (
     <div className="relative w-full h-full bg-[#0B1426] rounded-lg overflow-hidden">
-      {/* Chart container */}
       <div ref={chartContainerRef} className="w-full h-full" />
       
-      {/* Status overlay */}
       <div className="absolute top-4 left-4 pointer-events-none">
         <div className="flex items-center space-x-4">
           <h3 className="text-white text-lg font-bold">{symbol}</h3>
           
-          {/* Enhanced status indicator */}
           <div className={`flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-medium ${statusInfo.color}`}>
             <div className={`w-2 h-2 rounded-full ${
               chartStatus === 'building' || chartStatus === 'ready' ? 'bg-green-400 animate-pulse' :
@@ -610,19 +533,16 @@ const PriceChart: React.FC<PriceChartProps> = ({
             <span>{statusInfo.icon} {statusInfo.text}</span>
           </div>
           
-          {/* FIXED: Professional zoom indicator */}
           <div className="bg-purple-900 bg-opacity-75 px-3 py-1 rounded text-xs text-purple-300">
             🎯 Pro Zoom
           </div>
           
-          {/* Live building indicator */}
           {isLiveBuilding && buildingStats && (
             <div className="bg-green-900 bg-opacity-75 px-3 py-1 rounded text-xs text-green-300">
               🔴 LIVE: {buildingStats.candlesPerSecond}/sec
             </div>
           )}
           
-          {/* Current price */}
           {currentPrice > 0 && (
             <div className="bg-gray-900 bg-opacity-75 px-3 py-1 rounded">
               <span className="text-gray-400 text-sm">Last: </span>
@@ -632,14 +552,12 @@ const PriceChart: React.FC<PriceChartProps> = ({
             </div>
           )}
           
-          {/* Performance indicator */}
           <div className="bg-gray-900 bg-opacity-75 px-2 py-1 rounded text-xs text-gray-400">
             FPS: {Math.round(1000 / Math.max(Date.now() - lastUpdateRef.current, 16))}
           </div>
         </div>
       </div>
       
-      {/* FIXED: Enhanced controls with zoom optimization */}
       <div className="absolute bottom-4 right-4 flex space-x-2">
         <button
           onClick={optimizeZoom}
@@ -674,7 +592,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
         </button>
       </div>
       
-      {/* Chart info */}
       <div className="absolute bottom-4 left-4 pointer-events-none">
         <div className="text-gray-400 text-xs space-y-1">
           <div>📊 Candles: {candleCount}</div>
@@ -692,7 +609,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
         </div>
       </div>
       
-      {/* Error state */}
       {chartStatus === 'error' && (
         <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75">
           <div className="bg-red-900 text-red-100 p-6 rounded-lg max-w-md text-center">
@@ -708,7 +624,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
         </div>
       )}
       
-      {/* Empty state */}
       {chartStatus === 'empty' && (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-center text-gray-400">
@@ -729,7 +644,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
         </div>
       )}
 
-      {/* Building state */}
       {chartStatus === 'building' && candleCount > 0 && (
         <div className="absolute top-20 left-4 pointer-events-none">
           <div className="bg-green-900 bg-opacity-75 px-4 py-2 rounded-lg">

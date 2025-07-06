@@ -1,4 +1,4 @@
-// frontend/src/components/Dashboard.tsx
+// frontend/src/components/Dashboard.tsx - Production version
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -10,7 +10,6 @@ import ParticipantsOverview from './ParticipantsOverview';
 import PerformanceMonitor from './PerformanceMonitor';
 import TransactionProcessor from './TransactionProcessor';
 
-// Type adapter for chart data
 interface ChartPricePoint {
   time: number;
   timestamp?: number;
@@ -22,33 +21,27 @@ interface ChartPricePoint {
 }
 
 const Dashboard: React.FC = () => {
-  // Core simulation state
   const [simulationId, setSimulationId] = useState<string | null>(null);
   const [simulation, setSimulation] = useState<Simulation | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   
-  // UI state - FIXED: Removed all audio-related state
   const [marketCondition, setMarketCondition] = useState<'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash'>('calm');
   const [simulationSpeed, setSimulationSpeed] = useState<number>(1);
   const [simulationStartTime, setSimulationStartTime] = useState<number | null>(null);
   const [elapsedTime, setElapsedTime] = useState<string>("00:00:00");
   const [showDebugInfo, setShowDebugInfo] = useState<boolean>(false);
   
-  // Performance monitoring state
   const [showPerformanceMonitor, setShowPerformanceMonitor] = useState<boolean>(false);
   const [showTransactionProcessor, setShowTransactionProcessor] = useState<boolean>(false);
   const [wsMessageCount, setWsMessageCount] = useState<number>(0);
   
-  // Market scenario state
   const [currentScenario, setCurrentScenario] = useState<any | null>(null);
   const [scenarioPhaseData, setScenarioPhaseData] = useState<any>(null);
   
-  // Dynamic chart view state
   const [dynamicChartView, setDynamicChartView] = useState<boolean>(true);
   const [tokenSymbol, setTokenSymbol] = useState<string>('TOKEN/USDT');
   
-  // Real-time data state
   const [recentTrades, setRecentTrades] = useState<any[]>([]);
   const [orderBook, setOrderBook] = useState<any>({ bids: [], asks: [], lastUpdateTime: Date.now() });
   const [priceHistory, setPriceHistory] = useState<SimulationPricePoint[]>([]);
@@ -57,27 +50,21 @@ const Dashboard: React.FC = () => {
   const [traderRankings, setTraderRankings] = useState<any[]>([]);
   const [totalTradesProcessed, setTotalTradesProcessed] = useState<number>(0);
   
-  // Performance tracking
   const [tradeExecutionTimes, setTradeExecutionTimes] = useState<number[]>([]);
   const [averageExecutionTime, setAverageExecutionTime] = useState<number>(0);
   const [isHighFrequencyMode, setIsHighFrequencyMode] = useState<boolean>(false);
   
-  // Enhanced WebSocket ready state tracking with registration status
   const [isWebSocketReady, setIsWebSocketReady] = useState<boolean>(false);
   const [simulationRegistrationStatus, setSimulationRegistrationStatus] = useState<'creating' | 'pending' | 'ready' | 'error'>('creating');
   const [initializationStep, setInitializationStep] = useState<string>('Starting...');
   
-  // Refs
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const initializationRef = useRef<boolean>(false);
   
-  // Refs to prevent infinite loops
   const lastMessageProcessedRef = useRef<string>('');
   const marketConditionUpdateRef = useRef<number>(0);
-  const debugLogCountRef = useRef<number>(0);
   const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Ultra-fast mode constants
   const ULTRA_FAST_CONFIG = {
     MAX_PRICE_HISTORY: 1000,
     MAX_ACTIVE_POSITIONS: 500,
@@ -86,7 +73,6 @@ const Dashboard: React.FC = () => {
     PERFORMANCE_MODE_THRESHOLD: 5000,
   };
 
-  // Define speed mapping
   const speedMap = {
     'slow': 2,
     'medium': 3, 
@@ -96,20 +82,11 @@ const Dashboard: React.FC = () => {
     'quantum': 100
   } as const;
 
-  // Use WebSocket with proper ready state management
   const { isConnected, lastMessage, setPauseState, connectionError, messageStats } = useWebSocket(
     isWebSocketReady && simulationRegistrationStatus === 'ready' ? simulationId || undefined : undefined,
     simulation?.isPaused
   );
 
-  // Stable debug logging with memoization
-  const addDebugLog = useCallback((message: string) => {
-    const timestamp = new Date().toLocaleTimeString();
-    console.log(`[Dashboard ${timestamp}] ${message}`);
-    debugLogCountRef.current++;
-  }, []);
-
-  // Memoized market condition detector
   const determineMarketCondition = useCallback((): 'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash' => {
     if (!priceHistory.length) return 'calm';
     
@@ -140,7 +117,6 @@ const Dashboard: React.FC = () => {
     return 'calm';
   }, [priceHistory, currentPrice]);
 
-  // Memory management for ultra-fast mode (intelligent cleanup)
   const manageUltraFastMemory = useCallback(() => {
     const tradeCount = recentTrades.length;
     
@@ -155,12 +131,9 @@ const Dashboard: React.FC = () => {
       if (priceHistory.length > ULTRA_FAST_CONFIG.MAX_PRICE_HISTORY) {
         setPriceHistory(prev => prev.slice(-ULTRA_FAST_CONFIG.MAX_PRICE_HISTORY));
       }
-      
-      addDebugLog(`Memory cleanup completed: kept ${keepTradeCount} trades`);
     }
-  }, [recentTrades.length, activePositions.length, priceHistory.length, addDebugLog]);
+  }, [recentTrades.length, activePositions.length, priceHistory.length]);
 
-  // Optimized state update function with React 18+ automatic batching and memory management
   const updateSimulationState = useCallback((data: any, eventType: string) => {
     if (data.currentPrice !== undefined) {
       setCurrentPrice(data.currentPrice);
@@ -174,7 +147,6 @@ const Dashboard: React.FC = () => {
       setPriceHistory(data.priceHistory);
     }
     
-    // Handle ultra-fast trade updates without artificial limits
     if (data.recentTrades && Array.isArray(data.recentTrades)) {
       setRecentTrades(data.recentTrades);
       setTotalTradesProcessed(data.recentTrades.length);
@@ -192,7 +164,6 @@ const Dashboard: React.FC = () => {
       setTotalTradesProcessed(data.totalTradesProcessed);
     }
     
-    // Update simulation object if needed
     if (simulation) {
       setSimulation(prev => prev ? {
         ...prev,
@@ -207,11 +178,9 @@ const Dashboard: React.FC = () => {
       } : prev);
     }
     
-    // Trigger memory management for ultra-fast mode
     setTimeout(manageUltraFastMemory, 100);
   }, [simulation, manageUltraFastMemory]);
 
-  // Throttled market condition updates with debouncing
   const updateMarketCondition = useCallback(() => {
     const now = Date.now();
     
@@ -229,13 +198,11 @@ const Dashboard: React.FC = () => {
       
       if (newCondition !== marketCondition) {
         setMarketCondition(newCondition);
-        addDebugLog(`Market condition changed: ${marketCondition} → ${newCondition}`);
       }
     }, 100);
     
-  }, [determineMarketCondition, marketCondition, addDebugLog]);
+  }, [determineMarketCondition, marketCondition]);
 
-  // Process WebSocket messages
   useEffect(() => {
     if (!lastMessage) return;
     
@@ -248,29 +215,24 @@ const Dashboard: React.FC = () => {
     lastMessageProcessedRef.current = messageId;
     
     if (simulationId && msgSimId !== simulationId) {
-      addDebugLog(`Skipping message for different simulation: ${msgSimId}`);
       return;
     }
     
     if (!simulation && event.type !== 'simulation_state') {
-      addDebugLog(`No simulation yet, skipping ${event.type} message`);
       return;
     }
     
     const { type, data } = event;
     
-    addDebugLog(`Processing ${type} event (ID: ${messageId})`);
     setWsMessageCount(prev => prev + 1);
     
     switch (type) {
       case 'simulation_state':
         if (data) {
-          addDebugLog(`Loading initial state: ${data.recentTrades?.length || 0} trades, price: $${data.currentPrice}, candles: ${data.candleCount || 0}`);
           updateSimulationState(data, 'simulation_state');
           
           if (data.registrationStatus === 'ready') {
             setSimulationRegistrationStatus('ready');
-            addDebugLog('Simulation confirmed ready by backend');
           }
         }
         break;
@@ -292,11 +254,9 @@ const Dashboard: React.FC = () => {
             
             if (updated.length > ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD) {
               const keepCount = Math.floor(ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD * 0.9);
-              addDebugLog(`Memory management: trimming trades from ${updated.length} to ${keepCount}`);
               return updated.slice(0, keepCount);
             }
             
-            addDebugLog(`New trade: ${data.action} ${data.quantity} @ $${data.price} (total: ${updated.length})`);
             return updated;
           });
           
@@ -310,7 +270,6 @@ const Dashboard: React.FC = () => {
         
       case 'candle_update':
         if (data && data.priceHistory) {
-          addDebugLog(`Candle update: ${data.candleCount} candles, live: ${data.isLive}`);
           setPriceHistory(data.priceHistory);
         }
         break;
@@ -318,7 +277,6 @@ const Dashboard: React.FC = () => {
       case 'batch_update':
         if (data?.updates) {
           const { updates } = data;
-          addDebugLog(`Batch update with ${Object.keys(updates).length} update types`);
           
           const batchData: any = {};
           
@@ -330,7 +288,6 @@ const Dashboard: React.FC = () => {
               
               if (combined.length > ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD) {
                 const keepCount = Math.floor(ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD * 0.9);
-                addDebugLog(`Batch memory management: ${combined.length} → ${keepCount} trades`);
                 return combined.slice(0, keepCount);
               }
               
@@ -350,7 +307,6 @@ const Dashboard: React.FC = () => {
         
       case 'simulation_status':
         if (data) {
-          addDebugLog(`Status update: running=${data.isRunning}, paused=${data.isPaused}`);
           setSimulation(prev => prev ? {
             ...prev,
             isRunning: data.isRunning ?? prev.isRunning,
@@ -363,7 +319,6 @@ const Dashboard: React.FC = () => {
       case 'scenario_phase_update':
       case 'scenario_phase_transition':
         if (data) {
-          addDebugLog(`Scenario event: ${type}`);
           if (type === 'scenario_started') {
             setCurrentScenario(data);
           } else if (type === 'scenario_phase_update') {
@@ -373,18 +328,13 @@ const Dashboard: React.FC = () => {
         break;
         
       case 'scenario_ended':
-        addDebugLog('Scenario ended');
         setCurrentScenario(null);
         setScenarioPhaseData(null);
         break;
-        
-      default:
-        addDebugLog(`Unhandled event type: ${type}`);
     }
     
-  }, [lastMessage, simulationId, simulation?.id, updateSimulationState, addDebugLog, recentTrades.length]);
+  }, [lastMessage, simulationId, simulation?.id, updateSimulationState, recentTrades.length]);
 
-  // Separate effect for market condition updates with proper cleanup
   useEffect(() => {
     if (priceHistory.length > 0 || currentPrice > 0) {
       updateMarketCondition();
@@ -398,7 +348,6 @@ const Dashboard: React.FC = () => {
     };
   }, [priceHistory.length, currentPrice]);
 
-  // Cleanup effect for timeouts
   useEffect(() => {
     return () => {
       if (updateTimeoutRef.current) {
@@ -407,7 +356,6 @@ const Dashboard: React.FC = () => {
     };
   }, []);
 
-  // Determine token symbol based on price
   const determineTokenSymbol = useCallback((price: number): string => {
     if (price < 0.01) return 'MEME/USDT';
     if (price < 1) return 'SHIB/USDT';
@@ -417,7 +365,6 @@ const Dashboard: React.FC = () => {
     return 'BTC/USDT';
   }, []);
 
-  // Enhanced simulation initialization
   useEffect(() => {
     if (initializationRef.current) return;
     initializationRef.current = true;
@@ -428,7 +375,6 @@ const Dashboard: React.FC = () => {
       
       try {
         setInitializationStep('Creating simulation...');
-        addDebugLog("Creating simulation...");
         
         const response = await SimulationApi.createSimulation({
           initialPrice: 100,
@@ -439,7 +385,6 @@ const Dashboard: React.FC = () => {
         
         if (response.error) {
           setError(response.error);
-          addDebugLog(`Error creating simulation: ${response.error}`);
           initializationRef.current = false;
           return;
         }
@@ -451,20 +396,16 @@ const Dashboard: React.FC = () => {
           throw new Error('No simulation ID received from server');
         }
         
-        addDebugLog(`Simulation created with ID: ${simId}`);
         setSimulationId(simId);
         
         if (response.data?.registrationStatus === 'ready' && response.data?.isReady) {
-          addDebugLog('Backend confirmed simulation is ready immediately');
           setSimulationRegistrationStatus('ready');
         } else {
           setSimulationRegistrationStatus('pending');
           setInitializationStep('Waiting for backend registration...');
-          addDebugLog("Backend still registering simulation...");
         }
         
         setInitializationStep('Verifying simulation readiness...');
-        addDebugLog("Checking simulation readiness with backend using API service...");
         
         const readyResult = await SimulationApi.waitForSimulationReady(simId, 10, 500);
         
@@ -473,11 +414,9 @@ const Dashboard: React.FC = () => {
           throw new Error(errorMsg);
         }
         
-        addDebugLog(`✅ Simulation ${simId} confirmed ready by backend after ${readyResult.data.attempts} attempts!`);
         setSimulationRegistrationStatus('ready');
         
         setInitializationStep('Loading simulation data...');
-        addDebugLog("Loading simulation data...");
         
         const simulationResponse = await SimulationApi.getSimulation(simId);
         
@@ -508,15 +447,12 @@ const Dashboard: React.FC = () => {
         setTokenSymbol(determineTokenSymbol(initialPrice));
         
         setInitializationStep('Enabling WebSocket connection...');
-        addDebugLog("Simulation ready - enabling WebSocket connection...");
         setIsWebSocketReady(true);
         
-        addDebugLog(`Simulation initialized successfully - ready for real-time updates`);
         setInitializationStep('Ready for trading!');
         
       } catch (error) {
         setError('Failed to initialize simulation');
-        addDebugLog(`Initialization error: ${error}`);
         console.error(error);
         setSimulationRegistrationStatus('error');
         initializationRef.current = false;
@@ -528,7 +464,6 @@ const Dashboard: React.FC = () => {
     initSimulation();
   }, []);
 
-  // Timer for elapsed time
   useEffect(() => {
     if (simulation?.isRunning && !simulation?.isPaused) {
       if (!simulationStartTime) {
@@ -557,7 +492,6 @@ const Dashboard: React.FC = () => {
     };
   }, [simulation?.isRunning, simulation?.isPaused, simulationStartTime]);
 
-  // Convert price history to chart format
   const convertPriceHistory = useCallback((history: SimulationPricePoint[]): ChartPricePoint[] => {
     if (!history || history.length === 0) return [];
     
@@ -572,10 +506,8 @@ const Dashboard: React.FC = () => {
     }));
   }, []);
 
-  // Prepare chart data
   const chartPriceHistory = useMemo(() => convertPriceHistory(priceHistory), [priceHistory, convertPriceHistory]);
 
-  // Format impressive trade count
   const formatTradeCount = useCallback((count: number) => {
     if (count >= 1000000) {
       return `${(count / 1000000).toFixed(1)}M`;
@@ -585,35 +517,26 @@ const Dashboard: React.FC = () => {
     return count.toString();
   }, []);
 
-  // Enhanced start simulation handler
   const handleStartSimulation = useCallback(async () => {
     if (!simulationId) {
-      addDebugLog("Cannot start - no simulation ID");
       return;
     }
     
     if (!isConnected) {
-      addDebugLog("Cannot start - WebSocket not connected");
       return;
     }
     
     if (simulationRegistrationStatus !== 'ready') {
-      addDebugLog(`Cannot start - simulation not ready (status: ${simulationRegistrationStatus})`);
       return;
     }
     
     try {
-      addDebugLog(`Attempting to start simulation: ${simulationId}`);
-      
       const response = await SimulationApi.startSimulation(simulationId);
       
       if (response.error) {
-        addDebugLog(`Failed to start simulation: ${response.error}`);
         console.error('Failed to start simulation:', response.error);
         return;
       }
-      
-      addDebugLog("✅ Backend confirmed simulation started");
       
       setSimulation(prev => prev ? { ...prev, isRunning: true, isPaused: false } : prev);
       setPauseState(false);
@@ -622,13 +545,10 @@ const Dashboard: React.FC = () => {
         setSimulationStartTime(Date.now());
       }
       
-      addDebugLog("Simulation started - expecting real-time data...");
-      
     } catch (error) {
       console.error('Failed to start simulation:', error);
-      addDebugLog(`Error starting simulation: ${error}`);
     }
-  }, [simulationId, simulationStartTime, addDebugLog, setPauseState, isConnected, simulationRegistrationStatus]);
+  }, [simulationId, simulationStartTime, setPauseState, isConnected, simulationRegistrationStatus]);
 
   const handlePauseSimulation = useCallback(async () => {
     if (!simulationId) return;
@@ -637,39 +557,27 @@ const Dashboard: React.FC = () => {
       await SimulationApi.pauseSimulation(simulationId);
       setSimulation(prev => prev ? { ...prev, isPaused: true } : prev);
       setPauseState(true);
-      addDebugLog("Simulation paused");
     } catch (error) {
       console.error('Failed to pause simulation:', error);
-      addDebugLog(`Error pausing simulation: ${error}`);
     }
-  }, [simulationId, addDebugLog, setPauseState]);
+  }, [simulationId, setPauseState]);
 
-  // FIXED: Comprehensive reset functionality that completely clears state
   const handleResetSimulation = useCallback(async () => {
     if (!simulationId) return;
     
     try {
-      console.log('🔄 Starting comprehensive simulation reset...');
-      
-      // STEP 1: Stop any running simulation
       if (simulation?.isRunning) {
-        console.log('⏹️ Stopping running simulation...');
         await SimulationApi.pauseSimulation(simulationId);
         await new Promise(resolve => setTimeout(resolve, 300));
       }
       
-      // STEP 2: Clear ALL frontend state immediately
-      console.log('🧹 Clearing ALL frontend state...');
-      
-      // Clear all data arrays completely
       setRecentTrades([]);
       setOrderBook({ bids: [], asks: [], lastUpdateTime: Date.now() });
       setPriceHistory([]);
       setActivePositions([]);
       setTraderRankings([]);
-      setCurrentPrice(100); // Reset to initial price
+      setCurrentPrice(100);
       
-      // Reset ALL UI state
       setTotalTradesProcessed(0);
       setMarketCondition('calm');
       setSimulationStartTime(null);
@@ -679,12 +587,9 @@ const Dashboard: React.FC = () => {
       setCurrentScenario(null);
       setScenarioPhaseData(null);
       
-      // Reset refs to prevent stale data
       lastMessageProcessedRef.current = '';
       marketConditionUpdateRef.current = 0;
-      debugLogCountRef.current = 0;
       
-      // Clear any pending timeouts
       if (updateTimeoutRef.current) {
         clearTimeout(updateTimeoutRef.current);
         updateTimeoutRef.current = null;
@@ -695,34 +600,28 @@ const Dashboard: React.FC = () => {
         timerRef.current = null;
       }
       
-      // STEP 3: Reset simulation on backend
-      console.log('🔄 Resetting backend simulation...');
       const resetResponse = await SimulationApi.resetSimulation(simulationId);
       
       if (resetResponse.error) {
         console.error('Failed to reset backend simulation:', resetResponse.error);
       }
       
-      // STEP 4: Wait for backend reset to complete
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // STEP 5: Fetch completely fresh simulation state
-      console.log('📥 Fetching completely fresh simulation state...');
       const freshSimResponse = await SimulationApi.getSimulation(simulationId);
       
       if (freshSimResponse?.data) {
         const freshSimData = freshSimResponse.data?.data || freshSimResponse.data;
         freshSimData.id = simulationId;
         
-        // ENSURE completely clean state
         setSimulation({
           ...freshSimData,
           isRunning: false,
           isPaused: false,
-          priceHistory: [], // FORCE empty
-          recentTrades: [], // FORCE empty
-          activePositions: [], // FORCE empty
-          currentPrice: 100 // FORCE reset price
+          priceHistory: [],
+          recentTrades: [],
+          activePositions: [],
+          currentPrice: 100
         });
         
         const resetPrice = 100;
@@ -730,21 +629,17 @@ const Dashboard: React.FC = () => {
         updateSimulationState({
           currentPrice: resetPrice,
           orderBook: { bids: [], asks: [], lastUpdateTime: Date.now() },
-          priceHistory: [], // FORCE completely empty
-          recentTrades: [], // FORCE completely empty
-          activePositions: [], // FORCE completely empty
+          priceHistory: [],
+          recentTrades: [],
+          activePositions: [],
           traderRankings: freshSimData.traderRankings || []
         }, 'reset');
         
         setTokenSymbol(determineTokenSymbol(resetPrice));
         
-        console.log('✅ COMPLETE Reset successful - ALL state cleared');
-        console.log(`📊 Verified clean state: Price=$${resetPrice}, Trades=${0}, Candles=${0}, Positions=${0}`);
-        
       } else {
         console.error('Failed to fetch fresh simulation state');
         
-        // Apply minimal clean state if backend fetch fails
         updateSimulationState({
           currentPrice: 100,
           orderBook: { bids: [], asks: [], lastUpdateTime: Date.now() },
@@ -765,23 +660,8 @@ const Dashboard: React.FC = () => {
         } : prev);
       }
       
-      // STEP 6: Final verification and logging
-      console.log('✅ COMPREHENSIVE RESET COMPLETE:');
-      console.log(`   ✅ Price History: ${priceHistory.length} candles (should be 0)`);
-      console.log(`   ✅ Recent Trades: ${recentTrades.length} trades (should be 0)`);
-      console.log(`   ✅ Active Positions: ${activePositions.length} positions (should be 0)`);
-      console.log(`   ✅ Current Price: $100 (reset)`);
-      console.log(`   ✅ Simulation Running: false`);
-      console.log(`   ✅ All state completely cleared and ready for fresh start`);
-      
-      addDebugLog("✅ COMPREHENSIVE RESET: All state completely cleared - ready for fresh simulation");
-      
     } catch (error) {
       console.error('Error during comprehensive reset:', error);
-      addDebugLog(`Reset error: ${error}`);
-      
-      // Emergency fallback reset - FORCE clean state
-      console.log('🆘 Applying emergency frontend reset...');
       
       setRecentTrades([]);
       setPriceHistory([]);
@@ -808,10 +688,8 @@ const Dashboard: React.FC = () => {
           currentPrice: 100
         } : prev);
       }
-      
-      addDebugLog("🆘 Emergency reset applied - state forced to clean");
     }
-  }, [simulationId, simulation, addDebugLog, determineTokenSymbol, updateSimulationState]);
+  }, [simulationId, simulation, determineTokenSymbol, updateSimulationState]);
 
   const handleSpeedChange = useCallback(async (speedOption: keyof typeof speedMap) => {
     const speedValue = speedMap[speedOption];
@@ -819,25 +697,21 @@ const Dashboard: React.FC = () => {
     
     if (speedOption === 'ultra' || speedOption === 'quantum') {
       setIsHighFrequencyMode(true);
-      addDebugLog(`${speedOption.toUpperCase()} MODE ACTIVATED - ${speedValue}x speed for massive trading`);
     }
     
     if (simulationId) {
       try {
         await SimulationApi.setSimulationSpeed(simulationId, speedValue);
-        addDebugLog(`Speed set to ${speedOption} (${speedValue}x)`);
       } catch (error) {
         console.error(`Failed to update simulation speed:`, error);
       }
     }
-  }, [simulationId, addDebugLog]);
+  }, [simulationId]);
 
   const toggleDynamicView = useCallback(() => {
     setDynamicChartView(prev => !prev);
-    addDebugLog(`Dynamic chart view: ${!dynamicChartView ? 'enabled' : 'disabled'}`);
-  }, [dynamicChartView, addDebugLog]);
+  }, [dynamicChartView]);
 
-  // Loading state with enhanced information
   if (loading) {
     return (
       <div className="flex justify-center items-center h-screen bg-gray-900">
@@ -897,25 +771,21 @@ const Dashboard: React.FC = () => {
     );
   }
 
-  // Determine if simulation can be started
   const canStartSimulation = isConnected && 
                             simulationRegistrationStatus === 'ready' && 
                             (!simulation.isRunning || simulation.isPaused);
 
   return (
     <div className="h-screen w-full bg-gray-900 text-white p-2 flex flex-col overflow-hidden">
-      {/* FIXED: Header - cleaned title and removed audio button */}
       <div className="flex flex-col mb-2 bg-gray-800 rounded-md shadow-sm">
         <div className="flex justify-between items-center h-10 p-2">
           <div className="flex items-center">
-            {/* FIXED: Clean title without "Ultra-Fast" branding */}
             <h1 className="text-base font-bold mr-2">Trading Simulation</h1>
             <div className="ml-2 text-xs bg-gray-700 px-2 py-1 rounded">
               <span className="text-gray-400 mr-1">{tokenSymbol}:</span>
               <span className="text-white font-medium">${currentPrice < 1 ? currentPrice.toFixed(6) : currentPrice.toFixed(2)}</span>
             </div>
             
-            {/* Enhanced connection status */}
             <div className={`ml-2 w-2 h-2 rounded-full mr-1 ${
               isConnected ? 'bg-green-500' : connectionError ? 'bg-red-500' : 'bg-yellow-500'
             }`}></div>
@@ -923,7 +793,6 @@ const Dashboard: React.FC = () => {
               {isConnected ? 'Connected' : connectionError || 'Connecting...'}
             </span>
             
-            {/* Registration status indicator */}
             <div className={`ml-2 text-xs px-2 py-1 rounded ${
               simulationRegistrationStatus === 'ready' ? 'bg-green-900 text-green-300' :
               simulationRegistrationStatus === 'pending' ? 'bg-yellow-900 text-yellow-300' :
@@ -933,31 +802,26 @@ const Dashboard: React.FC = () => {
               Reg: {simulationRegistrationStatus}
             </div>
             
-            {/* Enhanced stats with impressive numbers */}
             <div className="ml-2 text-xs text-gray-400">
               Candles: {priceHistory.length} | Trades: <span className="text-accent font-bold">{formatTradeCount(recentTrades.length)}</span> | Msgs: {wsMessageCount}
             </div>
             
-            {/* Memory management indicator */}
             {recentTrades.length > ULTRA_FAST_CONFIG.PERFORMANCE_MODE_THRESHOLD && (
               <div className="ml-2 text-xs text-yellow-400">
                 🧠 HF Mode
               </div>
             )}
             
-            {/* WebSocket ready indicator */}
             <div className={`ml-2 text-xs px-2 py-1 rounded ${
               isWebSocketReady ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300'
             }`}>
               WS: {isWebSocketReady ? 'Ready' : 'Waiting'}
             </div>
             
-            {/* Trade count removed limitation indicator */}
             <div className="ml-2 text-xs text-green-400">
               ✅ No Limits
             </div>
             
-            {/* Scenario indicator */}
             {currentScenario && (
               <div className="ml-2 text-xs text-purple-400 px-2 py-1 bg-purple-900 rounded">
                 📈 {currentScenario.scenarioName || 'Scenario Active'}
@@ -970,8 +834,6 @@ const Dashboard: React.FC = () => {
               <span className="text-gray-400">Time:</span>
               <span className="ml-1 font-mono text-white">{elapsedTime}</span>
             </div>
-            
-            {/* FIXED: Removed audio button completely */}
             
             <button 
               onClick={toggleDynamicView}
@@ -994,7 +856,6 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
         
-        {/* Controls */}
         <div className="flex justify-between items-center h-10 p-2 border-t border-gray-700">
           <div className="flex items-center space-x-2">
             <span className="text-xs text-gray-400">Speed:</span>
@@ -1028,7 +889,6 @@ const Dashboard: React.FC = () => {
               </span>
             </div>
             
-            {/* High frequency performance indicator */}
             {isHighFrequencyMode && (
               <div className="ml-4 text-xs text-purple-400 bg-purple-900 px-2 py-1 rounded">
                 🚀 HF MODE: {formatTradeCount(recentTrades.length)} trades
@@ -1077,7 +937,6 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
       
-      {/* Main dashboard grid */}
       <div style={{ 
         display: 'grid', 
         gridTemplateColumns: '3fr 9fr', 
@@ -1086,7 +945,6 @@ const Dashboard: React.FC = () => {
         height: 'calc(100vh - 85px)',
         overflow: 'hidden'
       }}>
-        {/* Left column */}
         <div style={{ 
           gridColumn: '1 / 2', 
           gridRow: '1 / 3', 
@@ -1104,7 +962,6 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
         
-        {/* Chart */}
         <div style={{ 
           gridColumn: '2 / 3', 
           gridRow: '1 / 2', 
@@ -1123,7 +980,6 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
         
-        {/* Participants */}
         <div style={{ gridColumn: '2 / 3', gridRow: '2 / 3', overflow: 'hidden' }}>
           <ParticipantsOverview 
             traders={traderRankings} 
@@ -1134,7 +990,6 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
       
-      {/* Performance Monitor */}
       <PerformanceMonitor 
         isVisible={showPerformanceMonitor}
         onToggle={() => setShowPerformanceMonitor(!showPerformanceMonitor)}
