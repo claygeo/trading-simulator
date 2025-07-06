@@ -1,4 +1,4 @@
-// frontend/src/components/Dashboard.tsx - Production version
+// frontend/src/components/Dashboard.tsx - Updated with Mobile Integration
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -9,6 +9,7 @@ import RecentTrades from './RecentTrades';
 import ParticipantsOverview from './ParticipantsOverview';
 import PerformanceMonitor from './PerformanceMonitor';
 import TransactionProcessor from './TransactionProcessor';
+import MobileDashboard from './mobile/MobileDashboard';
 
 interface ChartPricePoint {
   time: number;
@@ -20,7 +21,54 @@ interface ChartPricePoint {
   volume?: number;
 }
 
+// Custom hook to detect mobile device
+const useIsMobile = () => {
+  const [isMobile, setIsMobile] = useState<boolean>(false);
+  
+  useEffect(() => {
+    const checkIsMobile = () => {
+      // Check screen width
+      const screenWidth = window.innerWidth;
+      
+      // Check user agent for mobile devices
+      const userAgent = navigator.userAgent.toLowerCase();
+      const mobileKeywords = ['mobile', 'android', 'iphone', 'ipad', 'tablet', 'touch'];
+      const isMobileAgent = mobileKeywords.some(keyword => userAgent.includes(keyword));
+      
+      // Check for touch support
+      const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      
+      // Determine if mobile based on multiple factors
+      const mobile = screenWidth <= 768 || (isMobileAgent && hasTouch);
+      
+      setIsMobile(mobile);
+    };
+    
+    // Check on mount
+    checkIsMobile();
+    
+    // Check on resize
+    window.addEventListener('resize', checkIsMobile);
+    window.addEventListener('orientationchange', checkIsMobile);
+    
+    return () => {
+      window.removeEventListener('resize', checkIsMobile);
+      window.removeEventListener('orientationchange', checkIsMobile);
+    };
+  }, []);
+  
+  return isMobile;
+};
+
 const Dashboard: React.FC = () => {
+  const isMobile = useIsMobile();
+  
+  // If mobile is detected, use the mobile dashboard
+  if (isMobile) {
+    return <MobileDashboard />;
+  }
+  
+  // Original Desktop Dashboard Implementation
   const [simulationId, setSimulationId] = useState<string | null>(null);
   const [simulation, setSimulation] = useState<Simulation | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -733,6 +781,9 @@ const Dashboard: React.FC = () => {
           <div className="mt-2 text-sm text-purple-400">
             ✅ Memory management optimized
           </div>
+          <div className="mt-2 text-sm text-cyan-400">
+            📱 Responsive design ready
+          </div>
         </div>
       </div>
     );
@@ -777,6 +828,7 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="h-screen w-full bg-gray-900 text-white p-2 flex flex-col overflow-hidden">
+      {/* Desktop Header */}
       <div className="flex flex-col mb-2 bg-gray-800 rounded-md shadow-sm">
         <div className="flex justify-between items-center h-10 p-2">
           <div className="flex items-center">
@@ -822,6 +874,10 @@ const Dashboard: React.FC = () => {
               ✅ No Limits
             </div>
             
+            <div className="ml-2 text-xs text-cyan-400">
+              📱 Responsive
+            </div>
+            
             {currentScenario && (
               <div className="ml-2 text-xs text-purple-400 px-2 py-1 bg-purple-900 rounded">
                 📈 {currentScenario.scenarioName || 'Scenario Active'}
@@ -852,6 +908,15 @@ const Dashboard: React.FC = () => {
               }`}
             >
               Perf
+            </button>
+            
+            <button 
+              onClick={() => setShowTransactionProcessor(!showTransactionProcessor)}
+              className={`text-xs px-2 py-1 rounded transition ${
+                showTransactionProcessor ? 'text-green-400 bg-green-900' : 'text-gray-400 hover:text-gray-300'
+              }`}
+            >
+              TXP
             </button>
           </div>
         </div>
@@ -937,6 +1002,7 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
       
+      {/* Desktop Grid Layout */}
       <div style={{ 
         display: 'grid', 
         gridTemplateColumns: '3fr 9fr', 
@@ -1000,6 +1066,13 @@ const Dashboard: React.FC = () => {
         batchesProcessed={0}
         isHighFrequencyMode={isHighFrequencyMode}
         simulationSpeed={simulationSpeed}
+      />
+
+      <TransactionProcessor 
+        isVisible={showTransactionProcessor}
+        onToggle={() => setShowTransactionProcessor(!showTransactionProcessor)}
+        simulationRunning={simulation?.isRunning || false}
+        simulationId={simulationId || undefined}
       />
     </div>
   );
