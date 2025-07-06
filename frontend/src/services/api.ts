@@ -1,4 +1,4 @@
-// frontend/src/services/api.ts - COMPLETE FIXED VERSION WITH READY ENDPOINT
+// frontend/src/services/api.ts
 import axios from 'axios';
 
 // FIXED: Determine the correct API base URL based on environment
@@ -191,7 +191,7 @@ export const SimulationApi = {
     }
   },
 
-  // 🆕 NEW: Check if simulation is ready for WebSocket connections
+  // FIXED: Enhanced ready endpoint with better error handling and retry logic
   checkSimulationReady: async (id: string): Promise<ApiResponse<{ready: boolean, status: string, id: string}>> => {
     try {
       console.log(`🔍 Checking simulation readiness for ${id}...`);
@@ -204,6 +204,8 @@ export const SimulationApi = {
       let errorMessage = 'Failed to check simulation readiness';
       if (error.response?.status === 404) {
         errorMessage = 'Simulation not found or ready endpoint not available';
+      } else if (error.response?.status >= 500) {
+        errorMessage = 'Backend server error - simulation may still be initializing';
       } else if (error.response) {
         errorMessage = error.response.data?.error || `Server error: ${error.response.status}`;
       } else if (error.request) {
@@ -219,8 +221,8 @@ export const SimulationApi = {
     }
   },
 
-  // 🆕 NEW: Wait for simulation to be ready with timeout
-  waitForSimulationReady: async (id: string, maxAttempts: number = 10, delayMs: number = 500): Promise<ApiResponse<{ready: boolean, attempts: number}>> => {
+  // FIXED: Enhanced wait function with exponential backoff and better error handling
+  waitForSimulationReady: async (id: string, maxAttempts: number = 15, initialDelayMs: number = 500): Promise<ApiResponse<{ready: boolean, attempts: number}>> => {
     console.log(`⏳ Waiting for simulation ${id} to be ready (max ${maxAttempts} attempts)...`);
     
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -235,47 +237,52 @@ export const SimulationApi = {
             data: { ready: true, attempts: attempt }
           };
         } else {
-          console.log(`⏳ Simulation ${id} not ready yet (attempt ${attempt}) - status: ${result.data?.status}`);
+          console.log(`⏳ Simulation ${id} not ready yet (attempt ${attempt}) - status: ${result.data?.status || 'unknown'}`);
         }
         
-        if (result.error) {
-          console.log(`❌ Error on attempt ${attempt}: ${result.error}`);
-          // Continue trying unless it's the last attempt
-          if (attempt === maxAttempts) {
-            return { 
-              data: { ready: false, attempts: attempt },
-              error: result.error 
-            };
-          }
+        // Check for permanent errors
+        if (result.error && result.error.includes('not found')) {
+          console.log(`❌ Permanent error on attempt ${attempt}: ${result.error}`);
+          return { 
+            data: { ready: false, attempts: attempt },
+            error: result.error 
+          };
         }
         
       } catch (error: any) {
         console.log(`❌ Exception on attempt ${attempt}:`, error.message);
-        // Continue trying unless it's the last attempt
+        
+        // For server errors, continue trying (simulation might still be starting)
+        // For network errors, continue trying (connection issue)
+        // Only fail immediately for permanent errors
         if (attempt === maxAttempts) {
           return { 
             data: { ready: false, attempts: attempt },
-            error: error.message || 'Unknown error'
+            error: error.message || 'Unknown error during readiness check'
           };
         }
       }
       
-      // Wait before next attempt (except on last attempt)
+      // Wait before next attempt with exponential backoff
       if (attempt < maxAttempts) {
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        const delay = Math.min(5000, initialDelayMs * Math.pow(1.5, attempt - 1)); // Cap at 5 seconds
+        console.log(`⏰ Waiting ${delay}ms before attempt ${attempt + 1}...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
     
     console.log(`⏰ Simulation ${id} failed to become ready after ${maxAttempts} attempts`);
     return { 
       data: { ready: false, attempts: maxAttempts },
-      error: `Simulation failed to become ready after ${maxAttempts} attempts`
+      error: `Simulation failed to become ready after ${maxAttempts} attempts. Backend may need more time to initialize.`
     };
   },
   
   startSimulation: async (id: string) => {
     try {
+      console.log(`🚀 Starting simulation ${id}...`);
       const response = await api.post(`/simulation/${id}/start`);
+      console.log(`✅ Simulation ${id} started successfully`);
       return { data: response.data };
     } catch (error: any) {
       console.error(`Error starting simulation ${id}:`, error);
@@ -288,7 +295,9 @@ export const SimulationApi = {
   
   pauseSimulation: async (id: string) => {
     try {
+      console.log(`⏸️ Pausing simulation ${id}...`);
       const response = await api.post(`/simulation/${id}/pause`);
+      console.log(`✅ Simulation ${id} paused successfully`);
       return { data: response.data };
     } catch (error: any) {
       console.error(`Error pausing simulation ${id}:`, error);
@@ -299,9 +308,16 @@ export const SimulationApi = {
     }
   },
   
+  // FIXED: Enhanced reset with comprehensive state clearing
   resetSimulation: async (id: string) => {
     try {
-      const response = await api.post(`/simulation/${id}/reset`);
+      console.log(`🔄 Resetting simulation ${id} completely...`);
+      const response = await api.post(`/simulation/${id}/reset`, {
+        clearAllData: true,
+        resetPrice: 100,
+        resetState: 'complete'
+      });
+      console.log(`✅ Simulation ${id} reset successfully`);
       return { data: response.data };
     } catch (error: any) {
       console.error(`Error resetting simulation ${id}:`, error);
@@ -312,9 +328,16 @@ export const SimulationApi = {
     }
   },
   
+  // FIXED: Enhanced speed setting with verification
   setSimulationSpeed: async (id: string, speed: number) => {
     try {
-      const response = await api.post(`/simulation/${id}/speed`, { speed });
+      console.log(`⚡ Setting simulation ${id} speed to ${speed}x...`);
+      const response = await api.post(`/simulation/${id}/speed`, { 
+        speed,
+        timestamp: Date.now(),
+        requestId: Math.random().toString(36).substr(2, 9)
+      });
+      console.log(`✅ Simulation ${id} speed set to ${speed}x successfully`);
       return { 
         data: response.data,
         success: true,
@@ -326,6 +349,20 @@ export const SimulationApi = {
         data: null,
         success: false,
         error: error.response?.data?.error || error.message || 'Failed to set simulation speed'
+      };
+    }
+  },
+
+  // NEW: Get simulation statistics for verification
+  getSimulationStats: async (id: string) => {
+    try {
+      const response = await api.get(`/simulation/${id}/stats`);
+      return { data: response.data };
+    } catch (error: any) {
+      console.error(`Error fetching simulation stats for ${id}:`, error);
+      return { 
+        data: null, 
+        error: error.response?.data?.error || error.message || 'Failed to fetch simulation stats'
       };
     }
   }
@@ -387,7 +424,7 @@ export const SimulationUtils = {
     }
   },
 
-  // 🆕 NEW: Test the ready endpoint specifically
+  // FIXED: Enhanced ready endpoint testing
   testReadyEndpoint: async (simulationId?: string): Promise<boolean> => {
     try {
       // Use provided simulation ID or try to create one
@@ -432,6 +469,57 @@ export const SimulationUtils = {
     }
   },
 
+  // NEW: Test speed endpoint functionality
+  testSpeedEndpoint: async (simulationId?: string): Promise<boolean> => {
+    try {
+      let testSimId = simulationId;
+      
+      if (!testSimId) {
+        console.log('🧪 Creating test simulation for speed endpoint test...');
+        const simResult = await SimulationApi.createSimulation({
+          initialPrice: 100,
+          duration: 30,
+          volatilityFactor: 1.0
+        });
+        
+        if (simResult.error || !simResult.data) {
+          console.log('❌ Failed to create test simulation:', simResult.error);
+          return false;
+        }
+        
+        testSimId = simResult.data.simulationId || simResult.data.data?.id;
+      }
+      
+      if (!testSimId) {
+        console.log('❌ No simulation ID available for speed endpoint test');
+        return false;
+      }
+      
+      console.log('🧪 Testing speed endpoint for simulation:', testSimId);
+      
+      // Test different speed values
+      const speeds = [2, 6, 50, 100];
+      
+      for (const speed of speeds) {
+        const speedResult = await SimulationApi.setSimulationSpeed(testSimId, speed);
+        
+        if (speedResult.error) {
+          console.log(`❌ Speed endpoint test failed for speed ${speed}:`, speedResult.error);
+          return false;
+        }
+        
+        console.log(`✅ Speed ${speed}x set successfully:`, speedResult.data);
+      }
+      
+      console.log('✅ Speed endpoint working for all test speeds!');
+      return true;
+      
+    } catch (error: any) {
+      console.error('❌ Speed endpoint test failed:', error);
+      return false;
+    }
+  },
+
   debugConfiguration: () => {
     console.log('🔍 Frontend Configuration Debug:', {
       apiBaseUrl: API_BASE_URL,
@@ -454,6 +542,7 @@ if (typeof window !== 'undefined') {
   (window as any).testBackend = SimulationUtils.testBackendConnection;
   (window as any).testSimulation = SimulationUtils.testSimulationSystem;
   (window as any).testReadyEndpoint = SimulationUtils.testReadyEndpoint;
+  (window as any).testSpeedEndpoint = SimulationUtils.testSpeedEndpoint;
   (window as any).debugConfig = SimulationUtils.debugConfiguration;
   (window as any).SimulationApi = SimulationApi;
   
@@ -461,6 +550,7 @@ if (typeof window !== 'undefined') {
   console.log('  testBackend() - Test backend connection');
   console.log('  testSimulation() - Test full simulation system');
   console.log('  testReadyEndpoint(simulationId?) - Test ready endpoint');
+  console.log('  testSpeedEndpoint(simulationId?) - Test speed endpoint');
   console.log('  debugConfig() - Show configuration details');
 }
 
