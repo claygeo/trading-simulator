@@ -1,15 +1,19 @@
-// frontend/src/components/Dashboard.tsx - Updated with Mobile Integration
+// frontend/src/components/Dashboard.tsx - COMPLETE FIXED VERSION
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
 import { Simulation, PricePoint as SimulationPricePoint } from '../types';
+
+// Desktop components
 import PriceChart from './PriceChart';
 import OrderBook from './OrderBook';
 import RecentTrades from './RecentTrades';
 import ParticipantsOverview from './ParticipantsOverview';
 import PerformanceMonitor from './PerformanceMonitor';
 import TransactionProcessor from './TransactionProcessor';
-import MobileDashboard from './mobile/MobileDashboard';
+
+// Mobile components - will lazy load to avoid initial import errors
+const MobileDashboard = React.lazy(() => import('./mobile/MobileDashboard'));
 
 interface ChartPricePoint {
   time: number;
@@ -21,54 +25,137 @@ interface ChartPricePoint {
   volume?: number;
 }
 
-// Custom hook to detect mobile device
+// ENHANCED MOBILE DETECTION with better reliability
 const useIsMobile = () => {
   const [isMobile, setIsMobile] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [debugInfo, setDebugInfo] = useState<any>(null);
   
   useEffect(() => {
+    let mounted = true;
+    
     const checkIsMobile = () => {
-      // Check screen width
-      const screenWidth = window.innerWidth;
-      
-      // Check user agent for mobile devices
-      const userAgent = navigator.userAgent.toLowerCase();
-      const mobileKeywords = ['mobile', 'android', 'iphone', 'ipad', 'tablet', 'touch'];
-      const isMobileAgent = mobileKeywords.some(keyword => userAgent.includes(keyword));
-      
-      // Check for touch support
-      const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-      
-      // Determine if mobile based on multiple factors
-      const mobile = screenWidth <= 768 || (isMobileAgent && hasTouch);
-      
-      setIsMobile(mobile);
+      try {
+        const screenWidth = window.innerWidth;
+        const screenHeight = window.innerHeight;
+        
+        // Method 1: Screen size check
+        const isSmallScreen = screenWidth <= 768;
+        
+        // Method 2: User agent check (more comprehensive)
+        const userAgent = navigator.userAgent.toLowerCase();
+        const mobileRegex = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|tablet/i;
+        const isMobileUA = mobileRegex.test(userAgent);
+        
+        // Method 3: Touch capability
+        const hasTouch = (
+          'ontouchstart' in window ||
+          navigator.maxTouchPoints > 0 ||
+          (navigator as any).msMaxTouchPoints > 0
+        );
+        
+        // Method 4: CSS media query check
+        const isMediaQueryMobile = window.matchMedia && window.matchMedia('(max-width: 768px)').matches;
+        
+        // Method 5: Orientation API
+        const hasOrientation = 'orientation' in window;
+        
+        // Method 6: Device pixel ratio (mobile devices often have higher DPR)
+        const devicePixelRatio = window.devicePixelRatio || 1;
+        const isHighDPR = devicePixelRatio > 1;
+        
+        // Confidence scoring system
+        let mobileScore = 0;
+        if (isSmallScreen) mobileScore += 3;
+        if (isMobileUA) mobileScore += 4;
+        if (hasTouch) mobileScore += 3;
+        if (isMediaQueryMobile) mobileScore += 2;
+        if (hasOrientation) mobileScore += 1;
+        if (isHighDPR && isSmallScreen) mobileScore += 1;
+        
+        // Additional checks
+        const isSafariMobile = /safari/i.test(userAgent) && hasTouch;
+        const isAndroid = /android/i.test(userAgent);
+        const isIOS = /iphone|ipad|ipod/i.test(userAgent);
+        
+        if (isSafariMobile || isAndroid || isIOS) mobileScore += 2;
+        
+        // Decision logic: mobile if score >= 5 OR strong indicators
+        const isMobileDevice = mobileScore >= 5 || 
+                              (isSmallScreen && (isMobileUA || hasTouch)) ||
+                              isAndroid || isIOS;
+        
+        const debug = {
+          screenWidth,
+          screenHeight,
+          isSmallScreen,
+          isMobileUA,
+          hasTouch,
+          isMediaQueryMobile,
+          hasOrientation,
+          devicePixelRatio,
+          isHighDPR,
+          isSafariMobile,
+          isAndroid,
+          isIOS,
+          mobileScore,
+          finalDecision: isMobileDevice,
+          userAgent: userAgent.substring(0, 150) + '...',
+          timestamp: new Date().toISOString()
+        };
+        
+        console.log('🔍 Mobile Detection Analysis:', debug);
+        
+        if (mounted) {
+          setIsMobile(isMobileDevice);
+          setDebugInfo(debug);
+          setIsLoading(false);
+        }
+        
+      } catch (error) {
+        console.error('❌ Mobile detection error:', error);
+        if (mounted) {
+          // Emergency fallback
+          setIsMobile(window.innerWidth <= 768);
+          setIsLoading(false);
+        }
+      }
     };
     
-    // Check on mount
-    checkIsMobile();
+    // Initial check with small delay to ensure DOM is ready
+    const timer = setTimeout(() => {
+      checkIsMobile();
+    }, 50);
     
-    // Check on resize
-    window.addEventListener('resize', checkIsMobile);
-    window.addEventListener('orientationchange', checkIsMobile);
+    // Responsive updates with debouncing
+    let resizeTimer: NodeJS.Timeout;
+    const debouncedCheck = () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(checkIsMobile, 300);
+    };
+    
+    window.addEventListener('resize', debouncedCheck);
+    window.addEventListener('orientationchange', () => {
+      // Orientation change needs longer delay for mobile browsers
+      setTimeout(checkIsMobile, 500);
+    });
     
     return () => {
-      window.removeEventListener('resize', checkIsMobile);
-      window.removeEventListener('orientationchange', checkIsMobile);
+      mounted = false;
+      clearTimeout(timer);
+      clearTimeout(resizeTimer);
+      window.removeEventListener('resize', debouncedCheck);
+      window.removeEventListener('orientationchange', debouncedCheck);
     };
   }, []);
   
-  return isMobile;
+  return { isMobile, isLoading, debugInfo };
 };
 
 const Dashboard: React.FC = () => {
-  const isMobile = useIsMobile();
+  const { isMobile, isLoading, debugInfo } = useIsMobile();
   
-  // If mobile is detected, use the mobile dashboard
-  if (isMobile) {
-    return <MobileDashboard />;
-  }
-  
-  // Original Desktop Dashboard Implementation
+  // Desktop dashboard state
   const [simulationId, setSimulationId] = useState<string | null>(null);
   const [simulation, setSimulation] = useState<Simulation | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -251,6 +338,7 @@ const Dashboard: React.FC = () => {
     
   }, [determineMarketCondition, marketCondition]);
 
+  // WebSocket message handling
   useEffect(() => {
     if (!lastMessage) return;
     
@@ -413,6 +501,7 @@ const Dashboard: React.FC = () => {
     return 'BTC/USDT';
   }, []);
 
+  // Initialization
   useEffect(() => {
     if (initializationRef.current) return;
     initializationRef.current = true;
@@ -512,6 +601,7 @@ const Dashboard: React.FC = () => {
     initSimulation();
   }, []);
 
+  // Timer for elapsed time
   useEffect(() => {
     if (simulation?.isRunning && !simulation?.isPaused) {
       if (!simulationStartTime) {
@@ -760,6 +850,46 @@ const Dashboard: React.FC = () => {
     setDynamicChartView(prev => !prev);
   }, [dynamicChartView]);
 
+  // Show mobile detection loading
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center h-screen bg-gray-900">
+        <div className="text-white text-center">
+          <div className="animate-spin h-8 w-8 mx-auto mb-4 border-4 border-blue-500 border-t-transparent rounded-full"></div>
+          <span className="text-lg">Detecting device type...</span>
+          <div className="mt-2 text-sm text-gray-400">
+            🔍 Enhanced mobile detection active
+          </div>
+        </div>
+      </div>
+    );
+  }
+  
+  // Mobile detected - use your ORIGINAL mobile dashboard with TradingView charts
+  if (isMobile) {
+    return (
+      <React.Suspense 
+        fallback={
+          <div className="flex justify-center items-center h-screen bg-[#0B1426]">
+            <div className="text-white text-center">
+              <div className="animate-spin h-12 w-12 mx-auto mb-4 border-4 border-green-500 border-t-transparent rounded-full"></div>
+              <span className="text-xl">Loading Mobile Trading...</span>
+              <div className="mt-4 text-sm text-gray-400">
+                📱 Full mobile interface with TradingView charts
+              </div>
+              <div className="mt-2 text-xs text-gray-500">
+                Detection: {debugInfo?.finalDecision ? 'Mobile' : 'Desktop'} (Score: {debugInfo?.mobileScore})
+              </div>
+            </div>
+          </div>
+        }
+      >
+        <MobileDashboard />
+      </React.Suspense>
+    );
+  }
+
+  // Desktop Dashboard - your original implementation
   if (loading) {
     return (
       <div className="flex justify-center items-center h-screen bg-gray-900">
@@ -782,7 +912,7 @@ const Dashboard: React.FC = () => {
             ✅ Memory management optimized
           </div>
           <div className="mt-2 text-sm text-cyan-400">
-            📱 Responsive design ready
+            🖥️ Desktop mode • Enhanced mobile detection
           </div>
         </div>
       </div>
@@ -798,12 +928,26 @@ const Dashboard: React.FC = () => {
           <p className="mt-2 text-sm text-gray-400">
             Registration Status: {simulationRegistrationStatus}
           </p>
-          <button 
-            onClick={() => window.location.reload()} 
-            className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded transition"
-          >
-            Reload
-          </button>
+          <div className="mt-4">
+            <button 
+              onClick={() => window.location.reload()} 
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded transition mr-2"
+            >
+              Reload
+            </button>
+            <button 
+              onClick={() => setShowDebugInfo(!showDebugInfo)} 
+              className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded transition"
+            >
+              {showDebugInfo ? 'Hide' : 'Show'} Debug
+            </button>
+          </div>
+          
+          {showDebugInfo && debugInfo && (
+            <div className="mt-4 p-3 bg-gray-700 rounded text-left text-xs">
+              <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -832,7 +976,7 @@ const Dashboard: React.FC = () => {
       <div className="flex flex-col mb-2 bg-gray-800 rounded-md shadow-sm">
         <div className="flex justify-between items-center h-10 p-2">
           <div className="flex items-center">
-            <h1 className="text-base font-bold mr-2">Trading Simulation</h1>
+            <h1 className="text-base font-bold mr-2">Trading Simulation (Desktop)</h1>
             <div className="ml-2 text-xs bg-gray-700 px-2 py-1 rounded">
               <span className="text-gray-400 mr-1">{tokenSymbol}:</span>
               <span className="text-white font-medium">${currentPrice < 1 ? currentPrice.toFixed(6) : currentPrice.toFixed(2)}</span>
@@ -875,7 +1019,7 @@ const Dashboard: React.FC = () => {
             </div>
             
             <div className="ml-2 text-xs text-cyan-400">
-              📱 Responsive
+              🖥️ Desktop
             </div>
             
             {currentScenario && (
@@ -917,6 +1061,15 @@ const Dashboard: React.FC = () => {
               }`}
             >
               TXP
+            </button>
+
+            <button 
+              onClick={() => setShowDebugInfo(!showDebugInfo)}
+              className={`text-xs px-2 py-1 rounded transition ${
+                showDebugInfo ? 'text-yellow-400 bg-yellow-900' : 'text-gray-400 hover:text-gray-300'
+              }`}
+            >
+              Debug
             </button>
           </div>
         </div>
@@ -1000,6 +1153,32 @@ const Dashboard: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* Debug Info Panel */}
+        {showDebugInfo && debugInfo && (
+          <div className="border-t border-gray-700 p-2">
+            <div className="text-xs text-gray-400 mb-1">🔍 Mobile Detection Debug:</div>
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <div className="bg-gray-700 p-2 rounded">
+                <div className="text-blue-400">Screen: {debugInfo.screenWidth}x{debugInfo.screenHeight}</div>
+                <div className="text-green-400">Score: {debugInfo.mobileScore}/10</div>
+                <div className={`${debugInfo.finalDecision ? 'text-red-400' : 'text-green-400'}`}>
+                  Mode: {debugInfo.finalDecision ? 'Mobile' : 'Desktop'}
+                </div>
+              </div>
+              <div className="bg-gray-700 p-2 rounded">
+                <div>Small Screen: {debugInfo.isSmallScreen ? '✅' : '❌'}</div>
+                <div>Touch: {debugInfo.hasTouch ? '✅' : '❌'}</div>
+                <div>Mobile UA: {debugInfo.isMobileUA ? '✅' : '❌'}</div>
+              </div>
+              <div className="bg-gray-700 p-2 rounded">
+                <div>iOS: {debugInfo.isIOS ? '✅' : '❌'}</div>
+                <div>Android: {debugInfo.isAndroid ? '✅' : '❌'}</div>
+                <div>DPR: {debugInfo.devicePixelRatio.toFixed(1)}</div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
       
       {/* Desktop Grid Layout */}
