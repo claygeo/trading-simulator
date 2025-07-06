@@ -1,5 +1,5 @@
 // frontend/src/components/mobile/DebugMobileDashboard.tsx
-// COMPLETE DEBUG VERSION WITH YOUR ACTUAL WEBSOCKET URL
+// FIXED VERSION - NO TIMEOUT ERROR
 import React, { useState, useEffect } from 'react';
 
 const DebugMobileDashboard: React.FC = () => {
@@ -13,6 +13,24 @@ const DebugMobileDashboard: React.FC = () => {
     const timestamp = new Date().toISOString();
     console.log(`🔍 DEBUG: ${message}`);
     setDebugInfo(prev => [...prev, `${timestamp.substr(11, 8)}: ${message}`]);
+  };
+
+  // Helper function for fetch with timeout using AbortController
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs: number = 5000): Promise<Response> => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      throw error;
+    }
   };
 
   useEffect(() => {
@@ -119,14 +137,15 @@ const DebugMobileDashboard: React.FC = () => {
     for (const url of apiUrls) {
       try {
         addDebug(`🔍 Trying API: ${url}`);
-        const response = await fetch(url, { 
+        
+        // Fixed: Using fetchWithTimeout instead of timeout option
+        const response = await fetchWithTimeout(url, {
           method: 'GET',
-          timeout: 5000,
           headers: {
             'Accept': 'application/json',
             'Content-Type': 'application/json'
           }
-        });
+        }, 5000);
         
         if (response.ok) {
           const data = await response.text();
@@ -138,7 +157,11 @@ const DebugMobileDashboard: React.FC = () => {
           addDebug(`⚠️ API error: ${url} - Status: ${response.status}`);
         }
       } catch (error) {
-        addDebug(`❌ API failed: ${url} - Error: ${error}`);
+        if (error.name === 'AbortError') {
+          addDebug(`⏰ API timeout: ${url} (5 seconds)`);
+        } else {
+          addDebug(`❌ API failed: ${url} - Error: ${error}`);
+        }
       }
     }
     
@@ -375,13 +398,14 @@ const DebugMobileDashboard: React.FC = () => {
 
         {/* Configuration Display */}
         <div className="bg-gray-800 rounded-lg p-3 mb-4">
-          <h3 className="text-sm font-bold mb-2 text-blue-400">📋 Your Configuration:</h3>
+          <h3 className="text-sm font-bold mb-2 text-blue-400">📋 Current Configuration:</h3>
           <div className="text-xs space-y-1 font-mono">
-            <div>🌐 Backend: <span className="text-green-400">http://localhost:3001</span></div>
-            <div>🔌 WebSocket: <span className="text-green-400">ws://localhost:3001</span></div>
-            <div>🛠️ API Base: <span className="text-green-400">http://localhost:3001/api</span></div>
-            <div>🔧 Environment: <span className="text-green-400">{process.env.REACT_APP_ENV || 'development'}</span></div>
+            <div>🌐 Backend: <span className="text-green-400">{process.env.REACT_APP_BACKEND_URL || 'Not configured'}</span></div>
+            <div>🔌 WebSocket: <span className="text-green-400">{process.env.REACT_APP_BACKEND_WS_URL || 'Not configured'}</span></div>
+            <div>🛠️ API Base: <span className="text-green-400">{process.env.REACT_APP_API_BASE_URL || 'Not configured'}</span></div>
+            <div>🔧 Environment: <span className="text-green-400">{process.env.REACT_APP_ENV || process.env.NODE_ENV || 'unknown'}</span></div>
             <div>📱 Screen: <span className="text-green-400">{window.innerWidth}x{window.innerHeight}</span></div>
+            <div>🌍 URL: <span className="text-green-400">{window.location.href}</span></div>
           </div>
         </div>
 
@@ -410,9 +434,9 @@ const DebugMobileDashboard: React.FC = () => {
             <div className="text-sm text-green-100 space-y-1">
               <p>• Mobile detection is working</p>
               <p>• TradingView Charts library loaded successfully</p>
-              <p>• Your configuration looks correct</p>
+              <p>• Basic browser capabilities confirmed</p>
               <p><strong>Next:</strong> Test the API and WebSocket connections above</p>
-              <p><strong>If those work:</strong> Your mobile dashboard should load properly!</p>
+              <p><strong>Note:</strong> On Netlify, localhost URLs will fail (expected)</p>
             </div>
           </div>
         )}
@@ -425,15 +449,26 @@ const DebugMobileDashboard: React.FC = () => {
               <p>• Check the debug log above for specific errors</p>
               <p>• TradingView Charts may not be compatible with this browser</p>
               <p>• Try running the full diagnostics</p>
-              <p>• If issues persist, we may need to use a canvas-based chart alternative</p>
+              <p>• Canvas-based chart alternative available if needed</p>
             </div>
           </div>
         )}
 
+        {/* Netlify-specific Info */}
+        <div className="mt-4 bg-yellow-900 border border-yellow-500 rounded-lg p-3">
+          <h3 className="text-yellow-400 font-bold mb-2">🚀 Netlify Deployment Notes</h3>
+          <div className="text-sm text-yellow-100 space-y-1">
+            <p>• <strong>Expected:</strong> API/WebSocket tests will fail (localhost URLs don't work on Netlify)</p>
+            <p>• <strong>Important:</strong> Mobile detection and chart loading should work</p>
+            <p>• <strong>Next step:</strong> Configure production backend URLs for Netlify</p>
+            <p>• <strong>Test focus:</strong> Mobile detection, browser capabilities, component loading</p>
+          </div>
+        </div>
+
         {/* Footer */}
         <div className="mt-4 text-center text-xs text-gray-500">
-          <p>📱 Mobile Trading Simulator Debug Tool</p>
-          <p>If you see this screen, React and routing are working correctly</p>
+          <p>📱 Mobile Trading Simulator Debug Tool v2.0</p>
+          <p>Fixed TypeScript compilation issues • Netlify compatible</p>
           <p>Check browser console (F12) for additional error details</p>
         </div>
       </div>
