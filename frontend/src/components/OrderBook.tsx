@@ -457,10 +457,7 @@ const OrderBook: React.FC<OrderBookProps> = ({ orderBook }) => {
         {viewMode === 'table' ? renderTableView() : renderDepthView()}
       </div>
       
-      {/* Footer */}
-      <div className="text-xs text-gray-500 text-right mt-2">
-        {new Date(orderBook.lastUpdateTime).toLocaleTimeString()}
-      </div>
+      {/* FIXED: Footer removed - no more time display */}
     </div>
   );
 };
