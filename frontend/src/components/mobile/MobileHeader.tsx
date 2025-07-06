@@ -1,4 +1,4 @@
-// frontend/src/components/mobile/MobileHeader.tsx - Fixed TypeScript Version
+// frontend/src/components/mobile/MobileHeader.tsx - Complete Fixed Version
 import React, { useState } from 'react';
 
 interface MobileHeaderProps {
@@ -7,7 +7,7 @@ interface MobileHeaderProps {
   elapsedTime: string;
   marketCondition: 'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash';
   isConnected: boolean;
-  connectionError?: string | null; // Fixed: Accept both null and undefined
+  connectionError?: string | null;
   simulationRegistrationStatus: 'creating' | 'pending' | 'ready' | 'error';
   priceHistoryLength: number;
   tradesCount: number;
@@ -18,7 +18,7 @@ interface MobileHeaderProps {
   onPause: () => void;
   onReset: () => void;
   simulationSpeed: number;
-  onSpeedChange: (speed: keyof typeof speedMap) => void;
+  onSpeedChange: (speed: 'slow' | 'medium' | 'fast' | 'ludicrous' | 'ultra' | 'quantum') => Promise<void>;
   speedMap: Record<string, number>;
   currentScenario: any;
   formatTradeCount: (count: number) => string;
@@ -186,7 +186,7 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
           <div className="mb-3">
             <div className="text-xs text-gray-400 mb-2">Trading Speed:</div>
             <div className="grid grid-cols-6 gap-1">
-              {(Object.keys(speedMap) as Array<keyof typeof speedMap>).map((speed) => (
+              {(Object.keys(speedMap) as Array<'slow' | 'medium' | 'fast' | 'ludicrous' | 'ultra' | 'quantum'>).map((speed) => (
                 <button
                   key={speed}
                   onClick={() => onSpeedChange(speed)}
