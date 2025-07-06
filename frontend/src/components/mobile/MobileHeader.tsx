@@ -1,5 +1,5 @@
-// frontend/src/components/mobile/MobileHeader.tsx - Complete Fixed Version
-import React, { useState } from 'react';
+// frontend/src/components/mobile/MobileHeader.tsx - ENHANCED WITH REACTIVE PRICE DISPLAY
+import React, { useState, useEffect, useRef } from 'react';
 
 interface MobileHeaderProps {
   tokenSymbol: string;
@@ -47,6 +47,51 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
   formatTradeCount
 }) => {
   const [showAdvanced, setShowAdvanced] = useState(false);
+  
+  // ISSUE 1 FIX: Reactive price display with direction tracking
+  const [priceDirection, setPriceDirection] = useState<'up' | 'down' | 'neutral'>('neutral');
+  const [displayPrice, setDisplayPrice] = useState<number>(currentPrice);
+  const [isFlashing, setIsFlashing] = useState<boolean>(false);
+  const previousPriceRef = useRef<number>(currentPrice);
+  const flashTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // ISSUE 1 FIX: Real-time price updates with visual feedback
+  useEffect(() => {
+    if (currentPrice !== previousPriceRef.current && currentPrice > 0) {
+      // Determine price direction
+      const newDirection = currentPrice > previousPriceRef.current ? 'up' : 'down';
+      setPriceDirection(newDirection);
+      
+      // Update displayed price immediately
+      setDisplayPrice(currentPrice);
+      
+      // Flash effect for price changes
+      setIsFlashing(true);
+      
+      // Clear existing timeout
+      if (flashTimeoutRef.current) {
+        clearTimeout(flashTimeoutRef.current);
+      }
+      
+      // Remove flash effect after animation
+      flashTimeoutRef.current = setTimeout(() => {
+        setIsFlashing(false);
+        setPriceDirection('neutral');
+      }, 600);
+      
+      // Update previous price reference
+      previousPriceRef.current = currentPrice;
+    }
+  }, [currentPrice]);
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (flashTimeoutRef.current) {
+        clearTimeout(flashTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const getMarketConditionColor = () => {
     switch (marketCondition) {
@@ -65,28 +110,53 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
     return 'bg-yellow-500';
   };
 
+  // ISSUE 1 FIX: Enhanced price formatting with proper precision
   const formatPrice = (price: number) => {
-    return price < 1 ? price.toFixed(6) : price.toFixed(2);
+    if (price < 0.01) return price.toFixed(6);
+    if (price < 1) return price.toFixed(4);
+    if (price < 100) return price.toFixed(3);
+    return price.toFixed(2);
+  };
+
+  // ISSUE 1 FIX: Get price display color based on direction
+  const getPriceColor = () => {
+    if (isFlashing) {
+      return priceDirection === 'up' ? 'text-green-400' : 'text-red-400';
+    }
+    return 'text-white';
   };
 
   return (
     <div className="bg-gray-800 border-b border-gray-700">
       {/* Main Header Row */}
       <div className="flex items-center justify-between p-3">
-        {/* Left: Price & Symbol */}
+        {/* Left: Price & Symbol with REACTIVE display */}
         <div className="flex items-center space-x-3">
           <div className="flex flex-col">
             <div className="text-white font-bold text-lg">
               {tokenSymbol}
             </div>
-            <div className="text-white font-mono text-xl">
-              ${formatPrice(currentPrice)}
+            {/* ISSUE 1 FIX: Reactive price display with flash animation */}
+            <div className={`font-mono text-xl transition-all duration-300 ${getPriceColor()} ${
+              isFlashing ? 'scale-110 font-bold' : 'scale-100'
+            }`}>
+              ${formatPrice(displayPrice)}
+              {/* Price direction indicator */}
+              {priceDirection !== 'neutral' && (
+                <span className={`ml-1 text-sm ${
+                  priceDirection === 'up' ? 'text-green-400' : 'text-red-400'
+                }`}>
+                  {priceDirection === 'up' ? '↗' : '↘'}
+                </span>
+              )}
             </div>
           </div>
           
           {/* Connection Status */}
           <div className="flex items-center space-x-2">
-            <div className={`w-2 h-2 rounded-full ${getConnectionStatusColor()}`}></div>
+            <div className={`w-2 h-2 rounded-full ${getConnectionStatusColor()} ${
+              isConnected ? 'animate-pulse' : ''
+            }`}></div>
             <div className="text-xs text-gray-400">
               {isConnected ? 'Live' : 'Offline'}
             </div>
@@ -98,7 +168,9 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
           {/* Advanced Toggle */}
           <button 
             onClick={() => setShowAdvanced(!showAdvanced)}
-            className="p-2 text-gray-400 hover:text-white"
+            className={`p-2 transition-colors ${
+              showAdvanced ? 'text-blue-400' : 'text-gray-400 hover:text-white'
+            }`}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="3"/>
@@ -164,13 +236,17 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
             )}
           </div>
 
-          {/* Right: Data Stats */}
+          {/* Right: Data Stats with live updates */}
           <div className="flex items-center space-x-4">
             <div className="text-gray-400">
               Candles: <span className="text-white">{priceHistoryLength}</span>
             </div>
             <div className="text-gray-400">
               Trades: <span className="text-accent font-bold">{formatTradeCount(tradesCount)}</span>
+              {/* Live indicator for active trading */}
+              {tradesCount > 0 && (
+                <span className="ml-1 w-1.5 h-1.5 bg-green-400 rounded-full inline-block animate-pulse"></span>
+              )}
             </div>
             <div className="text-gray-400">
               Msgs: <span className="text-blue-400">{wsMessageCount}</span>
@@ -252,6 +328,18 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
               </div>
             </div>
           )}
+
+          {/* Price Update Frequency Indicator */}
+          <div className="mt-3 pt-2 border-t border-gray-700">
+            <div className="flex justify-between text-xs">
+              <div className="text-blue-400">
+                💰 Price Updates: Real-time
+              </div>
+              <div className="text-green-400">
+                {isFlashing ? '🔴 LIVE UPDATE' : '⚪ Monitoring'}
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>
