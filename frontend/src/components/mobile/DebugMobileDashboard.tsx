@@ -1,5 +1,5 @@
 // frontend/src/components/mobile/DebugMobileDashboard.tsx
-// FIXED VERSION - NO TIMEOUT ERROR
+// COMPLETE FIXED VERSION - ALL TYPESCRIPT ERRORS RESOLVED
 import React, { useState, useEffect } from 'react';
 
 const DebugMobileDashboard: React.FC = () => {
@@ -108,12 +108,12 @@ const DebugMobileDashboard: React.FC = () => {
           setChartLibraryStatus('success');
           setCurrentStep(2);
         }).catch(error => {
-          addDebug(`❌ TradingView Charts library failed: ${error.message}`);
+          addDebug(`❌ TradingView Charts library failed: ${error instanceof Error ? error.message : String(error)}`);
           setChartLibraryStatus('error');
           setCurrentStep(-1);
         });
       } catch (error) {
-        addDebug(`❌ Error importing TradingView Charts: ${error}`);
+        addDebug(`❌ Error importing TradingView Charts: ${error instanceof Error ? error.message : String(error)}`);
         setChartLibraryStatus('error');
         setCurrentStep(-1);
       }
@@ -157,10 +157,10 @@ const DebugMobileDashboard: React.FC = () => {
           addDebug(`⚠️ API error: ${url} - Status: ${response.status}`);
         }
       } catch (error) {
-        if (error.name === 'AbortError') {
+        if (error instanceof Error && error.name === 'AbortError') {
           addDebug(`⏰ API timeout: ${url} (5 seconds)`);
         } else {
-          addDebug(`❌ API failed: ${url} - Error: ${error}`);
+          addDebug(`❌ API failed: ${url} - Error: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
     }
@@ -213,7 +213,7 @@ const DebugMobileDashboard: React.FC = () => {
             ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
             addDebug(`📤 Test message sent to ${url}`);
           } catch (sendError) {
-            addDebug(`❌ Failed to send test message: ${sendError}`);
+            addDebug(`❌ Failed to send test message: ${sendError instanceof Error ? sendError.message : String(sendError)}`);
           }
           
           setTimeout(() => ws.close(), 2000);
@@ -221,7 +221,7 @@ const DebugMobileDashboard: React.FC = () => {
         
         ws.onerror = (error) => {
           clearTimeout(timeout);
-          addDebug(`❌ WebSocket error: ${url} - ${error.type || 'Unknown error'}`);
+          addDebug(`❌ WebSocket error: ${url} - ${error instanceof Event ? error.type || 'Unknown error' : 'Unknown error'}`);
         };
         
         ws.onclose = (event) => {
@@ -239,7 +239,7 @@ const DebugMobileDashboard: React.FC = () => {
         };
         
       } catch (error) {
-        addDebug(`❌ WebSocket creation error: ${url} - ${error}`);
+        addDebug(`❌ WebSocket creation error: ${url} - ${error instanceof Error ? error.message : String(error)}`);
       }
     });
   };
@@ -266,7 +266,7 @@ const DebugMobileDashboard: React.FC = () => {
           addDebug(`⚠️ Component missing default export: ${component.name}`);
         }
       } catch (error) {
-        addDebug(`❌ Component failed: ${component.name} - ${error}`);
+        addDebug(`❌ Component failed: ${component.name} - ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   };
@@ -467,8 +467,8 @@ const DebugMobileDashboard: React.FC = () => {
 
         {/* Footer */}
         <div className="mt-4 text-center text-xs text-gray-500">
-          <p>📱 Mobile Trading Simulator Debug Tool v2.0</p>
-          <p>Fixed TypeScript compilation issues • Netlify compatible</p>
+          <p>📱 Mobile Trading Simulator Debug Tool v3.0</p>
+          <p>All TypeScript errors fixed • Netlify compatible • Error handling improved</p>
           <p>Check browser console (F12) for additional error details</p>
         </div>
       </div>
