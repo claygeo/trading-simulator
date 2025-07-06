@@ -1,8 +1,10 @@
-// frontend/src/components/mobile/MobileDashboard.tsx - Fixed TypeScript Version
+// frontend/src/components/mobile/MobileDashboard.tsx - COMPLETE FULL VERSION
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../../services/api';
 import { useWebSocket } from '../../services/websocket';
 import { Simulation, PricePoint as SimulationPricePoint } from '../../types';
+
+// Mobile components with error boundaries
 import MobileHeader from './MobileHeader';
 import MobileChart from './MobileChart';
 import MobileTabs from './MobileTabs';
@@ -20,22 +22,72 @@ interface ChartPricePoint {
   volume?: number;
 }
 
+// Error Boundary Component
+class MobileErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallback?: React.ReactNode },
+  { hasError: boolean; error?: Error }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('🚨 Mobile Dashboard Error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback || (
+        <div className="h-screen w-full bg-[#0B1426] text-white flex items-center justify-center p-4">
+          <div className="text-center max-w-sm">
+            <div className="text-6xl mb-4">💥</div>
+            <h2 className="text-xl font-bold mb-2 text-red-400">Mobile Error</h2>
+            <p className="text-sm text-gray-300 mb-4">
+              A component failed to load properly.
+            </p>
+            <div className="text-xs text-gray-500 mb-4 p-2 bg-gray-800 rounded">
+              {this.state.error?.message || 'Unknown error'}
+            </div>
+            <button 
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded transition"
+            >
+              Reload App
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 const MobileDashboard: React.FC = () => {
+  // Core state
   const [simulationId, setSimulationId] = useState<string | null>(null);
   const [simulation, setSimulation] = useState<Simulation | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   
+  // Market state
   const [marketCondition, setMarketCondition] = useState<'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash'>('calm');
   const [simulationSpeed, setSimulationSpeed] = useState<number>(1);
   const [simulationStartTime, setSimulationStartTime] = useState<number | null>(null);
   const [elapsedTime, setElapsedTime] = useState<string>("00:00:00");
   
+  // WebSocket state
   const [wsMessageCount, setWsMessageCount] = useState<number>(0);
   const [currentScenario, setCurrentScenario] = useState<any | null>(null);
   const [scenarioPhaseData, setScenarioPhaseData] = useState<any>(null);
   const [tokenSymbol, setTokenSymbol] = useState<string>('TOKEN/USDT');
   
+  // Trading data
   const [recentTrades, setRecentTrades] = useState<any[]>([]);
   const [orderBook, setOrderBook] = useState<any>({ bids: [], asks: [], lastUpdateTime: Date.now() });
   const [priceHistory, setPriceHistory] = useState<SimulationPricePoint[]>([]);
@@ -44,6 +96,7 @@ const MobileDashboard: React.FC = () => {
   const [traderRankings, setTraderRankings] = useState<any[]>([]);
   const [totalTradesProcessed, setTotalTradesProcessed] = useState<number>(0);
   
+  // Connection state
   const [isWebSocketReady, setIsWebSocketReady] = useState<boolean>(false);
   const [simulationRegistrationStatus, setSimulationRegistrationStatus] = useState<'creating' | 'pending' | 'ready' | 'error'>('creating');
   const [initializationStep, setInitializationStep] = useState<string>('Starting...');
@@ -52,18 +105,22 @@ const MobileDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'participants' | 'orderbook' | 'trades'>('participants');
   const [isTabContentExpanded, setIsTabContentExpanded] = useState<boolean>(true);
   
+  // Refs
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const initializationRef = useRef<boolean>(false);
   const lastMessageProcessedRef = useRef<string>('');
   const marketConditionUpdateRef = useRef<number>(0);
   const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
-  const ULTRA_FAST_CONFIG = {
-    MAX_PRICE_HISTORY: 1000,
-    MAX_ACTIVE_POSITIONS: 500,
-    MAX_TRADER_RANKINGS: 200,
-    MEMORY_MANAGEMENT_THRESHOLD: 10000,
-    PERFORMANCE_MODE_THRESHOLD: 5000,
+  // Mobile-optimized configuration
+  const MOBILE_CONFIG = {
+    MAX_PRICE_HISTORY: 500,        // Reduced for mobile
+    MAX_ACTIVE_POSITIONS: 250,     // Reduced for mobile
+    MAX_TRADER_RANKINGS: 118,      // Keep all traders
+    MAX_RECENT_TRADES: 100,        // Reduced for mobile
+    MEMORY_MANAGEMENT_THRESHOLD: 1000,  // Much lower for mobile
+    PERFORMANCE_MODE_THRESHOLD: 500,    // Lower threshold
+    UPDATE_THROTTLE: 100,          // Slower updates for mobile
   };
 
   const speedMap = {
@@ -75,11 +132,13 @@ const MobileDashboard: React.FC = () => {
     'quantum': 100
   } as const;
 
+  // WebSocket connection with mobile-specific timeouts
   const { isConnected, lastMessage, setPauseState, connectionError, messageStats } = useWebSocket(
     isWebSocketReady && simulationRegistrationStatus === 'ready' ? simulationId || undefined : undefined,
     simulation?.isPaused
   );
 
+  // Market condition determination
   const determineMarketCondition = useCallback((): 'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash' => {
     if (!priceHistory.length) return 'calm';
     
@@ -110,74 +169,88 @@ const MobileDashboard: React.FC = () => {
     return 'calm';
   }, [priceHistory, currentPrice]);
 
-  const manageUltraFastMemory = useCallback(() => {
+  // Mobile memory management - much more aggressive
+  const manageMobileMemory = useCallback(() => {
     const tradeCount = recentTrades.length;
     
-    if (tradeCount > ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD) {
-      const keepTradeCount = Math.floor(ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD * 0.8);
+    if (tradeCount > MOBILE_CONFIG.MEMORY_MANAGEMENT_THRESHOLD) {
+      console.log('🧠 Mobile memory management triggered:', tradeCount);
+      
+      // Keep fewer trades for mobile
+      const keepTradeCount = Math.floor(MOBILE_CONFIG.MEMORY_MANAGEMENT_THRESHOLD * 0.5);
       setRecentTrades(prev => prev.slice(0, keepTradeCount));
       
-      if (activePositions.length > ULTRA_FAST_CONFIG.MAX_ACTIVE_POSITIONS) {
-        setActivePositions(prev => prev.slice(0, ULTRA_FAST_CONFIG.MAX_ACTIVE_POSITIONS));
+      // Limit active positions
+      if (activePositions.length > MOBILE_CONFIG.MAX_ACTIVE_POSITIONS) {
+        setActivePositions(prev => prev.slice(0, MOBILE_CONFIG.MAX_ACTIVE_POSITIONS));
       }
       
-      if (priceHistory.length > ULTRA_FAST_CONFIG.MAX_PRICE_HISTORY) {
-        setPriceHistory(prev => prev.slice(-ULTRA_FAST_CONFIG.MAX_PRICE_HISTORY));
+      // Limit price history
+      if (priceHistory.length > MOBILE_CONFIG.MAX_PRICE_HISTORY) {
+        setPriceHistory(prev => prev.slice(-MOBILE_CONFIG.MAX_PRICE_HISTORY));
       }
     }
   }, [recentTrades.length, activePositions.length, priceHistory.length]);
 
+  // Update simulation state with mobile optimizations
   const updateSimulationState = useCallback((data: any, eventType: string) => {
-    if (data.currentPrice !== undefined) {
-      setCurrentPrice(data.currentPrice);
+    try {
+      if (data.currentPrice !== undefined) {
+        setCurrentPrice(data.currentPrice);
+      }
+      
+      if (data.orderBook) {
+        setOrderBook(data.orderBook);
+      }
+      
+      if (data.priceHistory && Array.isArray(data.priceHistory)) {
+        setPriceHistory(data.priceHistory.slice(-MOBILE_CONFIG.MAX_PRICE_HISTORY));
+      }
+      
+      if (data.recentTrades && Array.isArray(data.recentTrades)) {
+        setRecentTrades(data.recentTrades.slice(0, MOBILE_CONFIG.MAX_RECENT_TRADES));
+        setTotalTradesProcessed(data.recentTrades.length);
+      }
+      
+      if (data.activePositions) {
+        setActivePositions(data.activePositions.slice(0, MOBILE_CONFIG.MAX_ACTIVE_POSITIONS));
+      }
+      
+      if (data.traderRankings) {
+        setTraderRankings(data.traderRankings);
+      }
+      
+      if (data.totalTradesProcessed !== undefined) {
+        setTotalTradesProcessed(data.totalTradesProcessed);
+      }
+      
+      if (simulation) {
+        setSimulation(prev => prev ? {
+          ...prev,
+          isRunning: data.isRunning !== undefined ? data.isRunning : prev.isRunning,
+          isPaused: data.isPaused !== undefined ? data.isPaused : prev.isPaused,
+          currentPrice: data.currentPrice !== undefined ? data.currentPrice : prev.currentPrice,
+          priceHistory: data.priceHistory || prev.priceHistory,
+          orderBook: data.orderBook || prev.orderBook,
+          recentTrades: data.recentTrades || prev.recentTrades,
+          activePositions: data.activePositions || prev.activePositions,
+          traderRankings: data.traderRankings || prev.traderRankings
+        } : prev);
+      }
+      
+      // Mobile memory management with delay
+      setTimeout(manageMobileMemory, 200);
+      
+    } catch (error) {
+      console.error('❌ Error updating mobile simulation state:', error);
     }
-    
-    if (data.orderBook) {
-      setOrderBook(data.orderBook);
-    }
-    
-    if (data.priceHistory && Array.isArray(data.priceHistory)) {
-      setPriceHistory(data.priceHistory);
-    }
-    
-    if (data.recentTrades && Array.isArray(data.recentTrades)) {
-      setRecentTrades(data.recentTrades);
-      setTotalTradesProcessed(data.recentTrades.length);
-    }
-    
-    if (data.activePositions) {
-      setActivePositions(data.activePositions);
-    }
-    
-    if (data.traderRankings) {
-      setTraderRankings(data.traderRankings);
-    }
-    
-    if (data.totalTradesProcessed !== undefined) {
-      setTotalTradesProcessed(data.totalTradesProcessed);
-    }
-    
-    if (simulation) {
-      setSimulation(prev => prev ? {
-        ...prev,
-        isRunning: data.isRunning !== undefined ? data.isRunning : prev.isRunning,
-        isPaused: data.isPaused !== undefined ? data.isPaused : prev.isPaused,
-        currentPrice: data.currentPrice !== undefined ? data.currentPrice : prev.currentPrice,
-        priceHistory: data.priceHistory || prev.priceHistory,
-        orderBook: data.orderBook || prev.orderBook,
-        recentTrades: data.recentTrades || prev.recentTrades,
-        activePositions: data.activePositions || prev.activePositions,
-        traderRankings: data.traderRankings || prev.traderRankings
-      } : prev);
-    }
-    
-    setTimeout(manageUltraFastMemory, 100);
-  }, [simulation, manageUltraFastMemory]);
+  }, [simulation, manageMobileMemory]);
 
+  // Market condition updates with mobile throttling
   const updateMarketCondition = useCallback(() => {
     const now = Date.now();
     
-    if (now - marketConditionUpdateRef.current < 2000) {
+    if (now - marketConditionUpdateRef.current < 3000) { // Longer delay for mobile
       return;
     }
     
@@ -192,139 +265,147 @@ const MobileDashboard: React.FC = () => {
       if (newCondition !== marketCondition) {
         setMarketCondition(newCondition);
       }
-    }, 100);
+    }, MOBILE_CONFIG.UPDATE_THROTTLE);
     
   }, [determineMarketCondition, marketCondition]);
 
-  // WebSocket message handling - same as desktop
+  // WebSocket message handling with mobile optimizations
   useEffect(() => {
     if (!lastMessage) return;
     
-    const { simulationId: msgSimId, event } = lastMessage;
-    
-    const messageId = `${msgSimId}-${event.type}-${event.timestamp}`;
-    if (lastMessageProcessedRef.current === messageId) {
-      return;
-    }
-    lastMessageProcessedRef.current = messageId;
-    
-    if (simulationId && msgSimId !== simulationId) {
-      return;
-    }
-    
-    if (!simulation && event.type !== 'simulation_state') {
-      return;
-    }
-    
-    const { type, data } = event;
-    
-    setWsMessageCount(prev => prev + 1);
-    
-    switch (type) {
-      case 'simulation_state':
-        if (data) {
-          updateSimulationState(data, 'simulation_state');
-          
-          if (data.registrationStatus === 'ready') {
-            setSimulationRegistrationStatus('ready');
-          }
-        }
-        break;
-        
-      case 'price_update':
-        if (data) {
-          updateSimulationState(data, 'price_update');
-        }
-        break;
-        
-      case 'trade':
-      case 'processed_trade':
-        if (data) {
-          setRecentTrades(prev => {
-            const exists = prev.some(t => t.id === data.id);
-            if (exists) return prev;
+    try {
+      const { simulationId: msgSimId, event } = lastMessage;
+      
+      const messageId = `${msgSimId}-${event.type}-${event.timestamp}`;
+      if (lastMessageProcessedRef.current === messageId) {
+        return;
+      }
+      lastMessageProcessedRef.current = messageId;
+      
+      if (simulationId && msgSimId !== simulationId) {
+        return;
+      }
+      
+      if (!simulation && event.type !== 'simulation_state') {
+        return;
+      }
+      
+      const { type, data } = event;
+      
+      setWsMessageCount(prev => prev + 1);
+      
+      switch (type) {
+        case 'simulation_state':
+          if (data) {
+            updateSimulationState(data, 'simulation_state');
             
-            const updated = [data, ...prev];
-            
-            if (updated.length > ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD) {
-              const keepCount = Math.floor(ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD * 0.9);
-              return updated.slice(0, keepCount);
+            if (data.registrationStatus === 'ready') {
+              setSimulationRegistrationStatus('ready');
             }
-            
-            return updated;
-          });
+          }
+          break;
           
-          setTotalTradesProcessed(prev => prev + 1);
-        }
-        break;
-        
-      case 'candle_update':
-        if (data && data.priceHistory) {
-          setPriceHistory(data.priceHistory);
-        }
-        break;
-        
-      case 'batch_update':
-        if (data?.updates) {
-          const { updates } = data;
+        case 'price_update':
+          if (data) {
+            updateSimulationState(data, 'price_update');
+          }
+          break;
           
-          const batchData: any = {};
-          
-          if (updates.trades && Array.isArray(updates.trades)) {
+        case 'trade':
+        case 'processed_trade':
+          if (data) {
             setRecentTrades(prev => {
-              const existingIds = new Set(prev.map(t => t.id));
-              const newTrades = updates.trades.filter((t: any) => !existingIds.has(t.id));
-              const combined = [...newTrades, ...prev];
+              const exists = prev.some(t => t.id === data.id);
+              if (exists) return prev;
               
-              if (combined.length > ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD) {
-                const keepCount = Math.floor(ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD * 0.9);
-                return combined.slice(0, keepCount);
+              const updated = [data, ...prev];
+              
+              // Mobile memory limit
+              if (updated.length > MOBILE_CONFIG.MEMORY_MANAGEMENT_THRESHOLD) {
+                const keepCount = Math.floor(MOBILE_CONFIG.MEMORY_MANAGEMENT_THRESHOLD * 0.8);
+                return updated.slice(0, keepCount);
               }
               
-              return combined;
+              return updated;
             });
+            
+            setTotalTradesProcessed(prev => prev + 1);
           }
+          break;
           
-          if (updates.price) {
-            Object.assign(batchData, updates.price);
+        case 'candle_update':
+          if (data && data.priceHistory) {
+            setPriceHistory(data.priceHistory.slice(-MOBILE_CONFIG.MAX_PRICE_HISTORY));
           }
+          break;
           
-          if (Object.keys(batchData).length > 0) {
-            updateSimulationState(batchData, 'batch_update');
+        case 'batch_update':
+          if (data?.updates) {
+            const { updates } = data;
+            
+            const batchData: any = {};
+            
+            if (updates.trades && Array.isArray(updates.trades)) {
+              setRecentTrades(prev => {
+                const existingIds = new Set(prev.map(t => t.id));
+                const newTrades = updates.trades.filter((t: any) => !existingIds.has(t.id));
+                const combined = [...newTrades, ...prev];
+                
+                // Mobile limit
+                if (combined.length > MOBILE_CONFIG.MEMORY_MANAGEMENT_THRESHOLD) {
+                  const keepCount = Math.floor(MOBILE_CONFIG.MEMORY_MANAGEMENT_THRESHOLD * 0.8);
+                  return combined.slice(0, keepCount);
+                }
+                
+                return combined;
+              });
+            }
+            
+            if (updates.price) {
+              Object.assign(batchData, updates.price);
+            }
+            
+            if (Object.keys(batchData).length > 0) {
+              updateSimulationState(batchData, 'batch_update');
+            }
           }
-        }
-        break;
-        
-      case 'simulation_status':
-        if (data) {
-          setSimulation(prev => prev ? {
-            ...prev,
-            isRunning: data.isRunning ?? prev.isRunning,
-            isPaused: data.isPaused ?? prev.isPaused
-          } : prev);
-        }
-        break;
-        
-      case 'scenario_started':
-      case 'scenario_phase_update':
-      case 'scenario_phase_transition':
-        if (data) {
-          if (type === 'scenario_started') {
-            setCurrentScenario(data);
-          } else if (type === 'scenario_phase_update') {
-            setScenarioPhaseData(data);
+          break;
+          
+        case 'simulation_status':
+          if (data) {
+            setSimulation(prev => prev ? {
+              ...prev,
+              isRunning: data.isRunning ?? prev.isRunning,
+              isPaused: data.isPaused ?? prev.isPaused
+            } : prev);
           }
-        }
-        break;
-        
-      case 'scenario_ended':
-        setCurrentScenario(null);
-        setScenarioPhaseData(null);
-        break;
+          break;
+          
+        case 'scenario_started':
+        case 'scenario_phase_update':
+        case 'scenario_phase_transition':
+          if (data) {
+            if (type === 'scenario_started') {
+              setCurrentScenario(data);
+            } else if (type === 'scenario_phase_update') {
+              setScenarioPhaseData(data);
+            }
+          }
+          break;
+          
+        case 'scenario_ended':
+          setCurrentScenario(null);
+          setScenarioPhaseData(null);
+          break;
+      }
+      
+    } catch (error) {
+      console.error('❌ Error processing mobile WebSocket message:', error);
     }
     
-  }, [lastMessage, simulationId, simulation?.id, updateSimulationState, recentTrades.length]);
+  }, [lastMessage, simulationId, simulation?.id, updateSimulationState]);
 
+  // Market condition updates
   useEffect(() => {
     if (priceHistory.length > 0 || currentPrice > 0) {
       updateMarketCondition();
@@ -338,6 +419,7 @@ const MobileDashboard: React.FC = () => {
     };
   }, [priceHistory.length, currentPrice]);
 
+  // Cleanup
   useEffect(() => {
     return () => {
       if (updateTimeoutRef.current) {
@@ -346,6 +428,7 @@ const MobileDashboard: React.FC = () => {
     };
   }, []);
 
+  // Token symbol determination
   const determineTokenSymbol = useCallback((price: number): string => {
     if (price < 0.01) return 'MEME/USDT';
     if (price < 1) return 'SHIB/USDT';
@@ -355,17 +438,18 @@ const MobileDashboard: React.FC = () => {
     return 'BTC/USDT';
   }, []);
 
-  // Initialization - same as desktop
+  // Mobile initialization with enhanced error handling
   useEffect(() => {
     if (initializationRef.current) return;
     initializationRef.current = true;
 
-    const initSimulation = async () => {
+    const initMobileSimulation = async () => {
       setLoading(true);
       setSimulationRegistrationStatus('creating');
       
       try {
-        setInitializationStep('Creating simulation...');
+        console.log('📱 Starting mobile simulation initialization...');
+        setInitializationStep('Creating mobile simulation...');
         
         const response = await SimulationApi.createSimulation({
           initialPrice: 100,
@@ -387,64 +471,66 @@ const MobileDashboard: React.FC = () => {
           throw new Error('No simulation ID received from server');
         }
         
+        console.log('📱 Mobile simulation ID:', simId);
         setSimulationId(simId);
         
         if (response.data?.registrationStatus === 'ready' && response.data?.isReady) {
           setSimulationRegistrationStatus('ready');
         } else {
           setSimulationRegistrationStatus('pending');
-          setInitializationStep('Waiting for backend registration...');
+          setInitializationStep('Waiting for mobile registration...');
         }
         
-        setInitializationStep('Verifying simulation readiness...');
+        setInitializationStep('Verifying mobile simulation readiness...');
         
         const readyResult = await SimulationApi.waitForSimulationReady(simId, 10, 500);
         
         if (readyResult.error || !readyResult.data?.ready) {
-          const errorMsg = readyResult.error || `Simulation failed to become ready after ${readyResult.data?.attempts || 0} attempts`;
+          const errorMsg = readyResult.error || `Mobile simulation failed to become ready after ${readyResult.data?.attempts || 0} attempts`;
           throw new Error(errorMsg);
         }
         
         setSimulationRegistrationStatus('ready');
         
-        setInitializationStep('Loading simulation data...');
+        setInitializationStep('Loading mobile simulation data...');
         
         const simulationResponse = await SimulationApi.getSimulation(simId);
         
         if (simulationResponse?.error || !simulationResponse?.data) {
-          throw new Error(`Failed to load simulation data: ${simulationResponse?.error}`);
+          throw new Error(`Failed to load mobile simulation data: ${simulationResponse?.error}`);
         }
         
         const simData = simulationResponse.data?.data || simulationResponse.data;
         
         if (!simData) {
-          throw new Error('No simulation data received');
+          throw new Error('No mobile simulation data received');
         }
         
         simData.id = simId;
         setSimulation(simData);
         
-        setInitializationStep('Initializing dashboard state...');
+        setInitializationStep('Initializing mobile dashboard state...');
         updateSimulationState({
           currentPrice: simData.currentPrice || 100,
           orderBook: simData.orderBook || { bids: [], asks: [], lastUpdateTime: Date.now() },
-          priceHistory: simData.priceHistory || [],
-          recentTrades: simData.recentTrades || [],
-          activePositions: simData.activePositions || [],
+          priceHistory: (simData.priceHistory || []).slice(-MOBILE_CONFIG.MAX_PRICE_HISTORY),
+          recentTrades: (simData.recentTrades || []).slice(0, MOBILE_CONFIG.MAX_RECENT_TRADES),
+          activePositions: (simData.activePositions || []).slice(0, MOBILE_CONFIG.MAX_ACTIVE_POSITIONS),
           traderRankings: simData.traderRankings || []
-        }, 'initialization');
+        }, 'mobile_initialization');
         
         const initialPrice = simData.currentPrice || 100;
         setTokenSymbol(determineTokenSymbol(initialPrice));
         
-        setInitializationStep('Enabling WebSocket connection...');
+        setInitializationStep('Enabling mobile WebSocket connection...');
         setIsWebSocketReady(true);
         
-        setInitializationStep('Ready for trading!');
+        setInitializationStep('Mobile trading dashboard ready!');
+        console.log('✅ Mobile simulation initialization complete');
         
       } catch (error) {
-        setError('Failed to initialize simulation');
-        console.error(error);
+        console.error('❌ Mobile initialization error:', error);
+        setError(`Mobile initialization failed: ${error}`);
         setSimulationRegistrationStatus('error');
         initializationRef.current = false;
       } finally {
@@ -452,7 +538,7 @@ const MobileDashboard: React.FC = () => {
       }
     };
     
-    initSimulation();
+    initMobileSimulation();
   }, []);
 
   // Timer for elapsed time
@@ -484,6 +570,7 @@ const MobileDashboard: React.FC = () => {
     };
   }, [simulation?.isRunning, simulation?.isPaused, simulationStartTime]);
 
+  // Convert price history for mobile chart
   const convertPriceHistory = useCallback((history: SimulationPricePoint[]): ChartPricePoint[] => {
     if (!history || history.length === 0) return [];
     
@@ -509,24 +596,18 @@ const MobileDashboard: React.FC = () => {
     return count.toString();
   }, []);
 
+  // Control handlers
   const handleStartSimulation = useCallback(async () => {
-    if (!simulationId) {
-      return;
-    }
-    
-    if (!isConnected) {
-      return;
-    }
-    
-    if (simulationRegistrationStatus !== 'ready') {
-      return;
-    }
+    if (!simulationId) return;
+    if (!isConnected) return;
+    if (simulationRegistrationStatus !== 'ready') return;
     
     try {
+      console.log('📱 Starting mobile simulation...');
       const response = await SimulationApi.startSimulation(simulationId);
       
       if (response.error) {
-        console.error('Failed to start simulation:', response.error);
+        console.error('❌ Failed to start mobile simulation:', response.error);
         return;
       }
       
@@ -538,7 +619,7 @@ const MobileDashboard: React.FC = () => {
       }
       
     } catch (error) {
-      console.error('Failed to start simulation:', error);
+      console.error('❌ Failed to start mobile simulation:', error);
     }
   }, [simulationId, simulationStartTime, setPauseState, isConnected, simulationRegistrationStatus]);
 
@@ -546,11 +627,12 @@ const MobileDashboard: React.FC = () => {
     if (!simulationId) return;
     
     try {
+      console.log('📱 Pausing mobile simulation...');
       await SimulationApi.pauseSimulation(simulationId);
       setSimulation(prev => prev ? { ...prev, isPaused: true } : prev);
       setPauseState(true);
     } catch (error) {
-      console.error('Failed to pause simulation:', error);
+      console.error('❌ Failed to pause mobile simulation:', error);
     }
   }, [simulationId, setPauseState]);
 
@@ -558,11 +640,14 @@ const MobileDashboard: React.FC = () => {
     if (!simulationId) return;
     
     try {
+      console.log('📱 Resetting mobile simulation...');
+      
       if (simulation?.isRunning) {
         await SimulationApi.pauseSimulation(simulationId);
         await new Promise(resolve => setTimeout(resolve, 300));
       }
       
+      // Clear mobile state
       setRecentTrades([]);
       setOrderBook({ bids: [], asks: [], lastUpdateTime: Date.now() });
       setPriceHistory([]);
@@ -594,7 +679,7 @@ const MobileDashboard: React.FC = () => {
       const resetResponse = await SimulationApi.resetSimulation(simulationId);
       
       if (resetResponse.error) {
-        console.error('Failed to reset backend simulation:', resetResponse.error);
+        console.error('❌ Failed to reset mobile backend simulation:', resetResponse.error);
       }
       
       await new Promise(resolve => setTimeout(resolve, 500));
@@ -624,12 +709,12 @@ const MobileDashboard: React.FC = () => {
           recentTrades: [],
           activePositions: [],
           traderRankings: freshSimData.traderRankings || []
-        }, 'reset');
+        }, 'mobile_reset');
         
         setTokenSymbol(determineTokenSymbol(resetPrice));
         
       } else {
-        console.error('Failed to fetch fresh simulation state');
+        console.error('❌ Failed to fetch fresh mobile simulation state');
         
         updateSimulationState({
           currentPrice: 100,
@@ -638,7 +723,7 @@ const MobileDashboard: React.FC = () => {
           recentTrades: [],
           activePositions: [],
           traderRankings: []
-        }, 'emergency_reset');
+        }, 'mobile_emergency_reset');
         
         setSimulation(prev => prev ? {
           ...prev,
@@ -651,9 +736,12 @@ const MobileDashboard: React.FC = () => {
         } : prev);
       }
       
-    } catch (error) {
-      console.error('Error during comprehensive reset:', error);
+      console.log('✅ Mobile simulation reset complete');
       
+    } catch (error) {
+      console.error('❌ Error during mobile reset:', error);
+      
+      // Emergency mobile reset
       setRecentTrades([]);
       setPriceHistory([]);
       setActivePositions([]);
@@ -687,51 +775,63 @@ const MobileDashboard: React.FC = () => {
     
     if (simulationId) {
       try {
+        console.log(`📱 Changing mobile speed to ${speedOption} (${speedValue}x)`);
         await SimulationApi.setSimulationSpeed(simulationId, speedValue);
       } catch (error) {
-        console.error(`Failed to update simulation speed:`, error);
+        console.error(`❌ Failed to update mobile simulation speed:`, error);
       }
     }
   }, [simulationId]);
 
+  // Loading state
   if (loading) {
     return (
       <div className="flex justify-center items-center h-screen bg-[#0B1426]">
         <div className="text-white text-center">
-          <div className="animate-spin h-12 w-12 mx-auto mb-4 border-4 border-blue-500 border-t-transparent rounded-full"></div>
-          <span className="text-xl">Initializing trading simulation...</span>
+          <div className="animate-spin h-12 w-12 mx-auto mb-4 border-4 border-green-500 border-t-transparent rounded-full"></div>
+          <span className="text-xl">Loading Mobile Trading...</span>
           <div className="mt-4 text-sm text-gray-400">
             {initializationStep}
           </div>
           <div className="mt-2 text-xs text-gray-500">
             Status: {simulationRegistrationStatus}
           </div>
-          <div className="mt-4 text-sm text-blue-400">
-            ✅ Ultra-fast mode activated
+          <div className="mt-4 text-sm text-green-400">
+            📱 Full mobile interface with TradingView charts
           </div>
-          <div className="mt-2 text-sm text-green-400">
-            ✅ Mobile optimized
+          <div className="mt-2 text-sm text-blue-400">
+            🚀 Mobile-optimized memory management
+          </div>
+          <div className="mt-2 text-sm text-purple-400">
+            ⚡ 118 traders • Professional layout
           </div>
         </div>
       </div>
     );
   }
   
+  // Error state
   if (error) {
     return (
       <div className="flex justify-center items-center h-screen bg-[#0B1426]">
-        <div className="text-red-400 p-6 bg-gray-800 rounded-lg shadow-lg text-center">
-          <h2 className="text-xl font-bold mb-2">Simulation Error</h2>
-          <p>{error}</p>
-          <p className="mt-2 text-sm text-gray-400">
-            Registration Status: {simulationRegistrationStatus}
-          </p>
+        <div className="text-red-400 p-6 bg-gray-800 rounded-lg shadow-lg text-center max-w-sm mx-4">
+          <h2 className="text-xl font-bold mb-2">Mobile Error</h2>
+          <p className="text-sm">{error}</p>
+          <div className="mt-4 text-xs text-gray-400">
+            Registration: {simulationRegistrationStatus}
+          </div>
+          <div className="mt-2 text-xs text-gray-500">
+            Connection: {isConnected ? '✅ Connected' : '❌ Disconnected'}
+          </div>
           <button 
             onClick={() => window.location.reload()} 
-            className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded transition"
+            className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded transition w-full"
           >
-            Reload
+            Reload Mobile App
           </button>
+          <div className="mt-2 text-xs text-gray-500">
+            If issues persist, try desktop mode
+          </div>
         </div>
       </div>
     );
@@ -740,11 +840,19 @@ const MobileDashboard: React.FC = () => {
   if (!simulation) {
     return (
       <div className="flex justify-center items-center h-screen bg-[#0B1426]">
-        <div className="text-white p-6 bg-gray-800 rounded-lg shadow-lg text-center">
-          <p>No simulation data available</p>
+        <div className="text-white p-6 bg-gray-800 rounded-lg shadow-lg text-center max-w-sm mx-4">
+          <p>No mobile simulation data available</p>
           <p className="mt-2 text-sm text-gray-400">
             Registration Status: {simulationRegistrationStatus}
           </p>
+          <div className="mt-4">
+            <button 
+              onClick={() => window.location.reload()} 
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded transition"
+            >
+              Retry
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -758,78 +866,119 @@ const MobileDashboard: React.FC = () => {
     switch (activeTab) {
       case 'participants':
         return (
-          <MobileParticipants 
-            traders={traderRankings} 
-            activePositions={activePositions}
-            currentPrice={currentPrice}
-            scenarioModifiers={currentScenario?.traderModifiers}
-          />
+          <MobileErrorBoundary>
+            <MobileParticipants 
+              traders={traderRankings} 
+              activePositions={activePositions}
+              currentPrice={currentPrice}
+              scenarioModifiers={currentScenario?.traderModifiers}
+            />
+          </MobileErrorBoundary>
         );
       case 'orderbook':
-        return <MobileOrderBook orderBook={orderBook} />;
+        return (
+          <MobileErrorBoundary>
+            <MobileOrderBook orderBook={orderBook} />
+          </MobileErrorBoundary>
+        );
       case 'trades':
-        return <MobileRecentTrades trades={recentTrades} />;
+        return (
+          <MobileErrorBoundary>
+            <MobileRecentTrades trades={recentTrades} />
+          </MobileErrorBoundary>
+        );
       default:
         return null;
     }
   };
 
   return (
-    <div className="h-screen w-full bg-[#0B1426] text-white flex flex-col overflow-hidden">
-      {/* Header - Price + Controls (Fixed at top) */}
-      <MobileHeader 
-        tokenSymbol={tokenSymbol}
-        currentPrice={currentPrice}
-        elapsedTime={elapsedTime}
-        marketCondition={marketCondition}
-        isConnected={isConnected}
-        connectionError={connectionError}
-        simulationRegistrationStatus={simulationRegistrationStatus}
-        priceHistoryLength={priceHistory.length}
-        tradesCount={recentTrades.length}
-        wsMessageCount={wsMessageCount}
-        simulation={simulation}
-        canStartSimulation={canStartSimulation}
-        onStart={handleStartSimulation}
-        onPause={handlePauseSimulation}
-        onReset={handleResetSimulation}
-        simulationSpeed={simulationSpeed}
-        onSpeedChange={handleSpeedChange}
-        speedMap={speedMap}
-        currentScenario={currentScenario}
-        formatTradeCount={formatTradeCount}
-      />
-      
-      {/* Chart Area (Responsive height) */}
-      <div className="flex-1 min-h-0 px-2 pb-2">
-        <MobileChart 
-          priceHistory={chartPriceHistory} 
-          currentPrice={currentPrice} 
-          trades={recentTrades}
-          scenarioData={scenarioPhaseData}
-          symbol={tokenSymbol}
-          dynamicView={true}
-        />
-      </div>
-      
-      {/* Tab Navigation (Always visible) */}
-      <MobileTabs 
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        isExpanded={isTabContentExpanded}
-        onToggleExpanded={() => setIsTabContentExpanded(!isTabContentExpanded)}
-        tradersCount={traderRankings.length}
-        tradesCount={recentTrades.length}
-        orderBookSize={orderBook.bids.length + orderBook.asks.length}
-      />
-      
-      {/* Tab Content (Expandable) */}
-      {isTabContentExpanded && (
-        <div className="bg-gray-800 border-t border-gray-700 max-h-[40vh] overflow-hidden">
-          {renderTabContent()}
+    <MobileErrorBoundary>
+      <div className="h-screen w-full bg-[#0B1426] text-white flex flex-col overflow-hidden">
+        {/* Header - Price + Controls (Fixed at top) */}
+        <MobileErrorBoundary>
+          <MobileHeader 
+            tokenSymbol={tokenSymbol}
+            currentPrice={currentPrice}
+            elapsedTime={elapsedTime}
+            marketCondition={marketCondition}
+            isConnected={isConnected}
+            connectionError={connectionError}
+            simulationRegistrationStatus={simulationRegistrationStatus}
+            priceHistoryLength={priceHistory.length}
+            tradesCount={recentTrades.length}
+            wsMessageCount={wsMessageCount}
+            simulation={simulation}
+            canStartSimulation={canStartSimulation}
+            onStart={handleStartSimulation}
+            onPause={handlePauseSimulation}
+            onReset={handleResetSimulation}
+            simulationSpeed={simulationSpeed}
+            onSpeedChange={handleSpeedChange}
+            speedMap={speedMap}
+            currentScenario={currentScenario}
+            formatTradeCount={formatTradeCount}
+          />
+        </MobileErrorBoundary>
+        
+        {/* Chart Area (Responsive height) */}
+        <div className="flex-1 min-h-0 px-2 pb-2">
+          <MobileErrorBoundary 
+            fallback={
+              <div className="h-full bg-gray-800 rounded-lg flex items-center justify-center">
+                <div className="text-center text-gray-400">
+                  <div className="text-4xl mb-2">📈</div>
+                  <p>Chart temporarily unavailable</p>
+                  <p className="text-xs mt-1">Price: ${currentPrice.toFixed(2)}</p>
+                  <button 
+                    onClick={() => window.location.reload()}
+                    className="mt-2 px-3 py-1 bg-blue-600 rounded text-sm"
+                  >
+                    Reload
+                  </button>
+                </div>
+              </div>
+            }
+          >
+            <MobileChart 
+              priceHistory={chartPriceHistory} 
+              currentPrice={currentPrice} 
+              trades={recentTrades}
+              scenarioData={scenarioPhaseData}
+              symbol={tokenSymbol}
+              dynamicView={true}
+            />
+          </MobileErrorBoundary>
         </div>
-      )}
-    </div>
+        
+        {/* Tab Navigation (Always visible) */}
+        <MobileErrorBoundary>
+          <MobileTabs 
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            isExpanded={isTabContentExpanded}
+            onToggleExpanded={() => setIsTabContentExpanded(!isTabContentExpanded)}
+            tradersCount={traderRankings.length}
+            tradesCount={recentTrades.length}
+            orderBookSize={orderBook.bids.length + orderBook.asks.length}
+          />
+        </MobileErrorBoundary>
+        
+        {/* Tab Content (Expandable) */}
+        {isTabContentExpanded && (
+          <div className="bg-gray-800 border-t border-gray-700 max-h-[40vh] overflow-hidden">
+            {renderTabContent()}
+          </div>
+        )}
+
+        {/* Debug info in dev */}
+        {process.env.NODE_ENV === 'development' && (
+          <div className="fixed bottom-4 right-4 bg-black bg-opacity-75 text-white text-xs p-2 rounded z-50">
+            📱 Mobile • {recentTrades.length} trades • {priceHistory.length} candles
+          </div>
+        )}
+      </div>
+    </MobileErrorBoundary>
   );
 };
 
