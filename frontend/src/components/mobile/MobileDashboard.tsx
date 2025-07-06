@@ -1,4 +1,4 @@
-// frontend/src/components/mobile/MobileDashboard.tsx - COMPLETE FULL VERSION
+// frontend/src/components/mobile/MobileDashboard.tsx - ISSUE 4 FIX: Full Page Extension
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../../services/api';
 import { useWebSocket } from '../../services/websocket';
@@ -68,6 +68,26 @@ class MobileErrorBoundary extends React.Component<
   }
 }
 
+// ISSUE 4 FIX: Back to Top Button Component
+const BackToTopButton: React.FC<{ isVisible: boolean; onClick: () => void }> = ({ isVisible, onClick }) => {
+  if (!isVisible) return null;
+
+  return (
+    <button
+      onClick={onClick}
+      className="fixed bottom-6 right-6 z-50 w-12 h-12 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg transition-all duration-300 flex items-center justify-center"
+      style={{
+        transform: isVisible ? 'translateY(0)' : 'translateY(100px)',
+        opacity: isVisible ? 1 : 0
+      }}
+    >
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M7 14l5-5 5 5"/>
+      </svg>
+    </button>
+  );
+};
+
 const MobileDashboard: React.FC = () => {
   // Core state
   const [simulationId, setSimulationId] = useState<string | null>(null);
@@ -101,9 +121,11 @@ const MobileDashboard: React.FC = () => {
   const [simulationRegistrationStatus, setSimulationRegistrationStatus] = useState<'creating' | 'pending' | 'ready' | 'error'>('creating');
   const [initializationStep, setInitializationStep] = useState<string>('Starting...');
   
-  // Mobile-specific state
+  // ISSUE 4 FIX: Mobile-specific state for full page extension
   const [activeTab, setActiveTab] = useState<'participants' | 'orderbook' | 'trades'>('participants');
-  const [isTabContentExpanded, setIsTabContentExpanded] = useState<boolean>(true);
+  const [isTabContentExpanded, setIsTabContentExpanded] = useState<boolean>(false);
+  const [showBackToTop, setShowBackToTop] = useState<boolean>(false);
+  const [scrollPosition, setScrollPosition] = useState<number>(0);
   
   // Refs
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -111,16 +133,21 @@ const MobileDashboard: React.FC = () => {
   const lastMessageProcessedRef = useRef<string>('');
   const marketConditionUpdateRef = useRef<number>(0);
   const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // ISSUE 4 FIX: Scroll position tracking ref
+  const dashboardRef = useRef<HTMLDivElement>(null);
   
   // Mobile-optimized configuration
   const MOBILE_CONFIG = {
-    MAX_PRICE_HISTORY: 500,        // Reduced for mobile
-    MAX_ACTIVE_POSITIONS: 250,     // Reduced for mobile
-    MAX_TRADER_RANKINGS: 118,      // Keep all traders
-    MAX_RECENT_TRADES: 100,        // Reduced for mobile
-    MEMORY_MANAGEMENT_THRESHOLD: 1000,  // Much lower for mobile
-    PERFORMANCE_MODE_THRESHOLD: 500,    // Lower threshold
-    UPDATE_THROTTLE: 100,          // Slower updates for mobile
+    MAX_PRICE_HISTORY: 500,
+    MAX_ACTIVE_POSITIONS: 250,
+    MAX_TRADER_RANKINGS: 118,
+    MAX_RECENT_TRADES: 100,
+    MEMORY_MANAGEMENT_THRESHOLD: 1000,
+    PERFORMANCE_MODE_THRESHOLD: 500,
+    UPDATE_THROTTLE: 100,
+    BACK_TO_TOP_THRESHOLD: 300, // Show back to top after scrolling 300px
   };
 
   const speedMap = {
@@ -137,6 +164,38 @@ const MobileDashboard: React.FC = () => {
     isWebSocketReady && simulationRegistrationStatus === 'ready' ? simulationId || undefined : undefined,
     simulation?.isPaused
   );
+
+  // ISSUE 4 FIX: Scroll tracking for back to top button
+  useEffect(() => {
+    const handleScroll = () => {
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+      
+      scrollTimeoutRef.current = setTimeout(() => {
+        const currentScrollY = window.scrollY;
+        setScrollPosition(currentScrollY);
+        setShowBackToTop(currentScrollY > MOBILE_CONFIG.BACK_TO_TOP_THRESHOLD);
+      }, 50);
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // ISSUE 4 FIX: Back to top functionality
+  const scrollToTop = useCallback(() => {
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth'
+    });
+  }, []);
 
   // Market condition determination
   const determineMarketCondition = useCallback((): 'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash' => {
@@ -663,6 +722,12 @@ const MobileDashboard: React.FC = () => {
       setCurrentScenario(null);
       setScenarioPhaseData(null);
       
+      // ISSUE 4 FIX: Reset mobile-specific state
+      setIsTabContentExpanded(false);
+      setScrollPosition(0);
+      setShowBackToTop(false);
+      scrollToTop();
+      
       lastMessageProcessedRef.current = '';
       marketConditionUpdateRef.current = 0;
       
@@ -767,7 +832,7 @@ const MobileDashboard: React.FC = () => {
         } : prev);
       }
     }
-  }, [simulationId, simulation, determineTokenSymbol, updateSimulationState]);
+  }, [simulationId, simulation, determineTokenSymbol, updateSimulationState, scrollToTop]);
 
   const handleSpeedChange = useCallback(async (speedOption: keyof typeof speedMap) => {
     const speedValue = speedMap[speedOption];
@@ -782,6 +847,15 @@ const MobileDashboard: React.FC = () => {
       }
     }
   }, [simulationId]);
+
+  // ISSUE 4 FIX: Tab change handler with expansion control
+  const handleTabChange = useCallback((tab: 'participants' | 'orderbook' | 'trades') => {
+    setActiveTab(tab);
+    // Auto-expand when switching tabs to show content
+    if (!isTabContentExpanded) {
+      setIsTabContentExpanded(true);
+    }
+  }, [isTabContentExpanded]);
 
   // Loading state
   if (loading) {
@@ -804,6 +878,9 @@ const MobileDashboard: React.FC = () => {
           </div>
           <div className="mt-2 text-sm text-purple-400">
             ⚡ 118 traders • Professional layout
+          </div>
+          <div className="mt-2 text-sm text-cyan-400">
+            📜 Full page scroll enabled
           </div>
         </div>
       </div>
@@ -894,8 +971,12 @@ const MobileDashboard: React.FC = () => {
 
   return (
     <MobileErrorBoundary>
-      <div className="h-screen w-full bg-[#0B1426] text-white flex flex-col overflow-hidden">
-        {/* Header - Price + Controls (Fixed at top) */}
+      {/* ISSUE 4 FIX: Full page container with natural scroll */}
+      <div 
+        ref={dashboardRef}
+        className="min-h-screen w-full bg-[#0B1426] text-white"
+      >
+        {/* Header - Price + Controls (Fixed at top, scrolls naturally) */}
         <MobileErrorBoundary>
           <MobileHeader 
             tokenSymbol={tokenSymbol}
@@ -921,11 +1002,11 @@ const MobileDashboard: React.FC = () => {
           />
         </MobileErrorBoundary>
         
-        {/* Chart Area (Responsive height) */}
-        <div className="flex-1 min-h-0 px-2 pb-2">
+        {/* Chart Area (Fixed size, scrolls naturally) */}
+        <div className="px-2 pb-2">
           <MobileErrorBoundary 
             fallback={
-              <div className="h-full bg-gray-800 rounded-lg flex items-center justify-center">
+              <div className="h-64 bg-gray-800 rounded-lg flex items-center justify-center">
                 <div className="text-center text-gray-400">
                   <div className="text-4xl mb-2">📈</div>
                   <p>Chart temporarily unavailable</p>
@@ -947,15 +1028,16 @@ const MobileDashboard: React.FC = () => {
               scenarioData={scenarioPhaseData}
               symbol={tokenSymbol}
               dynamicView={true}
+              isTabContentExpanded={isTabContentExpanded}
             />
           </MobileErrorBoundary>
         </div>
         
-        {/* Tab Navigation (Always visible) */}
+        {/* Tab Navigation (Always visible, scrolls naturally) */}
         <MobileErrorBoundary>
           <MobileTabs 
             activeTab={activeTab}
-            onTabChange={setActiveTab}
+            onTabChange={handleTabChange}
             isExpanded={isTabContentExpanded}
             onToggleExpanded={() => setIsTabContentExpanded(!isTabContentExpanded)}
             tradersCount={traderRankings.length}
@@ -964,17 +1046,33 @@ const MobileDashboard: React.FC = () => {
           />
         </MobileErrorBoundary>
         
-        {/* Tab Content (Expandable) */}
+        {/* ISSUE 4 FIX: Tab Content (Full page extension when expanded) */}
         {isTabContentExpanded && (
-          <div className="bg-gray-800 border-t border-gray-700 max-h-[40vh] overflow-hidden">
+          <div 
+            className="bg-gray-800 border-t border-gray-700"
+            style={{
+              // ISSUE 4 FIX: Auto height allows natural page extension
+              minHeight: '100vh',
+              paddingBottom: '2rem'
+            }}
+          >
             {renderTabContent()}
           </div>
         )}
 
+        {/* ISSUE 4 FIX: Back to Top Button */}
+        <BackToTopButton 
+          isVisible={showBackToTop}
+          onClick={scrollToTop}
+        />
+
         {/* Debug info in dev */}
         {process.env.NODE_ENV === 'development' && (
-          <div className="fixed bottom-4 right-4 bg-black bg-opacity-75 text-white text-xs p-2 rounded z-50">
-            📱 Mobile • {recentTrades.length} trades • {priceHistory.length} candles
+          <div className="fixed bottom-20 left-4 bg-black bg-opacity-75 text-white text-xs p-2 rounded z-40">
+            <div>📱 Mobile • Scroll: {scrollPosition}px</div>
+            <div>{recentTrades.length} trades • {priceHistory.length} candles</div>
+            <div>Tab: {activeTab} • Expanded: {isTabContentExpanded ? 'Yes' : 'No'}</div>
+            <div>Back to top: {showBackToTop ? 'Visible' : 'Hidden'}</div>
           </div>
         )}
       </div>
