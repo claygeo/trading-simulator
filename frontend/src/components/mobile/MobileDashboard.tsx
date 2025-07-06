@@ -783,7 +783,7 @@ const MobileDashboard: React.FC = () => {
         elapsedTime={elapsedTime}
         marketCondition={marketCondition}
         isConnected={isConnected}
-        connectionError={connectionError}  {/* Fixed: Pass connectionError directly */}
+        connectionError={connectionError}
         simulationRegistrationStatus={simulationRegistrationStatus}
         priceHistoryLength={priceHistory.length}
         tradesCount={recentTrades.length}
