@@ -1,5 +1,5 @@
 // frontend/src/components/mobile/DebugMobileDashboard.tsx
-// COMPLETE FIXED VERSION - ALL TYPESCRIPT ERRORS RESOLVED
+// FINAL FIXED VERSION - ALL TYPESCRIPT ISSUES RESOLVED
 import React, { useState, useEffect } from 'react';
 
 const DebugMobileDashboard: React.FC = () => {
@@ -125,20 +125,23 @@ const DebugMobileDashboard: React.FC = () => {
     setApiStatus('testing');
     addDebug("🌐 Testing API connection...");
     
-    const apiUrls = [
+    // Build API URLs array with proper type checking
+    const potentialApiUrls = [
       'http://localhost:3001/api/health',
       'http://localhost:3001/health',
       'http://localhost:3001',
-      process.env.REACT_APP_API_BASE_URL + '/health',
-      process.env.REACT_APP_BACKEND_URL + '/api/health',
-      process.env.REACT_APP_BACKEND_URL + '/health'
-    ].filter(Boolean);
+      process.env.REACT_APP_API_BASE_URL ? process.env.REACT_APP_API_BASE_URL + '/health' : null,
+      process.env.REACT_APP_BACKEND_URL ? process.env.REACT_APP_BACKEND_URL + '/api/health' : null,
+      process.env.REACT_APP_BACKEND_URL ? process.env.REACT_APP_BACKEND_URL + '/health' : null
+    ];
+
+    // Filter out null/undefined values and ensure we have strings
+    const apiUrls: string[] = potentialApiUrls.filter((url): url is string => typeof url === 'string' && url.length > 0);
 
     for (const url of apiUrls) {
       try {
         addDebug(`🔍 Trying API: ${url}`);
         
-        // Fixed: Using fetchWithTimeout instead of timeout option
         const response = await fetchWithTimeout(url, {
           method: 'GET',
           headers: {
@@ -173,14 +176,18 @@ const DebugMobileDashboard: React.FC = () => {
     setWsStatus('testing');
     addDebug("🔌 Testing WebSocket connection...");
     
-    // Your actual WebSocket URLs from .env
-    const wsUrls = [
-      'ws://localhost:3001',                                    // Your main WebSocket URL
-      process.env.REACT_APP_BACKEND_WS_URL,                   // From .env
-      `ws://${process.env.REACT_APP_WS_HOST}:${process.env.REACT_APP_WS_PORT}`, // Constructed from .env
-      'ws://localhost:3000',                                   // Alternative port
-      'ws://localhost:8080'                                    // Alternative port
-    ].filter(Boolean);
+    // Build WebSocket URLs array with proper type checking
+    const potentialWsUrls = [
+      'ws://localhost:3001',
+      process.env.REACT_APP_BACKEND_WS_URL,
+      process.env.REACT_APP_WS_HOST && process.env.REACT_APP_WS_PORT ? 
+        `ws://${process.env.REACT_APP_WS_HOST}:${process.env.REACT_APP_WS_PORT}` : null,
+      'ws://localhost:3000',
+      'ws://localhost:8080'
+    ];
+
+    // Filter out null/undefined values and ensure we have strings
+    const wsUrls: string[] = potentialWsUrls.filter((url): url is string => typeof url === 'string' && url.length > 0);
 
     addDebug(`🔌 Testing ${wsUrls.length} WebSocket URLs...`);
 
@@ -467,8 +474,8 @@ const DebugMobileDashboard: React.FC = () => {
 
         {/* Footer */}
         <div className="mt-4 text-center text-xs text-gray-500">
-          <p>📱 Mobile Trading Simulator Debug Tool v3.0</p>
-          <p>All TypeScript errors fixed • Netlify compatible • Error handling improved</p>
+          <p>📱 Mobile Trading Simulator Debug Tool v4.0</p>
+          <p>Final TypeScript fixes applied • Strict type checking • Netlify ready</p>
           <p>Check browser console (F12) for additional error details</p>
         </div>
       </div>
