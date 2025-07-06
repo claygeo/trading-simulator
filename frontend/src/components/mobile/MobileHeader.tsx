@@ -1,4 +1,4 @@
-// frontend/src/components/mobile/MobileHeader.tsx
+// frontend/src/components/mobile/MobileHeader.tsx - Fixed TypeScript Version
 import React, { useState } from 'react';
 
 interface MobileHeaderProps {
@@ -7,7 +7,7 @@ interface MobileHeaderProps {
   elapsedTime: string;
   marketCondition: 'bullish' | 'bearish' | 'volatile' | 'calm' | 'building' | 'crash';
   isConnected: boolean;
-  connectionError?: string;
+  connectionError?: string | null; // Fixed: Accept both null and undefined
   simulationRegistrationStatus: 'creating' | 'pending' | 'ready' | 'error';
   priceHistoryLength: number;
   tradesCount: number;

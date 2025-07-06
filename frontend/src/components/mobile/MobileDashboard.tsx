@@ -1,4 +1,4 @@
-// frontend/src/components/mobile/MobileDashboard.tsx
+// frontend/src/components/mobile/MobileDashboard.tsx - Fixed TypeScript Version
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../../services/api';
 import { useWebSocket } from '../../services/websocket';
@@ -783,7 +783,7 @@ const MobileDashboard: React.FC = () => {
         elapsedTime={elapsedTime}
         marketCondition={marketCondition}
         isConnected={isConnected}
-        connectionError={connectionError}
+        connectionError={connectionError}  {/* Fixed: Pass connectionError directly */}
         simulationRegistrationStatus={simulationRegistrationStatus}
         priceHistoryLength={priceHistory.length}
         tradesCount={recentTrades.length}
