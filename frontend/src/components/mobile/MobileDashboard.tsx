@@ -1,4 +1,4 @@
-// frontend/src/components/mobile/MobileDashboard.tsx - COMPLETE IMPLEMENTATION
+// frontend/src/components/mobile/MobileDashboard.tsx - PRODUCTION READY VERSION
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../../services/api';
 import { useWebSocket } from '../../services/websocket';
@@ -37,7 +37,9 @@ class MobileErrorBoundary extends React.Component<
   }
 
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('🚨 Mobile Dashboard Error:', error, errorInfo);
+    if (process.env.NODE_ENV === 'development') {
+      console.error('🚨 Mobile Dashboard Error:', error, errorInfo);
+    }
   }
 
   render() {
@@ -233,7 +235,9 @@ const MobileDashboard: React.FC = () => {
     const tradeCount = recentTrades.length;
     
     if (tradeCount > MOBILE_CONFIG.MEMORY_MANAGEMENT_THRESHOLD) {
-      console.log('🧠 Mobile memory management triggered:', tradeCount);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('🧠 Mobile memory management triggered:', tradeCount);
+      }
       
       const keepTradeCount = Math.floor(MOBILE_CONFIG.MEMORY_MANAGEMENT_THRESHOLD * 0.5);
       setRecentTrades(prev => prev.slice(0, keepTradeCount));
@@ -297,7 +301,9 @@ const MobileDashboard: React.FC = () => {
       setTimeout(manageMobileMemory, 200);
       
     } catch (error) {
-      console.error('❌ Error updating mobile simulation state:', error);
+      if (process.env.NODE_ENV === 'development') {
+        console.error('❌ Error updating mobile simulation state:', error);
+      }
     }
   }, [simulation, manageMobileMemory]);
 
@@ -453,7 +459,9 @@ const MobileDashboard: React.FC = () => {
       }
       
     } catch (error) {
-      console.error('❌ Error processing mobile WebSocket message:', error);
+      if (process.env.NODE_ENV === 'development') {
+        console.error('❌ Error processing mobile WebSocket message:', error);
+      }
     }
     
   }, [lastMessage, simulationId, simulation?.id, updateSimulationState]);
@@ -501,7 +509,9 @@ const MobileDashboard: React.FC = () => {
       setSimulationRegistrationStatus('creating');
       
       try {
-        console.log('📱 Starting mobile simulation initialization...');
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📱 Starting mobile simulation initialization...');
+        }
         setInitializationStep('Creating mobile simulation...');
         
         const response = await SimulationApi.createSimulation({
@@ -524,7 +534,9 @@ const MobileDashboard: React.FC = () => {
           throw new Error('No simulation ID received from server');
         }
         
-        console.log('📱 Mobile simulation ID:', simId);
+        if (process.env.NODE_ENV === 'development') {
+          console.log('📱 Mobile simulation ID:', simId);
+        }
         setSimulationId(simId);
         
         if (response.data?.registrationStatus === 'ready' && response.data?.isReady) {
@@ -579,10 +591,14 @@ const MobileDashboard: React.FC = () => {
         setIsWebSocketReady(true);
         
         setInitializationStep('Mobile trading dashboard ready!');
-        console.log('✅ Mobile simulation initialization complete');
+        if (process.env.NODE_ENV === 'development') {
+          console.log('✅ Mobile simulation initialization complete');
+        }
         
       } catch (error) {
-        console.error('❌ Mobile initialization error:', error);
+        if (process.env.NODE_ENV === 'development') {
+          console.error('❌ Mobile initialization error:', error);
+        }
         setError(`Mobile initialization failed: ${error}`);
         setSimulationRegistrationStatus('error');
         initializationRef.current = false;
@@ -656,11 +672,15 @@ const MobileDashboard: React.FC = () => {
     if (simulationRegistrationStatus !== 'ready') return;
     
     try {
-      console.log('📱 Starting mobile simulation...');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('📱 Starting mobile simulation...');
+      }
       const response = await SimulationApi.startSimulation(simulationId);
       
       if (response.error) {
-        console.error('❌ Failed to start mobile simulation:', response.error);
+        if (process.env.NODE_ENV === 'development') {
+          console.error('❌ Failed to start mobile simulation:', response.error);
+        }
         return;
       }
       
@@ -672,7 +692,9 @@ const MobileDashboard: React.FC = () => {
       }
       
     } catch (error) {
-      console.error('❌ Failed to start mobile simulation:', error);
+      if (process.env.NODE_ENV === 'development') {
+        console.error('❌ Failed to start mobile simulation:', error);
+      }
     }
   }, [simulationId, simulationStartTime, setPauseState, isConnected, simulationRegistrationStatus]);
 
@@ -680,12 +702,16 @@ const MobileDashboard: React.FC = () => {
     if (!simulationId) return;
     
     try {
-      console.log('📱 Pausing mobile simulation...');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('📱 Pausing mobile simulation...');
+      }
       await SimulationApi.pauseSimulation(simulationId);
       setSimulation(prev => prev ? { ...prev, isPaused: true } : prev);
       setPauseState(true);
     } catch (error) {
-      console.error('❌ Failed to pause mobile simulation:', error);
+      if (process.env.NODE_ENV === 'development') {
+        console.error('❌ Failed to pause mobile simulation:', error);
+      }
     }
   }, [simulationId, setPauseState]);
 
@@ -693,7 +719,9 @@ const MobileDashboard: React.FC = () => {
     if (!simulationId) return;
     
     try {
-      console.log('📱 Resetting mobile simulation...');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('📱 Resetting mobile simulation...');
+      }
       
       if (simulation?.isRunning) {
         await SimulationApi.pauseSimulation(simulationId);
@@ -737,7 +765,7 @@ const MobileDashboard: React.FC = () => {
       
       const resetResponse = await SimulationApi.resetSimulation(simulationId);
       
-      if (resetResponse.error) {
+      if (resetResponse.error && process.env.NODE_ENV === 'development') {
         console.error('❌ Failed to reset mobile backend simulation:', resetResponse.error);
       }
       
@@ -773,7 +801,9 @@ const MobileDashboard: React.FC = () => {
         setTokenSymbol(determineTokenSymbol(resetPrice));
         
       } else {
-        console.error('❌ Failed to fetch fresh mobile simulation state');
+        if (process.env.NODE_ENV === 'development') {
+          console.error('❌ Failed to fetch fresh mobile simulation state');
+        }
         
         updateSimulationState({
           currentPrice: 100,
@@ -795,10 +825,14 @@ const MobileDashboard: React.FC = () => {
         } : prev);
       }
       
-      console.log('✅ Mobile simulation reset complete');
+      if (process.env.NODE_ENV === 'development') {
+        console.log('✅ Mobile simulation reset complete');
+      }
       
     } catch (error) {
-      console.error('❌ Error during mobile reset:', error);
+      if (process.env.NODE_ENV === 'development') {
+        console.error('❌ Error during mobile reset:', error);
+      }
       
       // Emergency mobile reset
       setRecentTrades([]);
@@ -834,10 +868,14 @@ const MobileDashboard: React.FC = () => {
     
     if (simulationId) {
       try {
-        console.log(`📱 Changing mobile speed to ${speedOption} (${speedValue}x)`);
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`📱 Changing mobile speed to ${speedOption} (${speedValue}x)`);
+        }
         await SimulationApi.setSimulationSpeed(simulationId, speedValue);
       } catch (error) {
-        console.error(`❌ Failed to update mobile simulation speed:`, error);
+        if (process.env.NODE_ENV === 'development') {
+          console.error(`❌ Failed to update mobile simulation speed:`, error);
+        }
       }
     }
   }, [simulationId]);
@@ -851,13 +889,19 @@ const MobileDashboard: React.FC = () => {
     }
   }, [isTabContentExpanded]);
 
-  // FIXED: Simplified loading state without extra text
+  // Loading state
   if (loading) {
     return (
       <div className="flex justify-center items-center h-screen bg-[#0B1426]">
         <div className="text-white text-center">
           <div className="animate-spin h-12 w-12 mx-auto mb-4 border-4 border-green-500 border-t-transparent rounded-full"></div>
           <span className="text-xl">Loading Mobile Trading...</span>
+          <div className="mt-4 text-sm text-gray-400">
+            {initializationStep}
+          </div>
+          <div className="mt-2 text-xs text-gray-500">
+            Status: {simulationRegistrationStatus}
+          </div>
         </div>
       </div>
     );
@@ -1042,7 +1086,7 @@ const MobileDashboard: React.FC = () => {
           onClick={scrollToTop}
         />
 
-        {/* Debug info in dev */}
+        {/* Debug info in dev only */}
         {process.env.NODE_ENV === 'development' && (
           <div className="fixed bottom-20 left-4 bg-black bg-opacity-75 text-white text-xs p-2 rounded z-40">
             <div>📱 Mobile • Scroll: {scrollPosition}px</div>
