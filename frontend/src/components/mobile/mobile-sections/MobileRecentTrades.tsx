@@ -1,4 +1,4 @@
-// frontend/src/components/mobile/mobile-sections/MobileRecentTrades.tsx
+// frontend/src/components/mobile/mobile-sections/MobileRecentTrades.tsx - FIXED: Live Count Display
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 
 interface Trader {
@@ -149,11 +149,11 @@ const MobileRecentTrades: React.FC<MobileRecentTradesProps> = ({ trades }) => {
     return `${address.slice(0, 4)}...${address.slice(-4)}`;
   };
   
-  // Format trade count
+  // FIXED: Format trade count with full numbers for live count display
   const formatTradeCount = (count: number) => {
     if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`;
     if (count >= 1000) return `${(count / 1000).toFixed(1)}K`;
-    return count.toString();
+    return count.toLocaleString(); // Show full numbers with commas
   };
   
   const handleScroll = () => {
@@ -321,18 +321,24 @@ const MobileRecentTrades: React.FC<MobileRecentTradesProps> = ({ trades }) => {
 
   return (
     <div className="h-full flex flex-col bg-gray-900">
-      {/* Mobile Header */}
+      {/* FIXED: Mobile Header with LIVE COUNT display */}
       <div className="p-3 border-b border-gray-700 bg-gray-800">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-white font-medium">
-            Recent Trades {actualTradeCount > 0 && (
-              <span className="text-green-400 font-bold">
-                ({formatTradeCount(actualTradeCount)})
-              </span>
-            )}
+            Recent Trades
           </h3>
           
+          {/* FIXED: Live count display - ONLY here, not in tabs */}
           <div className="flex items-center space-x-2">
+            <div className="bg-green-900 bg-opacity-50 px-2 py-1 rounded">
+              <div className="flex items-center space-x-1">
+                <div className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></div>
+                <span className="text-green-400 font-bold text-sm">
+                  {formatTradeCount(actualTradeCount)}
+                </span>
+              </div>
+            </div>
+            
             <button 
               onClick={() => setAutoScroll(!autoScroll)}
               className={`text-xs px-2 py-1 rounded ${
@@ -530,7 +536,7 @@ const MobileRecentTrades: React.FC<MobileRecentTradesProps> = ({ trades }) => {
           )}
           
           <div className="mt-2 text-center text-xs text-gray-500">
-            🚀 ALL 6 FIELDS: Time | Price | Qty | Side | Taker | Maker
+            🚀 Live count: {formatTradeCount(actualTradeCount)} trades processed
           </div>
         </div>
       )}
