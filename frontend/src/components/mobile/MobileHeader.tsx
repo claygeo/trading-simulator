@@ -49,38 +49,45 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
   const [showAdvanced, setShowAdvanced] = useState(false);
   
   // FIXED: Reactive price display with direction tracking
+  const [displayedPrice, setDisplayedPrice] = useState<number>(currentPrice);
   const [priceDirection, setPriceDirection] = useState<'up' | 'down' | 'neutral'>('neutral');
   const [isFlashing, setIsFlashing] = useState<boolean>(false);
-  const previousPriceRef = useRef<number>(0);
+  const previousPriceRef = useRef<number>(currentPrice);
   const flashTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // FIXED: Real-time price updates with visual feedback - updated immediately when currentPrice changes
+  // FIXED: Real-time price updates with visual feedback - triggers IMMEDIATELY when currentPrice changes
   useEffect(() => {
+    // Only update if price actually changed and is valid
     if (currentPrice !== previousPriceRef.current && currentPrice > 0) {
       // Determine price direction
-      if (previousPriceRef.current > 0) {
-        const newDirection = currentPrice > previousPriceRef.current ? 'up' : 'down';
-        setPriceDirection(newDirection);
-        
-        // Flash effect for price changes
-        setIsFlashing(true);
-        
-        // Clear existing timeout
-        if (flashTimeoutRef.current) {
-          clearTimeout(flashTimeoutRef.current);
-        }
-        
-        // Remove flash effect after animation
-        flashTimeoutRef.current = setTimeout(() => {
-          setIsFlashing(false);
-          setPriceDirection('neutral');
-        }, 600);
+      const newDirection = currentPrice > previousPriceRef.current ? 'up' : 'down';
+      setPriceDirection(newDirection);
+      
+      // Update displayed price immediately
+      setDisplayedPrice(currentPrice);
+      
+      // Flash effect for price changes
+      setIsFlashing(true);
+      
+      // Clear existing timeout
+      if (flashTimeoutRef.current) {
+        clearTimeout(flashTimeoutRef.current);
       }
+      
+      // Remove flash effect after animation
+      flashTimeoutRef.current = setTimeout(() => {
+        setIsFlashing(false);
+        setPriceDirection('neutral');
+      }, 600);
       
       // Update previous price reference
       previousPriceRef.current = currentPrice;
+    } else if (currentPrice > 0 && previousPriceRef.current === 0) {
+      // Initial price set (first load)
+      setDisplayedPrice(currentPrice);
+      previousPriceRef.current = currentPrice;
     }
-  }, [currentPrice]);
+  }, [currentPrice]); // CRITICAL: This useEffect triggers on every currentPrice change
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -116,12 +123,22 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
     return price.toFixed(2);
   };
 
-  // FIXED: Get price display color based on direction
+  // FIXED: Get price display color based on direction with enhanced visual feedback
   const getPriceColor = () => {
     if (isFlashing) {
       return priceDirection === 'up' ? 'text-green-400' : 'text-red-400';
     }
     return 'text-white';
+  };
+
+  // FIXED: Get price background for flash effect
+  const getPriceBackground = () => {
+    if (isFlashing) {
+      return priceDirection === 'up' 
+        ? 'bg-green-500 bg-opacity-20' 
+        : 'bg-red-500 bg-opacity-20';
+    }
+    return '';
   };
 
   return (
@@ -135,10 +152,10 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
               {tokenSymbol}
             </div>
             {/* FIXED: Reactive price display that updates immediately */}
-            <div className={`font-mono text-xl transition-all duration-300 ${getPriceColor()} ${
-              isFlashing ? 'scale-110 font-bold' : 'scale-100'
+            <div className={`font-mono text-xl transition-all duration-300 ${getPriceColor()} ${getPriceBackground()} ${
+              isFlashing ? 'scale-110 font-bold rounded px-1' : 'scale-100'
             }`}>
-              ${formatPrice(currentPrice)}
+              ${formatPrice(displayedPrice)}
               {/* Price direction indicator */}
               {priceDirection !== 'neutral' && (
                 <span className={`ml-1 text-sm ${
@@ -249,6 +266,12 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
             <div className="text-gray-400">
               Msgs: <span className="text-blue-400">{wsMessageCount}</span>
             </div>
+            {/* FIXED: Real-time price update indicator */}
+            {isFlashing && (
+              <div className="text-yellow-400 animate-pulse">
+                💹 Live
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -306,6 +329,19 @@ const MobileHeader: React.FC<MobileHeaderProps> = ({
               }`}>
                 {simulation?.isRunning ? (simulation?.isPaused ? 'PAUSED' : 'RUNNING') : 'STOPPED'}
               </div>
+            </div>
+          </div>
+
+          {/* FIXED: Real-time price debugging info */}
+          <div className="mt-3 p-2 bg-blue-900 bg-opacity-30 rounded border border-blue-500">
+            <div className="text-blue-400 text-xs font-medium">
+              🔥 Reactive Price: ${formatPrice(displayedPrice)} 
+              {priceDirection !== 'neutral' && (
+                <span className={`ml-2 ${priceDirection === 'up' ? 'text-green-400' : 'text-red-400'}`}>
+                  {priceDirection === 'up' ? '📈 UP' : '📉 DOWN'}
+                </span>
+              )}
+              {isFlashing && <span className="ml-2 text-yellow-400 animate-pulse">⚡ UPDATING</span>}
             </div>
           </div>
 

@@ -1,4 +1,4 @@
-// frontend/src/components/mobile/MobileTabs.tsx - FIXED: Clean Labels Without Numbers
+// frontend/src/components/mobile/MobileTabs.tsx - FIXED: Clean Professional Labels
 import React from 'react';
 
 interface MobileTabsProps {
@@ -21,13 +21,13 @@ const MobileTabs: React.FC<MobileTabsProps> = ({
   orderBookSize
 }) => {
   
-  // FIXED: Clean tab configuration WITHOUT count numbers in labels
+  // Clean tab configuration WITHOUT any decorative elements
   const getTabConfig = () => {
     return [
       {
         id: 'participants' as const,
-        label: 'Traders',              // CLEAN: No count in label
-        fullLabel: 'Traders',          
+        label: 'Traders',
+        fullLabel: 'Traders',
         count: tradersCount,
         color: 'text-blue-400',
         activeColor: 'border-blue-400 text-blue-400 bg-blue-900',
@@ -35,8 +35,8 @@ const MobileTabs: React.FC<MobileTabsProps> = ({
       },
       {
         id: 'orderbook' as const,
-        label: 'Orderbook',            // CLEAN: No count in label
-        fullLabel: 'Orderbook',        
+        label: 'Orderbook',
+        fullLabel: 'Orderbook',
         count: orderBookSize,
         color: 'text-purple-400',
         activeColor: 'border-purple-400 text-purple-400 bg-purple-900',
@@ -44,8 +44,8 @@ const MobileTabs: React.FC<MobileTabsProps> = ({
       },
       {
         id: 'trades' as const,
-        label: 'Recent Trades',        // CLEAN: No count in label
-        fullLabel: 'Recent Trades',    
+        label: 'Recent Trades',
+        fullLabel: 'Recent Trades',
         count: tradesCount,
         color: 'text-green-400',
         activeColor: 'border-green-400 text-green-400 bg-green-900',
@@ -60,7 +60,7 @@ const MobileTabs: React.FC<MobileTabsProps> = ({
     <div className="bg-gray-800 border-t border-gray-700">
       {/* Tab Navigation Bar */}
       <div className="flex items-center">
-        {/* FIXED: Tab Buttons - Clean design without numbers */}
+        {/* Clean Tab Buttons - Professional design without decorative elements */}
         <div className="flex-1 flex">
           {tabs.map((tab) => (
             <button
@@ -72,7 +72,7 @@ const MobileTabs: React.FC<MobileTabsProps> = ({
                   : 'border-transparent text-gray-400 hover:text-gray-300 hover:bg-gray-750'
               }`}
             >
-              {/* FIXED: Clean labels without any count numbers */}
+              {/* Clean labels without any count numbers or decorative elements */}
               <div className="flex items-center justify-center">
                 <span className="hidden sm:inline">{tab.fullLabel}</span>
                 <span className="sm:hidden">{tab.label}</span>
@@ -123,7 +123,7 @@ const MobileTabs: React.FC<MobileTabsProps> = ({
         />
       </div>
 
-      {/* FIXED: Simplified content summary when collapsed */}
+      {/* Simplified content summary when collapsed */}
       {!isExpanded && (
         <div className="px-4 py-2 bg-gray-900 border-t border-gray-700">
           <div className="flex items-center justify-between text-xs">
