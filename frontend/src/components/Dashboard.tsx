@@ -1,4 +1,4 @@
-// frontend/src/components/Dashboard.tsx - COMPLETE FIXED VERSION
+// frontend/src/components/Dashboard.tsx - PRODUCTION READY VERSION
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -104,7 +104,10 @@ const useIsMobile = () => {
           timestamp: new Date().toISOString()
         };
         
-        console.log('🔍 Mobile Detection Analysis:', debug);
+        // Production: Only log in development mode
+        if (process.env.NODE_ENV === 'development') {
+          console.log('🔍 Mobile Detection Analysis:', debug);
+        }
         
         if (mounted) {
           setIsMobile(isMobileDevice);
@@ -113,7 +116,9 @@ const useIsMobile = () => {
         }
         
       } catch (error) {
-        console.error('❌ Mobile detection error:', error);
+        if (process.env.NODE_ENV === 'development') {
+          console.error('❌ Mobile detection error:', error);
+        }
         if (mounted) {
           // Emergency fallback
           setIsMobile(window.innerWidth <= 768);
@@ -590,7 +595,9 @@ const Dashboard: React.FC = () => {
         
       } catch (error) {
         setError('Failed to initialize simulation');
-        console.error(error);
+        if (process.env.NODE_ENV === 'development') {
+          console.error(error);
+        }
         setSimulationRegistrationStatus('error');
         initializationRef.current = false;
       } finally {
@@ -672,7 +679,9 @@ const Dashboard: React.FC = () => {
       const response = await SimulationApi.startSimulation(simulationId);
       
       if (response.error) {
-        console.error('Failed to start simulation:', response.error);
+        if (process.env.NODE_ENV === 'development') {
+          console.error('Failed to start simulation:', response.error);
+        }
         return;
       }
       
@@ -684,7 +693,9 @@ const Dashboard: React.FC = () => {
       }
       
     } catch (error) {
-      console.error('Failed to start simulation:', error);
+      if (process.env.NODE_ENV === 'development') {
+        console.error('Failed to start simulation:', error);
+      }
     }
   }, [simulationId, simulationStartTime, setPauseState, isConnected, simulationRegistrationStatus]);
 
@@ -696,7 +707,9 @@ const Dashboard: React.FC = () => {
       setSimulation(prev => prev ? { ...prev, isPaused: true } : prev);
       setPauseState(true);
     } catch (error) {
-      console.error('Failed to pause simulation:', error);
+      if (process.env.NODE_ENV === 'development') {
+        console.error('Failed to pause simulation:', error);
+      }
     }
   }, [simulationId, setPauseState]);
 
@@ -740,7 +753,7 @@ const Dashboard: React.FC = () => {
       
       const resetResponse = await SimulationApi.resetSimulation(simulationId);
       
-      if (resetResponse.error) {
+      if (resetResponse.error && process.env.NODE_ENV === 'development') {
         console.error('Failed to reset backend simulation:', resetResponse.error);
       }
       
@@ -776,7 +789,9 @@ const Dashboard: React.FC = () => {
         setTokenSymbol(determineTokenSymbol(resetPrice));
         
       } else {
-        console.error('Failed to fetch fresh simulation state');
+        if (process.env.NODE_ENV === 'development') {
+          console.error('Failed to fetch fresh simulation state');
+        }
         
         updateSimulationState({
           currentPrice: 100,
@@ -799,7 +814,9 @@ const Dashboard: React.FC = () => {
       }
       
     } catch (error) {
-      console.error('Error during comprehensive reset:', error);
+      if (process.env.NODE_ENV === 'development') {
+        console.error('Error during comprehensive reset:', error);
+      }
       
       setRecentTrades([]);
       setPriceHistory([]);
@@ -841,7 +858,9 @@ const Dashboard: React.FC = () => {
       try {
         await SimulationApi.setSimulationSpeed(simulationId, speedValue);
       } catch (error) {
-        console.error(`Failed to update simulation speed:`, error);
+        if (process.env.NODE_ENV === 'development') {
+          console.error(`Failed to update simulation speed:`, error);
+        }
       }
     }
   }, [simulationId]);
@@ -865,7 +884,7 @@ const Dashboard: React.FC = () => {
     );
   }
   
-  // Mobile detected - use your ORIGINAL mobile dashboard with TradingView charts
+  // Mobile detected - use mobile dashboard
   if (isMobile) {
     return (
       <React.Suspense 
@@ -877,9 +896,11 @@ const Dashboard: React.FC = () => {
               <div className="mt-4 text-sm text-gray-400">
                 📱 Full mobile interface with TradingView charts
               </div>
-              <div className="mt-2 text-xs text-gray-500">
-                Detection: {debugInfo?.finalDecision ? 'Mobile' : 'Desktop'} (Score: {debugInfo?.mobileScore})
-              </div>
+              {process.env.NODE_ENV === 'development' && debugInfo && (
+                <div className="mt-2 text-xs text-gray-500">
+                  Detection: {debugInfo?.finalDecision ? 'Mobile' : 'Desktop'} (Score: {debugInfo?.mobileScore})
+                </div>
+              )}
             </div>
           </div>
         }
@@ -889,7 +910,7 @@ const Dashboard: React.FC = () => {
     );
   }
 
-  // Desktop Dashboard - your original implementation
+  // Desktop Dashboard
   if (loading) {
     return (
       <div className="flex justify-center items-center h-screen bg-gray-900">
@@ -935,15 +956,17 @@ const Dashboard: React.FC = () => {
             >
               Reload
             </button>
-            <button 
-              onClick={() => setShowDebugInfo(!showDebugInfo)} 
-              className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded transition"
-            >
-              {showDebugInfo ? 'Hide' : 'Show'} Debug
-            </button>
+            {process.env.NODE_ENV === 'development' && (
+              <button 
+                onClick={() => setShowDebugInfo(!showDebugInfo)} 
+                className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded transition"
+              >
+                {showDebugInfo ? 'Hide' : 'Show'} Debug
+              </button>
+            )}
           </div>
           
-          {showDebugInfo && debugInfo && (
+          {showDebugInfo && debugInfo && process.env.NODE_ENV === 'development' && (
             <div className="mt-4 p-3 bg-gray-700 rounded text-left text-xs">
               <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
             </div>
@@ -1063,14 +1086,16 @@ const Dashboard: React.FC = () => {
               TXP
             </button>
 
-            <button 
-              onClick={() => setShowDebugInfo(!showDebugInfo)}
-              className={`text-xs px-2 py-1 rounded transition ${
-                showDebugInfo ? 'text-yellow-400 bg-yellow-900' : 'text-gray-400 hover:text-gray-300'
-              }`}
-            >
-              Debug
-            </button>
+            {process.env.NODE_ENV === 'development' && (
+              <button 
+                onClick={() => setShowDebugInfo(!showDebugInfo)}
+                className={`text-xs px-2 py-1 rounded transition ${
+                  showDebugInfo ? 'text-yellow-400 bg-yellow-900' : 'text-gray-400 hover:text-gray-300'
+                }`}
+              >
+                Debug
+              </button>
+            )}
           </div>
         </div>
         
@@ -1154,8 +1179,8 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Debug Info Panel */}
-        {showDebugInfo && debugInfo && (
+        {/* Debug Info Panel - Development Only */}
+        {showDebugInfo && debugInfo && process.env.NODE_ENV === 'development' && (
           <div className="border-t border-gray-700 p-2">
             <div className="text-xs text-gray-400 mb-1">🔍 Mobile Detection Debug:</div>
             <div className="grid grid-cols-3 gap-2 text-xs">
