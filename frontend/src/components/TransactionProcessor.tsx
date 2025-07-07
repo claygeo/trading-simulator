@@ -98,6 +98,12 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
   const sellCountRef = useRef<number>(0);
   const marketTrendRef = useRef<number>(0); // -1 to 1, negative is bearish, positive is bullish
   
+  // Error suppression for production
+  const errorLogCountRef = useRef<number>(0);
+  const MAX_ERROR_LOGS = 5; // Only log first 5 errors
+  const lastErrorTimeRef = useRef<number>(0);
+  const ERROR_LOG_COOLDOWN = 30000; // 30 seconds between error logs
+  
   // Send transaction to backend
   const sendTransactionToBackend = useCallback(async (transaction: Transaction) => {
     if (!simulationId || !sendToBackend) return;
@@ -105,7 +111,11 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
     try {
       // FIXED: Use backend URL instead of relative path
       const url = `${API_BASE_URL}/api/simulation/${simulationId}/external-trade`;
-      console.log('Sending trade to:', url);
+      
+      // Production: Only log URL in development
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Sending trade to:', url);
+      }
       
       const response = await fetch(url, {
         method: 'POST',
@@ -125,8 +135,18 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
       });
       
       if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`Failed to send transaction to backend: ${response.status} ${response.statusText}`, errorText);
+        // Production error handling: Suppress repeated errors
+        const now = Date.now();
+        if (errorLogCountRef.current < MAX_ERROR_LOGS && (now - lastErrorTimeRef.current) > ERROR_LOG_COOLDOWN) {
+          const errorText = await response.text();
+          console.error(`Failed to send transaction to backend: ${response.status} ${response.statusText}`, errorText);
+          errorLogCountRef.current++;
+          lastErrorTimeRef.current = now;
+          
+          if (errorLogCountRef.current === MAX_ERROR_LOGS) {
+            console.warn('🔇 Transaction error logging suppressed. Further errors will be silent.');
+          }
+        }
         failureCountRef.current++;
       } else {
         const result = await response.json();
@@ -143,7 +163,17 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
         }
       }
     } catch (error) {
-      console.error('Error sending transaction to backend:', error);
+      // Production error handling: Suppress repeated errors
+      const now = Date.now();
+      if (errorLogCountRef.current < MAX_ERROR_LOGS && (now - lastErrorTimeRef.current) > ERROR_LOG_COOLDOWN) {
+        console.error('Error sending transaction to backend:', error);
+        errorLogCountRef.current++;
+        lastErrorTimeRef.current = now;
+        
+        if (errorLogCountRef.current === MAX_ERROR_LOGS) {
+          console.warn('🔇 Transaction error logging suppressed. Further errors will be silent.');
+        }
+      }
       failureCountRef.current++;
     }
   }, [simulationId, sendToBackend]);
@@ -298,7 +328,9 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
     if (queue.length > MAX_QUEUE_SIZE) {
       const dropped = queue.length - MAX_QUEUE_SIZE;
       queue.splice(0, dropped);
-      console.warn(`Dropped ${dropped} transactions to prevent overflow`);
+      if (process.env.NODE_ENV === 'development') {
+        console.warn(`Dropped ${dropped} transactions to prevent overflow`);
+      }
     }
     
     // Ultra-fast priority sort using single pass (only if needed)
@@ -439,8 +471,8 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
       
       setTransactions(displayTransactions);
       
-      // Log buy/sell balance periodically
-      if (Math.random() < 0.05) { // 5% chance to log
+      // Production: Only log balance in development mode and occasionally
+      if (process.env.NODE_ENV === 'development' && Math.random() < 0.05) { // 5% chance to log
         const totalTrades = buyCountRef.current + sellCountRef.current;
         if (totalTrades > 0) {
           const buyPercentage = ((buyCountRef.current / totalTrades) * 100).toFixed(1);
@@ -534,6 +566,10 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
         failureCountRef.current = 0;
         buyCountRef.current = 0;
         sellCountRef.current = 0;
+        
+        // Reset error logging
+        errorLogCountRef.current = 0;
+        lastErrorTimeRef.current = 0;
       }
       return newMode;
     });
@@ -823,6 +859,12 @@ const TransactionProcessor: React.FC<TransactionProcessorProps> = ({
               | Sells: {((sellCountRef.current / (buyCountRef.current + sellCountRef.current)) * 100).toFixed(1)}%</>
             ) : 'No trades yet'}
           </div>
+          {/* Error suppression notice */}
+          {errorLogCountRef.current >= MAX_ERROR_LOGS && (
+            <div className="text-orange-300 mt-1">
+              • Error logging suppressed after {MAX_ERROR_LOGS} errors (production mode)
+            </div>
+          )}
         </div>
       )}
       
