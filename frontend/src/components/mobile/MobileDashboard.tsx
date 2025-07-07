@@ -1,4 +1,4 @@
-// frontend/src/components/mobile/MobileDashboard.tsx - ISSUE 4 FIX: Full Page Extension
+// frontend/src/components/mobile/MobileDashboard.tsx - COMPLETE IMPLEMENTATION
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../../services/api';
 import { useWebSocket } from '../../services/websocket';
@@ -68,7 +68,7 @@ class MobileErrorBoundary extends React.Component<
   }
 }
 
-// ISSUE 4 FIX: Back to Top Button Component
+// Back to Top Button Component
 const BackToTopButton: React.FC<{ isVisible: boolean; onClick: () => void }> = ({ isVisible, onClick }) => {
   if (!isVisible) return null;
 
@@ -121,7 +121,7 @@ const MobileDashboard: React.FC = () => {
   const [simulationRegistrationStatus, setSimulationRegistrationStatus] = useState<'creating' | 'pending' | 'ready' | 'error'>('creating');
   const [initializationStep, setInitializationStep] = useState<string>('Starting...');
   
-  // ISSUE 4 FIX: Mobile-specific state for full page extension
+  // Mobile-specific state for full page extension
   const [activeTab, setActiveTab] = useState<'participants' | 'orderbook' | 'trades'>('participants');
   const [isTabContentExpanded, setIsTabContentExpanded] = useState<boolean>(false);
   const [showBackToTop, setShowBackToTop] = useState<boolean>(false);
@@ -135,7 +135,7 @@ const MobileDashboard: React.FC = () => {
   const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
-  // ISSUE 4 FIX: Scroll position tracking ref
+  // Scroll position tracking ref
   const dashboardRef = useRef<HTMLDivElement>(null);
   
   // Mobile-optimized configuration
@@ -147,7 +147,7 @@ const MobileDashboard: React.FC = () => {
     MEMORY_MANAGEMENT_THRESHOLD: 1000,
     PERFORMANCE_MODE_THRESHOLD: 500,
     UPDATE_THROTTLE: 100,
-    BACK_TO_TOP_THRESHOLD: 300, // Show back to top after scrolling 300px
+    BACK_TO_TOP_THRESHOLD: 300,
   };
 
   const speedMap = {
@@ -165,7 +165,7 @@ const MobileDashboard: React.FC = () => {
     simulation?.isPaused
   );
 
-  // ISSUE 4 FIX: Scroll tracking for back to top button
+  // Scroll tracking for back to top button
   useEffect(() => {
     const handleScroll = () => {
       if (scrollTimeoutRef.current) {
@@ -189,7 +189,7 @@ const MobileDashboard: React.FC = () => {
     };
   }, []);
 
-  // ISSUE 4 FIX: Back to top functionality
+  // Back to top functionality
   const scrollToTop = useCallback(() => {
     window.scrollTo({
       top: 0,
@@ -228,23 +228,20 @@ const MobileDashboard: React.FC = () => {
     return 'calm';
   }, [priceHistory, currentPrice]);
 
-  // Mobile memory management - much more aggressive
+  // Mobile memory management
   const manageMobileMemory = useCallback(() => {
     const tradeCount = recentTrades.length;
     
     if (tradeCount > MOBILE_CONFIG.MEMORY_MANAGEMENT_THRESHOLD) {
       console.log('🧠 Mobile memory management triggered:', tradeCount);
       
-      // Keep fewer trades for mobile
       const keepTradeCount = Math.floor(MOBILE_CONFIG.MEMORY_MANAGEMENT_THRESHOLD * 0.5);
       setRecentTrades(prev => prev.slice(0, keepTradeCount));
       
-      // Limit active positions
       if (activePositions.length > MOBILE_CONFIG.MAX_ACTIVE_POSITIONS) {
         setActivePositions(prev => prev.slice(0, MOBILE_CONFIG.MAX_ACTIVE_POSITIONS));
       }
       
-      // Limit price history
       if (priceHistory.length > MOBILE_CONFIG.MAX_PRICE_HISTORY) {
         setPriceHistory(prev => prev.slice(-MOBILE_CONFIG.MAX_PRICE_HISTORY));
       }
@@ -297,7 +294,6 @@ const MobileDashboard: React.FC = () => {
         } : prev);
       }
       
-      // Mobile memory management with delay
       setTimeout(manageMobileMemory, 200);
       
     } catch (error) {
@@ -309,7 +305,7 @@ const MobileDashboard: React.FC = () => {
   const updateMarketCondition = useCallback(() => {
     const now = Date.now();
     
-    if (now - marketConditionUpdateRef.current < 3000) { // Longer delay for mobile
+    if (now - marketConditionUpdateRef.current < 3000) {
       return;
     }
     
@@ -379,7 +375,6 @@ const MobileDashboard: React.FC = () => {
               
               const updated = [data, ...prev];
               
-              // Mobile memory limit
               if (updated.length > MOBILE_CONFIG.MEMORY_MANAGEMENT_THRESHOLD) {
                 const keepCount = Math.floor(MOBILE_CONFIG.MEMORY_MANAGEMENT_THRESHOLD * 0.8);
                 return updated.slice(0, keepCount);
@@ -410,7 +405,6 @@ const MobileDashboard: React.FC = () => {
                 const newTrades = updates.trades.filter((t: any) => !existingIds.has(t.id));
                 const combined = [...newTrades, ...prev];
                 
-                // Mobile limit
                 if (combined.length > MOBILE_CONFIG.MEMORY_MANAGEMENT_THRESHOLD) {
                   const keepCount = Math.floor(MOBILE_CONFIG.MEMORY_MANAGEMENT_THRESHOLD * 0.8);
                   return combined.slice(0, keepCount);
@@ -722,7 +716,7 @@ const MobileDashboard: React.FC = () => {
       setCurrentScenario(null);
       setScenarioPhaseData(null);
       
-      // ISSUE 4 FIX: Reset mobile-specific state
+      // Reset mobile-specific state
       setIsTabContentExpanded(false);
       setScrollPosition(0);
       setShowBackToTop(false);
@@ -848,7 +842,7 @@ const MobileDashboard: React.FC = () => {
     }
   }, [simulationId]);
 
-  // ISSUE 4 FIX: Tab change handler with expansion control
+  // Tab change handler with expansion control
   const handleTabChange = useCallback((tab: 'participants' | 'orderbook' | 'trades') => {
     setActiveTab(tab);
     // Auto-expand when switching tabs to show content
@@ -857,31 +851,13 @@ const MobileDashboard: React.FC = () => {
     }
   }, [isTabContentExpanded]);
 
-  // Loading state
+  // FIXED: Simplified loading state without extra text
   if (loading) {
     return (
       <div className="flex justify-center items-center h-screen bg-[#0B1426]">
         <div className="text-white text-center">
           <div className="animate-spin h-12 w-12 mx-auto mb-4 border-4 border-green-500 border-t-transparent rounded-full"></div>
           <span className="text-xl">Loading Mobile Trading...</span>
-          <div className="mt-4 text-sm text-gray-400">
-            {initializationStep}
-          </div>
-          <div className="mt-2 text-xs text-gray-500">
-            Status: {simulationRegistrationStatus}
-          </div>
-          <div className="mt-4 text-sm text-green-400">
-            📱 Full mobile interface with TradingView charts
-          </div>
-          <div className="mt-2 text-sm text-blue-400">
-            🚀 Mobile-optimized memory management
-          </div>
-          <div className="mt-2 text-sm text-purple-400">
-            ⚡ 118 traders • Professional layout
-          </div>
-          <div className="mt-2 text-sm text-cyan-400">
-            📜 Full page scroll enabled
-          </div>
         </div>
       </div>
     );
@@ -971,7 +947,7 @@ const MobileDashboard: React.FC = () => {
 
   return (
     <MobileErrorBoundary>
-      {/* ISSUE 4 FIX: Full page container with natural scroll */}
+      {/* Full page container with natural scroll */}
       <div 
         ref={dashboardRef}
         className="min-h-screen w-full bg-[#0B1426] text-white"
@@ -1046,12 +1022,12 @@ const MobileDashboard: React.FC = () => {
           />
         </MobileErrorBoundary>
         
-        {/* ISSUE 4 FIX: Tab Content (Full page extension when expanded) */}
+        {/* Tab Content (Full page extension when expanded) */}
         {isTabContentExpanded && (
           <div 
             className="bg-gray-800 border-t border-gray-700"
             style={{
-              // ISSUE 4 FIX: Auto height allows natural page extension
+              // Auto height allows natural page extension
               minHeight: '100vh',
               paddingBottom: '2rem'
             }}
@@ -1060,7 +1036,7 @@ const MobileDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* ISSUE 4 FIX: Back to Top Button */}
+        {/* Back to Top Button */}
         <BackToTopButton 
           isVisible={showBackToTop}
           onClick={scrollToTop}
