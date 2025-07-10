@@ -1,4 +1,4 @@
-// backend/src/websocket/index.ts - COMPLETE UPDATED VERSION WITH TPS SUPPORT
+// backend/src/websocket/index.ts - FIXED: TPS Error Handling & Metrics Broadcasting
 import { WebSocket, WebSocketServer } from 'ws';
 import { BroadcastManager } from '../services/broadcastManager';
 import { PerformanceMonitor } from '../monitoring/performanceMonitor';
@@ -217,7 +217,7 @@ export function setupWebSocketServer(
   console.log('✅ WebSocket server setup complete with SHARED SimulationManager instance and TPS support');
 }
 
-// NEW: Handle TPS mode changes
+// FIXED: Handle TPS mode changes with proper error handling
 async function handleTPSModeChange(
   ws: WebSocket,
   message: WebSocketMessage,
@@ -271,8 +271,8 @@ async function handleTPSModeChange(
       return;
     }
     
-    // Apply the TPS mode change via simulation manager
-    const result = await simulationManager.setTPSMode(simulationId, mode);
+    // FIXED: Use the async setTPSMode method correctly
+    const result = await simulationManager.setTPSModeAsync(simulationId, mode);
     
     if (result.success) {
       console.log(`✅ [TPS] Successfully changed TPS mode to ${mode} for simulation ${simulationId}`);
@@ -289,8 +289,8 @@ async function handleTPSModeChange(
         metrics: result.metrics
       }), { binary: false, compress: false, fin: true });
       
-      // Broadcast the mode change to all subscribed clients
-      broadcastTPSModeChange(simulationId, mode, result.metrics);
+      // FIXED: Broadcast the mode change to all subscribed clients properly
+      broadcastTPSModeChange(simulationId, mode, result.metrics, simulationManager);
       
     } else {
       console.error(`❌ [TPS] Failed to change TPS mode: ${result.error}`);
@@ -311,7 +311,7 @@ async function handleTPSModeChange(
   }
 }
 
-// NEW: Handle liquidation cascade trigger
+// FIXED: Handle liquidation cascade trigger with better error handling
 async function handleLiquidationCascade(
   ws: WebSocket,
   message: WebSocketMessage,
@@ -391,7 +391,7 @@ async function handleLiquidationCascade(
   }
 }
 
-// NEW: Handle TPS status requests
+// FIXED: Handle TPS status requests with better data
 async function handleTPSStatusRequest(
   ws: WebSocket,
   message: WebSocketMessage,
@@ -424,6 +424,9 @@ async function handleTPSStatusRequest(
     const currentMode = simulation.currentTPSMode || 'NORMAL';
     const targetTPS = getTargetTPSForMode(currentMode);
     
+    // FIXED: Get live metrics from simulation
+    const liveMetrics = simulationManager.getLiveTPSMetrics(simulationId);
+    
     ws.send(JSON.stringify({
       type: 'tps_status',
       simulationId: simulationId,
@@ -431,7 +434,7 @@ async function handleTPSStatusRequest(
       data: {
         currentTPSMode: currentMode,
         targetTPS: targetTPS,
-        metrics: simulation.externalMarketMetrics || {
+        metrics: liveMetrics || {
           currentTPS: targetTPS,
           actualTPS: 0,
           queueDepth: 0,
@@ -456,7 +459,7 @@ async function handleTPSStatusRequest(
   }
 }
 
-// NEW: Handle stress test capabilities requests
+// Handle stress test capabilities requests
 async function handleStressCapabilitiesRequest(
   ws: WebSocket,
   message: WebSocketMessage,
@@ -522,11 +525,23 @@ async function handleStressCapabilitiesRequest(
   }
 }
 
-// NEW: Broadcast TPS mode change to all clients
-function broadcastTPSModeChange(simulationId: string, mode: string, metrics?: any) {
-  // This would typically use the broadcast manager
-  // For now, we'll log the intended broadcast
-  console.log(`📡 [TPS BROADCAST] Would broadcast TPS mode change to ${mode} for simulation ${simulationId}`, metrics);
+// FIXED: Broadcast TPS mode change to all clients properly
+function broadcastTPSModeChange(simulationId: string, mode: string, metrics?: any, simulationManager?: any) {
+  // Get all connected clients subscribed to this simulation
+  if (simulationManager && simulationManager.broadcastService) {
+    simulationManager.broadcastService.broadcastEvent(simulationId, {
+      type: 'tps_mode_changed',
+      timestamp: Date.now(),
+      data: {
+        simulationId: simulationId,
+        newMode: mode,
+        targetTPS: getTargetTPSForMode(mode),
+        metrics: metrics
+      }
+    });
+  }
+  
+  console.log(`📡 [TPS BROADCAST] Broadcasted TPS mode change to ${mode} for simulation ${simulationId}`, metrics);
 }
 
 // Helper function to get target TPS for mode
@@ -686,6 +701,9 @@ async function handleSubscriptionWithRetry(
   
   console.log(`📡 [WS SUB] Sending initial state for simulation ${simulationId} to ${clientId}`);
   
+  // FIXED: Get live TPS metrics for initial state
+  const liveMetrics = simulationManager.getLiveTPSMetrics(simulationId);
+  
   // Prepare enhanced simulation state with TPS information
   const enhancedState = {
     isRunning: simulation.isRunning,
@@ -703,7 +721,7 @@ async function handleSubscriptionWithRetry(
       volatilityFactor: simulation.parameters.volatilityFactor,
       timeCompressionFactor: simulation.parameters.timeCompressionFactor
     },
-    externalMarketMetrics: simulation.externalMarketMetrics,
+    externalMarketMetrics: liveMetrics || simulation.externalMarketMetrics,
     registrationStatus: 'ready',
     cleanStart: simulation.priceHistory.length === 0,
     candleCount: simulation.priceHistory.length,
@@ -808,6 +826,9 @@ function handleMarketAnalysisRequest(ws: WebSocket, message: WebSocketMessage, s
     return;
   }
   
+  // FIXED: Get live TPS metrics for market analysis
+  const liveMetrics = simulationManager.getLiveTPSMetrics(simulationId);
+  
   ws.send(JSON.stringify({
     simulationId: simulationId,
     event: {
@@ -820,7 +841,7 @@ function handleMarketAnalysisRequest(ws: WebSocket, message: WebSocketMessage, s
         activeScenario: (simulation as any).activeScenario || null,
         // TPS metrics
         currentTPSMode: simulation.currentTPSMode || 'NORMAL',
-        tpsMetrics: simulation.externalMarketMetrics || null
+        tpsMetrics: liveMetrics || simulation.externalMarketMetrics
       }
     }
   }), { binary: false, compress: false, fin: true });
