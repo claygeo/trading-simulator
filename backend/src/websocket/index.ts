@@ -1,6 +1,5 @@
-// backend/src/websocket/index.ts - COMPLETE FIXED VERSION
+// backend/src/websocket/index.ts - COMPLETE UPDATED VERSION WITH TPS SUPPORT
 import { WebSocket, WebSocketServer } from 'ws';
-// REMOVED: import { simulationManager } from '../services/simulation';
 import { BroadcastManager } from '../services/broadcastManager';
 import { PerformanceMonitor } from '../monitoring/performanceMonitor';
 
@@ -8,6 +7,7 @@ import { PerformanceMonitor } from '../monitoring/performanceMonitor';
 interface WebSocketMessage {
   type: string;
   simulationId?: string;
+  mode?: string; // For TPS mode changes
   [key: string]: any;
 }
 
@@ -32,11 +32,11 @@ let clientCounter = 0;
 // CRITICAL FIX: Accept simulationManager as parameter instead of importing
 export function setupWebSocketServer(
   wss: WebSocketServer, 
-  simulationManager: any, // FIXED: Pass the instance from server.ts
+  simulationManager: any, // Pass the instance from server.ts
   broadcastManager?: BroadcastManager,
   performanceMonitor?: PerformanceMonitor
 ) {
-  console.log('🔧 Setting up WebSocket server with SHARED SimulationManager instance...');
+  console.log('🔧 Setting up WebSocket server with SHARED SimulationManager instance and TPS support...');
   
   // Log server status
   setInterval(() => {
@@ -97,9 +97,11 @@ export function setupWebSocketServer(
           marketAnalysis: true,
           dynamicTimeframes: true,
           realtimeAdaptation: true,
-          raceConditionPrevention: true
+          raceConditionPrevention: true,
+          tpsModeSupport: true,      // TPS mode support
+          stressTestSupport: true    // Stress test support
         },
-        version: '2.1.0'
+        version: '2.3.0' // Version bump for TPS support
       }), { binary: false, compress: false, fin: true });
     } catch (error) {
       console.error('Error sending welcome message:', error);
@@ -108,11 +110,10 @@ export function setupWebSocketServer(
     ws.on('message', (data: Buffer) => {
       try {
         const message: WebSocketMessage = JSON.parse(data.toString());
-        console.log(`${clientId} message:`, message.type, message.simulationId || '');
+        console.log(`${clientId} message:`, message.type, message.simulationId || '', message.mode || '');
         
         switch (message.type) {
           case 'subscribe':
-            // CRITICAL FIX: Use the passed simulationManager instance
             handleSubscriptionWithRetry(ws, message, clientId, simulationManager);
             break;
             
@@ -130,6 +131,24 @@ export function setupWebSocketServer(
             
           case 'setPreferences':
             handlePreferencesUpdate(ws, message);
+            break;
+            
+          // TPS mode changes
+          case 'set_tps_mode':
+            handleTPSModeChange(ws, message, clientId, simulationManager);
+            break;
+            
+          // Stress test commands
+          case 'trigger_liquidation_cascade':
+            handleLiquidationCascade(ws, message, clientId, simulationManager);
+            break;
+            
+          case 'get_tps_status':
+            handleTPSStatusRequest(ws, message, clientId, simulationManager);
+            break;
+            
+          case 'get_stress_capabilities':
+            handleStressCapabilitiesRequest(ws, message, clientId, simulationManager);
             break;
             
           case 'ping':
@@ -195,7 +214,330 @@ export function setupWebSocketServer(
     console.error('WebSocket server error:', error);
   });
   
-  console.log('✅ WebSocket server setup complete with SHARED SimulationManager instance');
+  console.log('✅ WebSocket server setup complete with SHARED SimulationManager instance and TPS support');
+}
+
+// NEW: Handle TPS mode changes
+async function handleTPSModeChange(
+  ws: WebSocket,
+  message: WebSocketMessage,
+  clientId: string,
+  simulationManager: any
+) {
+  const { simulationId, mode } = message;
+  
+  if (!simulationId) {
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: 'simulationId required for TPS mode change',
+      timestamp: Date.now()
+    }), { binary: false, compress: false, fin: true });
+    return;
+  }
+  
+  if (!mode) {
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: 'mode required for TPS mode change',
+      timestamp: Date.now()
+    }), { binary: false, compress: false, fin: true });
+    return;
+  }
+  
+  console.log(`🚀 [TPS] ${clientId} requesting TPS mode change to ${mode} for simulation ${simulationId}`);
+  
+  try {
+    // Get the simulation
+    const simulation = simulationManager.getSimulation(simulationId);
+    
+    if (!simulation) {
+      console.error(`❌ [TPS] Simulation ${simulationId} not found for TPS mode change`);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: `Simulation ${simulationId} not found`,
+        timestamp: Date.now()
+      }), { binary: false, compress: false, fin: true });
+      return;
+    }
+    
+    // Validate mode
+    const validModes = ['NORMAL', 'BURST', 'STRESS', 'HFT'];
+    if (!validModes.includes(mode)) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: `Invalid TPS mode. Valid modes: ${validModes.join(', ')}`,
+        timestamp: Date.now()
+      }), { binary: false, compress: false, fin: true });
+      return;
+    }
+    
+    // Apply the TPS mode change via simulation manager
+    const result = await simulationManager.setTPSMode(simulationId, mode);
+    
+    if (result.success) {
+      console.log(`✅ [TPS] Successfully changed TPS mode to ${mode} for simulation ${simulationId}`);
+      
+      // Send confirmation to requesting client
+      ws.send(JSON.stringify({
+        type: 'tps_mode_changed',
+        simulationId: simulationId,
+        mode: mode,
+        previousMode: result.previousMode,
+        targetTPS: getTargetTPSForMode(mode),
+        timestamp: Date.now(),
+        message: `TPS mode changed to ${mode}`,
+        metrics: result.metrics
+      }), { binary: false, compress: false, fin: true });
+      
+      // Broadcast the mode change to all subscribed clients
+      broadcastTPSModeChange(simulationId, mode, result.metrics);
+      
+    } else {
+      console.error(`❌ [TPS] Failed to change TPS mode: ${result.error}`);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: result.error || 'Failed to change TPS mode',
+        timestamp: Date.now()
+      }), { binary: false, compress: false, fin: true });
+    }
+    
+  } catch (error) {
+    console.error(`❌ [TPS] Error changing TPS mode:`, error);
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: 'Internal error changing TPS mode',
+      timestamp: Date.now()
+    }), { binary: false, compress: false, fin: true });
+  }
+}
+
+// NEW: Handle liquidation cascade trigger
+async function handleLiquidationCascade(
+  ws: WebSocket,
+  message: WebSocketMessage,
+  clientId: string,
+  simulationManager: any
+) {
+  const { simulationId } = message;
+  
+  if (!simulationId) {
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: 'simulationId required for liquidation cascade',
+      timestamp: Date.now()
+    }), { binary: false, compress: false, fin: true });
+    return;
+  }
+  
+  console.log(`💥 [LIQUIDATION] ${clientId} triggering liquidation cascade for simulation ${simulationId}`);
+  
+  try {
+    const simulation = simulationManager.getSimulation(simulationId);
+    
+    if (!simulation) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: `Simulation ${simulationId} not found`,
+        timestamp: Date.now()
+      }), { binary: false, compress: false, fin: true });
+      return;
+    }
+    
+    // Check if simulation is in appropriate mode
+    const currentMode = simulation.currentTPSMode || 'NORMAL';
+    if (currentMode !== 'STRESS' && currentMode !== 'HFT') {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: `Liquidation cascade requires STRESS or HFT mode, current mode is ${currentMode}`,
+        timestamp: Date.now()
+      }), { binary: false, compress: false, fin: true });
+      return;
+    }
+    
+    // Trigger liquidation cascade
+    const result = await simulationManager.triggerLiquidationCascade(simulationId);
+    
+    if (result.success) {
+      console.log(`✅ [LIQUIDATION] Liquidation cascade triggered for simulation ${simulationId}`);
+      
+      ws.send(JSON.stringify({
+        type: 'stress_test_response',
+        action: 'liquidation_cascade',
+        simulationId: simulationId,
+        timestamp: Date.now(),
+        data: {
+          ordersGenerated: result.ordersGenerated,
+          estimatedImpact: result.estimatedImpact,
+          cascadeSize: result.cascadeSize
+        }
+      }), { binary: false, compress: false, fin: true });
+      
+    } else {
+      console.error(`❌ [LIQUIDATION] Failed to trigger liquidation cascade: ${result.error}`);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: result.error || 'Failed to trigger liquidation cascade',
+        timestamp: Date.now()
+      }), { binary: false, compress: false, fin: true });
+    }
+    
+  } catch (error) {
+    console.error(`❌ [LIQUIDATION] Error triggering liquidation cascade:`, error);
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: 'Internal error triggering liquidation cascade',
+      timestamp: Date.now()
+    }), { binary: false, compress: false, fin: true });
+  }
+}
+
+// NEW: Handle TPS status requests
+async function handleTPSStatusRequest(
+  ws: WebSocket,
+  message: WebSocketMessage,
+  clientId: string,
+  simulationManager: any
+) {
+  const { simulationId } = message;
+  
+  if (!simulationId) {
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: 'simulationId required for TPS status request',
+      timestamp: Date.now()
+    }), { binary: false, compress: false, fin: true });
+    return;
+  }
+  
+  try {
+    const simulation = simulationManager.getSimulation(simulationId);
+    
+    if (!simulation) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: `Simulation ${simulationId} not found`,
+        timestamp: Date.now()
+      }), { binary: false, compress: false, fin: true });
+      return;
+    }
+    
+    const currentMode = simulation.currentTPSMode || 'NORMAL';
+    const targetTPS = getTargetTPSForMode(currentMode);
+    
+    ws.send(JSON.stringify({
+      type: 'tps_status',
+      simulationId: simulationId,
+      timestamp: Date.now(),
+      data: {
+        currentTPSMode: currentMode,
+        targetTPS: targetTPS,
+        metrics: simulation.externalMarketMetrics || {
+          currentTPS: targetTPS,
+          actualTPS: 0,
+          queueDepth: 0,
+          processedOrders: 0,
+          rejectedOrders: 0,
+          avgProcessingTime: 0,
+          dominantTraderType: 'RETAIL_TRADER',
+          marketSentiment: 'neutral',
+          liquidationRisk: 0
+        },
+        supportedModes: ['NORMAL', 'BURST', 'STRESS', 'HFT']
+      }
+    }), { binary: false, compress: false, fin: true });
+    
+  } catch (error) {
+    console.error(`❌ [TPS] Error getting TPS status:`, error);
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: 'Internal error getting TPS status',
+      timestamp: Date.now()
+    }), { binary: false, compress: false, fin: true });
+  }
+}
+
+// NEW: Handle stress test capabilities requests
+async function handleStressCapabilitiesRequest(
+  ws: WebSocket,
+  message: WebSocketMessage,
+  clientId: string,
+  simulationManager: any
+) {
+  const { simulationId } = message;
+  
+  if (!simulationId) {
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: 'simulationId required for stress capabilities request',
+      timestamp: Date.now()
+    }), { binary: false, compress: false, fin: true });
+    return;
+  }
+  
+  try {
+    const simulation = simulationManager.getSimulation(simulationId);
+    
+    if (!simulation) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: `Simulation ${simulationId} not found`,
+        timestamp: Date.now()
+      }), { binary: false, compress: false, fin: true });
+      return;
+    }
+    
+    const currentMode = simulation.currentTPSMode || 'NORMAL';
+    
+    ws.send(JSON.stringify({
+      type: 'stress_capabilities',
+      simulationId: simulationId,
+      timestamp: Date.now(),
+      data: {
+        currentTPSMode: currentMode,
+        capabilities: {
+          liquidationCascade: currentMode === 'STRESS' || currentMode === 'HFT',
+          mevBotSimulation: currentMode === 'HFT',
+          panicSelling: currentMode === 'STRESS',
+          highFrequencyTrading: currentMode === 'HFT',
+          marketMaking: true,
+          arbitrageSimulation: currentMode !== 'NORMAL'
+        },
+        supportedModes: ['NORMAL', 'BURST', 'STRESS', 'HFT'],
+        modeDescriptions: {
+          NORMAL: 'Market makers & retail traders (25 TPS)',
+          BURST: 'Increased retail & arbitrage activity (150 TPS)',
+          STRESS: 'Panic sellers & MEV bots (1.5K TPS)',
+          HFT: 'MEV bots, whales & arbitrage bots (15K TPS)'
+        }
+      }
+    }), { binary: false, compress: false, fin: true });
+    
+  } catch (error) {
+    console.error(`❌ [STRESS] Error getting stress capabilities:`, error);
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: 'Internal error getting stress capabilities',
+      timestamp: Date.now()
+    }), { binary: false, compress: false, fin: true });
+  }
+}
+
+// NEW: Broadcast TPS mode change to all clients
+function broadcastTPSModeChange(simulationId: string, mode: string, metrics?: any) {
+  // This would typically use the broadcast manager
+  // For now, we'll log the intended broadcast
+  console.log(`📡 [TPS BROADCAST] Would broadcast TPS mode change to ${mode} for simulation ${simulationId}`, metrics);
+}
+
+// Helper function to get target TPS for mode
+function getTargetTPSForMode(mode: string): number {
+  switch (mode) {
+    case 'NORMAL': return 25;
+    case 'BURST': return 150;
+    case 'STRESS': return 1500;
+    case 'HFT': return 15000;
+    default: return 25;
+  }
 }
 
 // CRITICAL FIX: Enhanced subscription with the SAME simulationManager instance
@@ -203,7 +545,7 @@ async function handleSubscriptionWithRetry(
   ws: WebSocket, 
   message: WebSocketMessage, 
   clientId: string,
-  simulationManager: any // FIXED: Use the passed instance
+  simulationManager: any // Use the passed instance
 ) {
   const { simulationId, preferences } = message;
   
@@ -344,7 +686,7 @@ async function handleSubscriptionWithRetry(
   
   console.log(`📡 [WS SUB] Sending initial state for simulation ${simulationId} to ${clientId}`);
   
-  // Prepare enhanced simulation state
+  // Prepare enhanced simulation state with TPS information
   const enhancedState = {
     isRunning: simulation.isRunning,
     isPaused: simulation.isPaused,
@@ -364,7 +706,15 @@ async function handleSubscriptionWithRetry(
     externalMarketMetrics: simulation.externalMarketMetrics,
     registrationStatus: 'ready',
     cleanStart: simulation.priceHistory.length === 0,
-    candleCount: simulation.priceHistory.length
+    candleCount: simulation.priceHistory.length,
+    // TPS mode information
+    currentTPSMode: simulation.currentTPSMode || 'NORMAL',
+    tpsSupport: true,
+    stressTestCapabilities: {
+      supportedModes: ['NORMAL', 'BURST', 'STRESS', 'HFT'],
+      liquidationCascade: true,
+      mevBotSimulation: true
+    }
   };
   
   ws.send(JSON.stringify({
@@ -383,10 +733,12 @@ async function handleSubscriptionWithRetry(
     timestamp: Date.now(),
     preferences: preferences,
     registrationStatus: 'ready',
-    message: 'Successfully subscribed to ready simulation using SHARED SimulationManager'
+    tpsSupport: true,
+    currentTPSMode: enhancedState.currentTPSMode,
+    message: 'Successfully subscribed to ready simulation using SHARED SimulationManager with TPS support'
   }), { binary: false, compress: false, fin: true });
   
-  console.log(`🎉 [WS SUB] SUBSCRIPTION SUCCESS! ${clientId} subscribed to ${simulationId} using SHARED manager, trades: ${enhancedState.recentTrades.length}, candles: ${enhancedState.candleCount}`);
+  console.log(`🎉 [WS SUB] SUBSCRIPTION SUCCESS! ${clientId} subscribed to ${simulationId} using SHARED manager, trades: ${enhancedState.recentTrades.length}, candles: ${enhancedState.candleCount}, TPS mode: ${enhancedState.currentTPSMode}`);
 }
 
 // Handle subscription with preferences (original function, modified to be race-condition aware)
@@ -465,7 +817,10 @@ function handleMarketAnalysisRequest(ws: WebSocket, message: WebSocketMessage, s
         currentPrice: simulation.currentPrice,
         marketConditions: simulation.marketConditions,
         priceHistory: simulation.priceHistory.slice(-50),
-        activeScenario: (simulation as any).activeScenario || null
+        activeScenario: (simulation as any).activeScenario || null,
+        // TPS metrics
+        currentTPSMode: simulation.currentTPSMode || 'NORMAL',
+        tpsMetrics: simulation.externalMarketMetrics || null
       }
     }
   }), { binary: false, compress: false, fin: true });
@@ -521,7 +876,9 @@ function handleDebugRequest(ws: WebSocket, clientId: string, broadcastManager?: 
       totalClients: ws.readyState === WebSocket.OPEN ? 
         Array.from((ws as any)._server?.clients || []).length : 0,
       raceConditionPrevention: true,
-      sharedSimulationManager: true
+      sharedSimulationManager: true,
+      tpsSupport: true,
+      stressTestSupport: true
     }
   };
   
@@ -609,7 +966,7 @@ export function broadcastToSubscribers(
     }
   });
   
-  if (event.type === 'trade' || event.type === 'price_update') {
+  if (event.type === 'trade' || event.type === 'price_update' || event.type === 'external_market_pressure') {
     console.log(`Broadcast ${event.type} to ${sentCount} clients for simulation ${simulationId} (skipped ${skippedCount} pending)`);
   }
 }
