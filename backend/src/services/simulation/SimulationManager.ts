@@ -1,4 +1,4 @@
-// backend/src/services/simulation/SimulationManager.ts - COMPLETE: TPS Mode Support Added
+// backend/src/services/simulation/SimulationManager.ts - FIXED: TPS Method Conflicts & Metrics Broadcasting
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import {
@@ -37,6 +37,10 @@ export class SimulationManager {
   private simulationTimeframes: Map<string, Timeframe> = new Map();
   private processedTradesSyncInterval: NodeJS.Timeout | null = null;
   
+  // FIXED: Add metrics tracking for TPS
+  private liveTPSMetrics: Map<string, ExternalMarketMetrics> = new Map();
+  private metricsUpdateIntervals: Map<string, NodeJS.Timeout> = new Map();
+  
   // Registration tracking
   private simulationRegistrationStatus: Map<string, 'creating' | 'registering' | 'ready' | 'starting' | 'running'> = new Map();
   private registrationCallbacks: Map<string, ((status: string) => void)[]> = new Map();
@@ -51,7 +55,7 @@ export class SimulationManager {
   private timeframeManager!: TimeframeManager;
   private scenarioEngine!: ScenarioEngine;
   private performanceOptimizer!: PerformanceOptimizer;
-  private broadcastService!: BroadcastService;
+  public broadcastService!: BroadcastService; // Made public for WebSocket access
   private dataGenerator!: DataGenerator;
   private externalMarketEngine!: ExternalMarketEngine;
 
@@ -62,6 +66,7 @@ export class SimulationManager {
   // PRODUCTION: Ultra-fast timing configuration
   private readonly baseUpdateInterval: number = 50; // 50ms for ultra-fast mode
   private readonly processedTradesSyncIntervalTime: number = 25; // 25ms sync
+  private readonly metricsUpdateInterval: number = 100; // 100ms metrics updates
 
   constructor() {
     this.initializeEngines();
@@ -114,6 +119,168 @@ export class SimulationManager {
       this.candleManagers.set(simulationId, manager);
     }
     return this.candleManagers.get(simulationId)!;
+  }
+
+  // FIXED: Start TPS metrics tracking for a simulation
+  private startTPSMetricsTracking(simulationId: string): void {
+    if (this.metricsUpdateIntervals.has(simulationId)) {
+      return; // Already tracking
+    }
+    
+    console.log(`📊 [TPS METRICS] Starting metrics tracking for simulation ${simulationId}`);
+    
+    const interval = setInterval(() => {
+      const simulation = this.simulations.get(simulationId);
+      if (!simulation) {
+        console.log(`📊 [TPS METRICS] Simulation ${simulationId} not found, stopping metrics tracking`);
+        this.stopTPSMetricsTracking(simulationId);
+        return;
+      }
+      
+      // Calculate live TPS metrics
+      const liveMetrics = this.calculateLiveTPSMetrics(simulation);
+      this.liveTPSMetrics.set(simulationId, liveMetrics);
+      
+      // Broadcast TPS metrics update
+      this.broadcastTPSMetricsUpdate(simulationId, liveMetrics);
+      
+    }, this.metricsUpdateInterval);
+    
+    this.metricsUpdateIntervals.set(simulationId, interval);
+  }
+
+  // FIXED: Stop TPS metrics tracking
+  private stopTPSMetricsTracking(simulationId: string): void {
+    const interval = this.metricsUpdateIntervals.get(simulationId);
+    if (interval) {
+      clearInterval(interval);
+      this.metricsUpdateIntervals.delete(simulationId);
+      this.liveTPSMetrics.delete(simulationId);
+      console.log(`📊 [TPS METRICS] Stopped metrics tracking for simulation ${simulationId}`);
+    }
+  }
+
+  // FIXED: Calculate live TPS metrics
+  private calculateLiveTPSMetrics(simulation: ExtendedSimulationState): ExternalMarketMetrics {
+    const now = Date.now();
+    const oneSecondAgo = now - 1000;
+    const fiveSecondsAgo = now - 5000;
+    
+    // Count recent trades
+    const tradesLastSecond = simulation.recentTrades.filter(trade => 
+      trade.timestamp > oneSecondAgo
+    ).length;
+    
+    const tradesLast5Seconds = simulation.recentTrades.filter(trade => 
+      trade.timestamp > fiveSecondsAgo
+    ).length;
+    
+    // Calculate TPS
+    const actualTPS = tradesLastSecond;
+    const avgTPS = Math.round(tradesLast5Seconds / 5);
+    
+    // Analyze market sentiment from recent trades
+    const recentTrades = simulation.recentTrades.slice(0, 20);
+    const buyCount = recentTrades.filter(t => t.action === 'buy').length;
+    const sellCount = recentTrades.filter(t => t.action === 'sell').length;
+    
+    let marketSentiment: 'bullish' | 'bearish' | 'neutral' = 'neutral';
+    if (buyCount > sellCount * 1.3) {
+      marketSentiment = 'bullish';
+    } else if (sellCount > buyCount * 1.3) {
+      marketSentiment = 'bearish';
+    }
+    
+    // Get current TPS mode settings
+    const currentMode = simulation.currentTPSMode || TPSMode.NORMAL;
+    const targetTPS = this.getTargetTPSForMode(currentMode);
+    
+    // Calculate queue depth estimate
+    const queueDepth = Math.max(0, targetTPS - actualTPS);
+    
+    // Determine dominant trader type based on TPS mode
+    let dominantTraderType: ExternalTraderType;
+    switch (currentMode) {
+      case TPSMode.HFT:
+        dominantTraderType = ExternalTraderType.MEV_BOT;
+        break;
+      case TPSMode.STRESS:
+        dominantTraderType = ExternalTraderType.PANIC_SELLER;
+        break;
+      case TPSMode.BURST:
+        dominantTraderType = ExternalTraderType.ARBITRAGE_BOT;
+        break;
+      default:
+        dominantTraderType = ExternalTraderType.RETAIL_TRADER;
+    }
+    
+    // Calculate processing metrics
+    const processedOrders = simulation.externalMarketMetrics?.processedOrders || 0;
+    const rejectedOrders = simulation.externalMarketMetrics?.rejectedOrders || 0;
+    
+    return {
+      currentTPS: targetTPS,
+      actualTPS: actualTPS,
+      queueDepth: queueDepth,
+      processedOrders: processedOrders + recentTrades.length,
+      rejectedOrders: rejectedOrders,
+      avgProcessingTime: actualTPS > 0 ? 1000 / actualTPS : 0,
+      dominantTraderType: dominantTraderType,
+      marketSentiment: marketSentiment,
+      liquidationRisk: this.calculateLiquidationRisk(simulation)
+    };
+  }
+
+  // FIXED: Calculate liquidation risk
+  private calculateLiquidationRisk(simulation: ExtendedSimulationState): number {
+    const currentPrice = simulation.currentPrice;
+    const initialPrice = simulation.parameters.initialPrice;
+    const priceChange = Math.abs(currentPrice - initialPrice) / initialPrice;
+    
+    // High volatility and price swings increase liquidation risk
+    const volatilityFactor = simulation.marketConditions.volatility || 1;
+    const riskScore = (priceChange * 100) + (volatilityFactor * 10);
+    
+    return Math.min(100, Math.max(0, riskScore));
+  }
+
+  // FIXED: Broadcast TPS metrics update
+  private broadcastTPSMetricsUpdate(simulationId: string, metrics: ExternalMarketMetrics): void {
+    this.broadcastService.broadcastEvent(simulationId, {
+      type: 'external_market_pressure',
+      timestamp: Date.now(),
+      data: {
+        tpsMode: this.getTPSModeString(simulationId),
+        processedOrders: metrics.actualTPS,
+        queueDepth: metrics.queueDepth,
+        metrics: metrics
+      }
+    });
+  }
+
+  // FIXED: Get TPS mode as string
+  private getTPSModeString(simulationId: string): string {
+    const simulation = this.simulations.get(simulationId);
+    if (!simulation) return 'NORMAL';
+    
+    const mode = simulation.currentTPSMode || TPSMode.NORMAL;
+    return TPSMode[mode] || 'NORMAL';
+  }
+
+  // FIXED: Get live TPS metrics (public method for WebSocket)
+  public getLiveTPSMetrics(simulationId: string): ExternalMarketMetrics | undefined {
+    const liveMetrics = this.liveTPSMetrics.get(simulationId);
+    if (liveMetrics) {
+      return liveMetrics;
+    }
+    
+    // Calculate on-demand if not available
+    const simulation = this.simulations.get(simulationId);
+    if (simulation) {
+      return this.calculateLiveTPSMetrics(simulation);
+    }
+    
+    return undefined;
   }
 
   private startProcessedTradesSync(): void {
@@ -206,6 +373,9 @@ export class SimulationManager {
       
       const aggressiveInterval = 5000; // 5-second intervals
       this.initializeCandleManager(simulationId, aggressiveInterval);
+      
+      // FIXED: Start TPS metrics tracking immediately
+      this.startTPSMetricsTracking(simulationId);
       
       // Verification
       await this.verifySimulationRegistration(simulationId);
@@ -470,6 +640,11 @@ export class SimulationManager {
       const speed = this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor;
       const timeframe = this.simulationTimeframes.get(id) || '1m';
       
+      // FIXED: Ensure TPS metrics tracking is active
+      if (!this.metricsUpdateIntervals.has(id)) {
+        this.startTPSMetricsTracking(id);
+      }
+      
       // Broadcast initial state
       const marketAnalysis = this.timeframeManager.analyzeMarketConditions(id, simulation);
       this.broadcastService.broadcastSimulationState(id, {
@@ -598,6 +773,9 @@ export class SimulationManager {
           this.forceInitialTradingActivity(simulation, 100);
         }
         
+        // FIXED: Enhanced price history interpolation for high TPS modes
+        this.updatePriceHistoryWithInterpolation(simulation, speed);
+        
         // Broadcast updates
         const marketAnalysis = this.timeframeManager.analyzeMarketConditions(id, simulation);
         
@@ -626,7 +804,48 @@ export class SimulationManager {
     }
   }
 
-  // NEW: Process external market activity based on TPS mode
+  // FIXED: Enhanced price history interpolation for smoother charts
+  private updatePriceHistoryWithInterpolation(simulation: ExtendedSimulationState, speed: number): void {
+    const now = simulation.currentTime;
+    const lastHistoryPoint = simulation.priceHistory[simulation.priceHistory.length - 1];
+    
+    // For high TPS modes, add interpolated points to prevent gaps
+    if (speed > 100 && lastHistoryPoint) {
+      const timeSinceLastPoint = now - lastHistoryPoint.timestamp;
+      const expectedInterval = 60000; // 1 minute intervals
+      
+      if (timeSinceLastPoint > expectedInterval * 2) {
+        // Add interpolated points
+        const pointsNeeded = Math.floor(timeSinceLastPoint / expectedInterval);
+        const priceStep = (simulation.currentPrice - lastHistoryPoint.price) / pointsNeeded;
+        
+        for (let i = 1; i < pointsNeeded; i++) {
+          const interpolatedPrice = lastHistoryPoint.price + (priceStep * i);
+          const interpolatedTime = lastHistoryPoint.timestamp + (expectedInterval * i);
+          
+          simulation.priceHistory.push({
+            timestamp: interpolatedTime,
+            price: interpolatedPrice,
+            volume: simulation.marketConditions.volume * 0.5 // Reduced volume for interpolated points
+          });
+        }
+      }
+    }
+    
+    // Add current price point
+    simulation.priceHistory.push({
+      timestamp: now,
+      price: simulation.currentPrice,
+      volume: simulation.marketConditions.volume
+    });
+    
+    // Keep history manageable
+    if (simulation.priceHistory.length > 1000) {
+      simulation.priceHistory = simulation.priceHistory.slice(-500);
+    }
+  }
+
+  // Process external market activity based on TPS mode
   private processExternalMarketActivity(simulation: ExtendedSimulationState): void {
     try {
       const externalTrades = this.externalMarketEngine.processExternalOrders(simulation);
@@ -664,7 +883,7 @@ export class SimulationManager {
     }
   }
 
-  // NEW: Calculate actual TPS
+  // Calculate actual TPS
   private calculateActualTPS(simulation: ExtendedSimulationState): number {
     const now = Date.now();
     const oneSecondAgo = now - 1000;
@@ -743,6 +962,9 @@ export class SimulationManager {
       this.simulationIntervals.delete(id);
     }
     
+    // FIXED: Stop TPS metrics tracking when paused
+    this.stopTPSMetricsTracking(id);
+    
     this.broadcastService.broadcastSimulationStatus(
       id,
       simulation.isRunning,
@@ -766,6 +988,9 @@ export class SimulationManager {
         this.simulationIntervals.delete(id);
       }
     }
+    
+    // FIXED: Stop TPS metrics tracking
+    this.stopTPSMetricsTracking(id);
     
     // Clean up positions and trades
     simulation.activePositions.forEach(position => {
@@ -857,6 +1082,9 @@ export class SimulationManager {
       }
     }
     
+    // FIXED: Stop TPS metrics tracking
+    this.stopTPSMetricsTracking(id);
+    
     simulation.activePositions.forEach(position => {
       this.dataGenerator.releasePosition(position);
     });
@@ -879,15 +1107,15 @@ export class SimulationManager {
     this.simulations.delete(id);
   }
 
-  // NEW: TPS Mode Management Methods
+  // FIXED: TPS Mode Management Methods - Async version to prevent conflicts
   
-  async setTPSMode(simulationId: string, mode: TPSMode): Promise<{
+  async setTPSModeAsync(simulationId: string, mode: string): Promise<{
     success: boolean;
     error?: string;
-    previousMode?: TPSMode;
+    previousMode?: string;
     metrics?: ExternalMarketMetrics;
   }> {
-    console.log(`🚀 [TPS] Setting TPS mode for simulation ${simulationId} to ${TPSMode[mode]}`);
+    console.log(`🚀 [TPS] Setting TPS mode for simulation ${simulationId} to ${mode}`);
     
     try {
       const simulation = this.simulations.get(simulationId);
@@ -900,16 +1128,39 @@ export class SimulationManager {
         };
       }
       
+      // Convert string mode to TPSMode enum
+      let tpsMode: TPSMode;
+      switch (mode.toUpperCase()) {
+        case 'NORMAL':
+          tpsMode = TPSMode.NORMAL;
+          break;
+        case 'BURST':
+          tpsMode = TPSMode.BURST;
+          break;
+        case 'STRESS':
+          tpsMode = TPSMode.STRESS;
+          break;
+        case 'HFT':
+          tpsMode = TPSMode.HFT;
+          break;
+        default:
+          return {
+            success: false,
+            error: `Invalid TPS mode: ${mode}`
+          };
+      }
+      
       const previousMode = simulation.currentTPSMode || TPSMode.NORMAL;
+      const previousModeString = TPSMode[previousMode];
       
       // Update simulation TPS mode
-      simulation.currentTPSMode = mode;
+      simulation.currentTPSMode = tpsMode;
       
       // Update external market engine
-      this.externalMarketEngine.setTPSMode(mode);
+      this.externalMarketEngine.setTPSMode(tpsMode);
       
       // Update external market metrics based on mode
-      const targetTPS = this.getTargetTPSForMode(mode);
+      const targetTPS = this.getTargetTPSForMode(tpsMode);
       if (simulation.externalMarketMetrics) {
         simulation.externalMarketMetrics.currentTPS = targetTPS;
         
@@ -920,7 +1171,7 @@ export class SimulationManager {
         simulation.externalMarketMetrics.queueDepth = 0;
         
         // Update dominant trader type based on mode
-        switch (mode) {
+        switch (tpsMode) {
           case TPSMode.NORMAL:
             simulation.externalMarketMetrics.dominantTraderType = ExternalTraderType.RETAIL_TRADER;
             break;
@@ -937,7 +1188,7 @@ export class SimulationManager {
       }
       
       // Apply market condition changes based on TPS mode
-      switch (mode) {
+      switch (tpsMode) {
         case TPSMode.NORMAL:
           simulation.marketConditions.volatility *= 1.0; // No change
           break;
@@ -960,25 +1211,15 @@ export class SimulationManager {
       // Save updated simulation
       this.simulations.set(simulationId, simulation);
       
-      console.log(`✅ [TPS] Successfully changed TPS mode to ${TPSMode[mode]} for simulation ${simulationId}`);
+      console.log(`✅ [TPS] Successfully changed TPS mode to ${mode} for simulation ${simulationId}`);
       
-      // Broadcast TPS mode change
-      this.broadcastService.broadcastEvent(simulationId, {
-        type: 'tps_mode_changed',
-        timestamp: Date.now(),
-        data: {
-          simulationId: simulationId,
-          previousMode: TPSMode[previousMode],
-          newMode: TPSMode[mode],
-          targetTPS: targetTPS,
-          metrics: simulation.externalMarketMetrics
-        }
-      });
+      // FIXED: Get live metrics for response
+      const liveMetrics = this.getLiveTPSMetrics(simulationId);
       
       return {
         success: true,
-        previousMode: previousMode,
-        metrics: simulation.externalMarketMetrics
+        previousMode: previousModeString,
+        metrics: liveMetrics || simulation.externalMarketMetrics
       };
       
     } catch (error) {
@@ -1096,6 +1337,13 @@ export class SimulationManager {
       this.processedTradesSyncInterval = null;
     }
     
+    // FIXED: Clean up all TPS metrics intervals
+    this.metricsUpdateIntervals.forEach((interval, simulationId) => {
+      clearInterval(interval);
+    });
+    this.metricsUpdateIntervals.clear();
+    this.liveTPSMetrics.clear();
+    
     this.simulations.forEach((simulation, id) => {
       if (simulation.isRunning) {
         this.pauseSimulation(id);
@@ -1139,35 +1387,7 @@ export class SimulationManager {
     this.simulations.set(simulationId, simulation);
   }
 
-  setTPSMode(simulationId: string, mode: TPSMode): void {
-    const simulation = this.simulations.get(simulationId);
-    if (!simulation) {
-      throw new Error(`Simulation ${simulationId} not found`);
-    }
-
-    this.externalMarketEngine.setTPSMode(mode);
-    simulation.currentTPSMode = mode;
-    
-    switch (mode) {
-      case TPSMode.HFT:
-        this.enableHighFrequencyMode(simulationId);
-        break;
-      case TPSMode.STRESS:
-        simulation.marketConditions.volatility *= 2;
-        break;
-    }
-    
-    this.simulations.set(simulationId, simulation);
-    
-    this.broadcastService.broadcastEvent(simulationId, {
-      type: 'tps_mode_changed',
-      timestamp: Date.now(),
-      data: {
-        mode: TPSMode[mode],
-        targetTPS: this.getTargetTPSForMode(mode)
-      }
-    });
-  }
+  // REMOVED: Duplicate setTPSMode method - replaced with setTPSModeAsync only
 
   enableHighFrequencyMode(simulationId: string): void {
     const simulation = this.simulations.get(simulationId);
