@@ -10,7 +10,7 @@ import OrderBook from './OrderBook';
 import RecentTrades from './RecentTrades';
 import ParticipantsOverview from './ParticipantsOverview';
 import PerformanceMonitor from './PerformanceMonitor';
-import TransactionProcessor from './TransactionProcessor';
+import StressTestController from './StressTestController'; // CHANGED: Import new component
 
 // Mobile components - will lazy load to avoid initial import errors
 const MobileDashboard = React.lazy(() => import('./mobile/MobileDashboard'));
@@ -173,7 +173,7 @@ const Dashboard: React.FC = () => {
   const [showDebugInfo, setShowDebugInfo] = useState<boolean>(false);
   
   const [showPerformanceMonitor, setShowPerformanceMonitor] = useState<boolean>(false);
-  const [showTransactionProcessor, setShowTransactionProcessor] = useState<boolean>(false);
+  const [showStressTestController, setShowStressTestController] = useState<boolean>(false); // CHANGED: Renamed state
   const [wsMessageCount, setWsMessageCount] = useState<number>(0);
   
   const [currentScenario, setCurrentScenario] = useState<any | null>(null);
@@ -1078,12 +1078,13 @@ const Dashboard: React.FC = () => {
             </button>
             
             <button 
-              onClick={() => setShowTransactionProcessor(!showTransactionProcessor)}
+              onClick={() => setShowStressTestController(!showStressTestController)}
               className={`text-xs px-2 py-1 rounded transition ${
-                showTransactionProcessor ? 'text-green-400 bg-green-900' : 'text-gray-400 hover:text-gray-300'
+                showStressTestController ? 'text-red-400 bg-red-900' : 'text-gray-400 hover:text-gray-300'
               }`}
+              title="Stress Test Controller"
             >
-              TXP
+              Stress
             </button>
 
             {process.env.NODE_ENV === 'development' && (
@@ -1272,9 +1273,9 @@ const Dashboard: React.FC = () => {
         simulationSpeed={simulationSpeed}
       />
 
-      <TransactionProcessor 
-        isVisible={showTransactionProcessor}
-        onToggle={() => setShowTransactionProcessor(!showTransactionProcessor)}
+      <StressTestController 
+        isVisible={showStressTestController}
+        onToggle={() => setShowStressTestController(!showStressTestController)}
         simulationRunning={simulation?.isRunning || false}
         simulationId={simulationId || undefined}
       />
