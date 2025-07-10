@@ -1,4 +1,4 @@
-// backend/src/services/simulation/SimulationManager.ts - PRODUCTION READY: Debug logs cleaned
+// backend/src/services/simulation/SimulationManager.ts - COMPLETE: TPS Mode Support Added
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import {
@@ -484,7 +484,8 @@ export class SimulationManager {
         recentTrades: simulation.recentTrades.slice(0, 200),
         traderRankings: simulation.traderRankings.slice(0, 20),
         externalMarketMetrics: simulation.externalMarketMetrics,
-        totalTradesProcessed: this.getTotalTradesProcessed(id)
+        totalTradesProcessed: this.getTotalTradesProcessed(id),
+        currentTPSMode: simulation.currentTPSMode
       }, marketAnalysis);
       
       // Start simulation loop
@@ -581,6 +582,9 @@ export class SimulationManager {
         this.marketEngine.updatePrice(simulation);
         this.traderEngine.processTraderActions(simulation);
         
+        // Process external market orders based on TPS mode
+        this.processExternalMarketActivity(simulation);
+        
         // Force additional trades if activity is low
         if (simulation.recentTrades.length < 50) {
           this.forceInitialTradingActivity(simulation, 20);
@@ -609,7 +613,8 @@ export class SimulationManager {
             traderRankings: simulation.traderRankings.slice(0, 20),
             timeframe: timeframe,
             externalMarketMetrics: simulation.externalMarketMetrics,
-            totalTradesProcessed: this.getTotalTradesProcessed(id)
+            totalTradesProcessed: this.getTotalTradesProcessed(id),
+            currentTPSMode: simulation.currentTPSMode
           }
         }, marketAnalysis);
         
@@ -619,6 +624,56 @@ export class SimulationManager {
     } catch (error) {
       console.error(`Error advancing simulation ${id}:`, error);
     }
+  }
+
+  // NEW: Process external market activity based on TPS mode
+  private processExternalMarketActivity(simulation: ExtendedSimulationState): void {
+    try {
+      const externalTrades = this.externalMarketEngine.processExternalOrders(simulation);
+      
+      if (externalTrades.length > 0) {
+        // Add external trades to simulation
+        simulation.recentTrades.unshift(...externalTrades as any[]);
+        
+        // Keep trade list manageable
+        if (simulation.recentTrades.length > 2000) {
+          simulation.recentTrades = simulation.recentTrades.slice(0, 1000);
+        }
+        
+        // Update external market metrics
+        if (simulation.externalMarketMetrics) {
+          simulation.externalMarketMetrics.processedOrders += externalTrades.length;
+          simulation.externalMarketMetrics.actualTPS = this.calculateActualTPS(simulation);
+          
+          // Update market sentiment based on external trades
+          const recentExternalTrades = externalTrades.slice(0, 20);
+          const buyCount = recentExternalTrades.filter(t => t.action === 'buy').length;
+          const sellCount = recentExternalTrades.filter(t => t.action === 'sell').length;
+          
+          if (buyCount > sellCount * 1.5) {
+            simulation.externalMarketMetrics.marketSentiment = 'bullish';
+          } else if (sellCount > buyCount * 1.5) {
+            simulation.externalMarketMetrics.marketSentiment = 'bearish';
+          } else {
+            simulation.externalMarketMetrics.marketSentiment = 'neutral';
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`Error processing external market activity for ${simulation.id}:`, error);
+    }
+  }
+
+  // NEW: Calculate actual TPS
+  private calculateActualTPS(simulation: ExtendedSimulationState): number {
+    const now = Date.now();
+    const oneSecondAgo = now - 1000;
+    
+    const recentTrades = simulation.recentTrades.filter(trade => 
+      trade.timestamp > oneSecondAgo
+    );
+    
+    return recentTrades.length;
   }
 
   // PRODUCTION: Force initial trading activity
@@ -761,6 +816,8 @@ export class SimulationManager {
     simulation.closedPositions = []; // CRITICAL: Clear closed positions
     simulation.recentTrades = []; // CRITICAL: Clear trades
     simulation._tickCounter = 0;
+    
+    // Reset TPS mode to NORMAL
     simulation.currentTPSMode = TPSMode.NORMAL;
     simulation.externalMarketMetrics = {
       currentTPS: 25,
@@ -820,6 +877,217 @@ export class SimulationManager {
     this.registrationCallbacks.delete(id);
     this.timeframeManager.clearCache(id);
     this.simulations.delete(id);
+  }
+
+  // NEW: TPS Mode Management Methods
+  
+  async setTPSMode(simulationId: string, mode: TPSMode): Promise<{
+    success: boolean;
+    error?: string;
+    previousMode?: TPSMode;
+    metrics?: ExternalMarketMetrics;
+  }> {
+    console.log(`🚀 [TPS] Setting TPS mode for simulation ${simulationId} to ${TPSMode[mode]}`);
+    
+    try {
+      const simulation = this.simulations.get(simulationId);
+      
+      if (!simulation) {
+        console.error(`❌ [TPS] Simulation ${simulationId} not found`);
+        return {
+          success: false,
+          error: `Simulation ${simulationId} not found`
+        };
+      }
+      
+      const previousMode = simulation.currentTPSMode || TPSMode.NORMAL;
+      
+      // Update simulation TPS mode
+      simulation.currentTPSMode = mode;
+      
+      // Update external market engine
+      this.externalMarketEngine.setTPSMode(mode);
+      
+      // Update external market metrics based on mode
+      const targetTPS = this.getTargetTPSForMode(mode);
+      if (simulation.externalMarketMetrics) {
+        simulation.externalMarketMetrics.currentTPS = targetTPS;
+        
+        // Reset counters for new mode
+        simulation.externalMarketMetrics.actualTPS = 0;
+        simulation.externalMarketMetrics.processedOrders = 0;
+        simulation.externalMarketMetrics.rejectedOrders = 0;
+        simulation.externalMarketMetrics.queueDepth = 0;
+        
+        // Update dominant trader type based on mode
+        switch (mode) {
+          case TPSMode.NORMAL:
+            simulation.externalMarketMetrics.dominantTraderType = ExternalTraderType.RETAIL_TRADER;
+            break;
+          case TPSMode.BURST:
+            simulation.externalMarketMetrics.dominantTraderType = ExternalTraderType.ARBITRAGE_BOT;
+            break;
+          case TPSMode.STRESS:
+            simulation.externalMarketMetrics.dominantTraderType = ExternalTraderType.PANIC_SELLER;
+            break;
+          case TPSMode.HFT:
+            simulation.externalMarketMetrics.dominantTraderType = ExternalTraderType.MEV_BOT;
+            break;
+        }
+      }
+      
+      // Apply market condition changes based on TPS mode
+      switch (mode) {
+        case TPSMode.NORMAL:
+          simulation.marketConditions.volatility *= 1.0; // No change
+          break;
+        case TPSMode.BURST:
+          simulation.marketConditions.volatility *= 1.2;
+          simulation.marketConditions.volume *= 1.5;
+          break;
+        case TPSMode.STRESS:
+          simulation.marketConditions.volatility *= 2.0;
+          simulation.marketConditions.volume *= 3.0;
+          simulation.marketConditions.trend = 'bearish';
+          break;
+        case TPSMode.HFT:
+          simulation.marketConditions.volatility *= 1.8;
+          simulation.marketConditions.volume *= 5.0;
+          this.enableHighFrequencyMode(simulationId);
+          break;
+      }
+      
+      // Save updated simulation
+      this.simulations.set(simulationId, simulation);
+      
+      console.log(`✅ [TPS] Successfully changed TPS mode to ${TPSMode[mode]} for simulation ${simulationId}`);
+      
+      // Broadcast TPS mode change
+      this.broadcastService.broadcastEvent(simulationId, {
+        type: 'tps_mode_changed',
+        timestamp: Date.now(),
+        data: {
+          simulationId: simulationId,
+          previousMode: TPSMode[previousMode],
+          newMode: TPSMode[mode],
+          targetTPS: targetTPS,
+          metrics: simulation.externalMarketMetrics
+        }
+      });
+      
+      return {
+        success: true,
+        previousMode: previousMode,
+        metrics: simulation.externalMarketMetrics
+      };
+      
+    } catch (error) {
+      console.error(`❌ [TPS] Error setting TPS mode for ${simulationId}:`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error setting TPS mode'
+      };
+    }
+  }
+
+  async triggerLiquidationCascade(simulationId: string): Promise<{
+    success: boolean;
+    error?: string;
+    ordersGenerated?: number;
+    estimatedImpact?: number;
+    cascadeSize?: number;
+  }> {
+    console.log(`💥 [LIQUIDATION] Triggering liquidation cascade for simulation ${simulationId}`);
+    
+    try {
+      const simulation = this.simulations.get(simulationId);
+      
+      if (!simulation) {
+        console.error(`❌ [LIQUIDATION] Simulation ${simulationId} not found`);
+        return {
+          success: false,
+          error: `Simulation ${simulationId} not found`
+        };
+      }
+      
+      // Check if simulation is in appropriate mode
+      const currentMode = simulation.currentTPSMode || TPSMode.NORMAL;
+      if (currentMode !== TPSMode.STRESS && currentMode !== TPSMode.HFT) {
+        console.error(`❌ [LIQUIDATION] Invalid mode for liquidation cascade: ${TPSMode[currentMode]}`);
+        return {
+          success: false,
+          error: `Liquidation cascade requires STRESS or HFT mode, current mode is ${TPSMode[currentMode]}`
+        };
+      }
+      
+      // Trigger liquidation cascade through external market engine
+      const liquidationOrders = this.externalMarketEngine.triggerLiquidationCascade(simulation);
+      
+      if (liquidationOrders.length === 0) {
+        console.warn(`⚠️ [LIQUIDATION] No liquidation orders generated for ${simulationId}`);
+        return {
+          success: false,
+          error: 'Failed to generate liquidation orders'
+        };
+      }
+      
+      // Calculate estimated market impact
+      const totalLiquidationValue = liquidationOrders.reduce((sum, order) => 
+        sum + (order.price * order.quantity), 0
+      );
+      
+      const marketCap = simulation.currentPrice * 1000000; // Assume 1M token supply
+      const estimatedImpact = (totalLiquidationValue / marketCap) * 100;
+      
+      // Update simulation metrics
+      if (simulation.externalMarketMetrics) {
+        simulation.externalMarketMetrics.liquidationRisk = Math.min(100, estimatedImpact);
+        simulation.externalMarketMetrics.marketSentiment = 'bearish';
+      }
+      
+      // Force market conditions to reflect panic
+      simulation.marketConditions.trend = 'bearish';
+      simulation.marketConditions.volatility *= 1.5;
+      
+      console.log(`✅ [LIQUIDATION] Liquidation cascade triggered: ${liquidationOrders.length} orders, estimated impact: ${estimatedImpact.toFixed(2)}%`);
+      
+      // Broadcast liquidation event
+      this.broadcastService.broadcastEvent(simulationId, {
+        type: 'liquidation_cascade_triggered',
+        timestamp: Date.now(),
+        data: {
+          simulationId: simulationId,
+          ordersGenerated: liquidationOrders.length,
+          estimatedImpact: estimatedImpact,
+          totalValue: totalLiquidationValue,
+          marketConditions: simulation.marketConditions
+        }
+      });
+      
+      return {
+        success: true,
+        ordersGenerated: liquidationOrders.length,
+        estimatedImpact: estimatedImpact,
+        cascadeSize: liquidationOrders.length
+      };
+      
+    } catch (error) {
+      console.error(`❌ [LIQUIDATION] Error triggering liquidation cascade for ${simulationId}:`, error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error triggering liquidation cascade'
+      };
+    }
+  }
+
+  private getTargetTPSForMode(mode: TPSMode): number {
+    switch (mode) {
+      case TPSMode.NORMAL: return 25;
+      case TPSMode.BURST: return 150;
+      case TPSMode.STRESS: return 1500;
+      case TPSMode.HFT: return 15000;
+      default: return 25;
+    }
   }
 
   cleanup(): void {
@@ -911,16 +1179,6 @@ export class SimulationManager {
     simulation.marketConditions.volume *= 2;
     
     this.simulations.set(simulationId, simulation);
-  }
-
-  private getTargetTPSForMode(mode: TPSMode): number {
-    switch (mode) {
-      case TPSMode.NORMAL: return 25;
-      case TPSMode.BURST: return 150;
-      case TPSMode.STRESS: return 1500;
-      case TPSMode.HFT: return 15000;
-      default: return 25;
-    }
   }
 }
 
