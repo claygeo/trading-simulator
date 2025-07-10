@@ -1,7 +1,53 @@
-// backend/src/types/simulation.ts - FIXED: Export TraderProfile and add templateInfo
+// backend/src/types/simulation.ts - FIXED: Export TraderProfile and add TPS support
 import { Trader, TraderProfile } from './traders';
 
 export { TraderProfile }; // FIXED: Export TraderProfile
+
+// NEW: TPS Mode enumeration for stress testing
+export enum TPSMode {
+  NORMAL = 'NORMAL',   // 10 TPS - Market makers & retail traders
+  BURST = 'BURST',     // 100 TPS - Increased retail & arbitrage activity  
+  STRESS = 'STRESS',   // 1K TPS - Panic sellers & MEV bots
+  HFT = 'HFT'          // 10K TPS - MEV bots, whales & arbitrage
+}
+
+// NEW: External trader types for stress testing
+export enum ExternalTraderType {
+  ARBITRAGE_BOT = 'ARBITRAGE_BOT',
+  RETAIL_TRADER = 'RETAIL_TRADER', 
+  MARKET_MAKER = 'MARKET_MAKER',
+  MEV_BOT = 'MEV_BOT',
+  WHALE = 'WHALE',
+  PANIC_SELLER = 'PANIC_SELLER'
+}
+
+// NEW: External order interface for stress testing
+export interface ExternalOrder {
+  id: string;
+  timestamp: number;
+  traderType: ExternalTraderType;
+  action: 'buy' | 'sell';
+  price: number;
+  quantity: number;
+  priority: number;
+  strategy: string;
+}
+
+// NEW: External market engine interface
+export interface IExternalMarketEngine {
+  setTPSMode(mode: TPSMode): void;
+  generateExternalOrders(simulation: SimulationState): ExternalOrder[];
+  processExternalOrders(simulation: SimulationState): Trade[];
+  detectMEVOpportunity(simulation: SimulationState, pendingOrder: any): ExternalOrder | null;
+  triggerLiquidationCascade(simulation: SimulationState): ExternalOrder[];
+  getMarketPressureMetrics(): {
+    currentTPS: number;
+    queueDepth: number;
+    dominantTraderType: ExternalTraderType;
+    marketSentiment: 'bullish' | 'bearish' | 'neutral';
+  };
+  cleanup(): void;
+}
 
 export interface SimulationParameters {
   timeCompressionFactor: number;
@@ -96,6 +142,26 @@ export interface SimulationState {
   _tickCounter?: number;
   lastUpdateTimestamp?: number; // Track last update timestamp
   timestampOffset?: number; // Offset between real time and simulation time
+  
+  // NEW: Stress testing properties
+  tpsMode?: TPSMode; // Current TPS mode
+  externalMarketEngine?: IExternalMarketEngine; // External market engine for stress testing
+  externalMarketMetrics?: {
+    currentTPS: number;
+    queueDepth: number;
+    dominantTraderType: ExternalTraderType;
+    marketSentiment: 'bullish' | 'bearish' | 'neutral';
+    totalExternalOrders: number;
+    successfulExecutions: number;
+  };
+  tpsMetrics?: {
+    targetTPS: number;
+    actualTPS: number;
+    peakTPS: number;
+    averageTPS: number;
+    totalOrdersProcessed: number;
+    marketPressureLevel: 'low' | 'medium' | 'high' | 'extreme';
+  };
 }
 
 // Additional interfaces for the SimulationManager methods
@@ -112,6 +178,10 @@ export interface SimulationSummary {
   type: 'real-time'; // Always real-time now
   chartStatus: 'empty-ready' | 'building';
   candleCount: number;
+  // NEW: Stress testing summary fields
+  tpsMode?: TPSMode;
+  currentTPS?: number;
+  marketPressure?: 'low' | 'medium' | 'high' | 'extreme';
 }
 
 export interface TradesResponse {
@@ -123,4 +193,29 @@ export interface TradesResponse {
 export interface PositionsResponse {
   active: TraderPosition[];
   closed: (TraderPosition & { exitPrice: number; exitTime: number })[];
+}
+
+// NEW: TPS mode change result interface
+export interface TPSModeChangeResult {
+  success: boolean;
+  error?: string;
+  previousMode?: TPSMode;
+  newMode?: TPSMode;
+  metrics?: {
+    targetTPS: number;
+    estimatedImpact: string;
+    traderTypesActivated: ExternalTraderType[];
+  };
+}
+
+// NEW: Liquidation cascade result interface
+export interface LiquidationCascadeResult {
+  success: boolean;
+  error?: string;
+  ordersGenerated?: number;
+  estimatedImpact?: {
+    priceDropPercentage: number;
+    volumeImpact: number;
+    timeToExecute: number;
+  };
 }
