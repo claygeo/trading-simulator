@@ -1,4 +1,4 @@
-// frontend/src/services/websocket.ts
+// frontend/src/services/websocket.ts - FIXED: Enhanced TPS Support & Reliable Metrics
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 interface WebSocketMessage {
@@ -256,7 +256,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     }
   }, [simulationId]);
 
-  // NEW: Function to send TPS mode changes
+  // FIXED: Enhanced TPS mode change function
   const sendTPSModeChange = useCallback((mode: string) => {
     if (ws.current && ws.current.readyState === WebSocket.OPEN && simulationId) {
       try {
@@ -266,15 +266,25 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
           mode,
           timestamp: Date.now()
         };
+        
+        console.log(`🚀 [WS] Sending TPS mode change:`, message);
         ws.current.send(JSON.stringify(message));
-        console.log(`TPS mode change sent: ${mode} for simulation ${simulationId}`);
+        console.log(`✅ [WS] TPS mode change sent: ${mode} for simulation ${simulationId}`);
       } catch (error: unknown) {
-        console.error('Error sending TPS mode change:', getErrorMessage(error));
+        console.error('❌ [WS] Error sending TPS mode change:', getErrorMessage(error));
       }
+    } else {
+      console.warn('⚠️ [WS] Cannot send TPS mode change - WebSocket not ready or no simulation ID');
+      console.log('WebSocket state:', {
+        wsExists: !!ws.current,
+        readyState: ws.current?.readyState,
+        simulationId,
+        expectedReadyState: WebSocket.OPEN
+      });
     }
   }, [simulationId]);
 
-  // NEW: Function to send custom stress test messages
+  // FIXED: Enhanced stress test message function
   const sendStressTestMessage = useCallback((messageType: string, data: any) => {
     if (ws.current && ws.current.readyState === WebSocket.OPEN && simulationId) {
       try {
@@ -284,11 +294,15 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
           timestamp: Date.now(),
           ...data
         };
+        
+        console.log(`🧪 [WS] Sending stress test message:`, message);
         ws.current.send(JSON.stringify(message));
-        console.log(`Stress test message sent: ${messageType}`);
+        console.log(`✅ [WS] Stress test message sent: ${messageType}`);
       } catch (error: unknown) {
-        console.error('Error sending stress test message:', getErrorMessage(error));
+        console.error('❌ [WS] Error sending stress test message:', getErrorMessage(error));
       }
+    } else {
+      console.warn('⚠️ [WS] Cannot send stress test message - WebSocket not ready or no simulation ID');
     }
   }, [simulationId]);
 
@@ -302,6 +316,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       setConnectionError(null);
       
       const wsUrl = getWebSocketUrl();
+      console.log(`🔌 [WS] Connecting to: ${wsUrl}`);
       
       if (ws.current) {
         try {
@@ -319,6 +334,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       (window as any).wsConnection = ws.current;
       
       ws.current.onopen = () => {
+        console.log('✅ [WS] Connection established');
         setIsConnected(true);
         setConnectionError(null);
         reconnectAttempts.current = 0;
@@ -354,14 +370,16 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
                     encodingFallbacks: ['utf-8', 'latin1', 'ascii'],
                     ultraFastMode: true,
                     maxMessageRate: 1000,
-                    stressTestSupport: true, // NEW: Indicate stress test support
-                    tpsModeSupport: true     // NEW: Indicate TPS mode support
+                    stressTestSupport: true, // TPS support
+                    tpsModeSupport: true,     // TPS mode support
+                    metricsSupport: true      // Enhanced metrics support
                   }
                 };
                 
+                console.log(`📡 [WS] Subscribing to simulation: ${simulationId}`);
                 ws.current.send(JSON.stringify(subscribeMessage));
               } catch (error: unknown) {
-                console.error('Failed to subscribe:', getErrorMessage(error));
+                console.error('❌ [WS] Failed to subscribe:', getErrorMessage(error));
               }
             }
           }, 200);
@@ -381,25 +399,42 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
           }
           lastMessageId.current = messageId;
           
+          // FIXED: Handle TPS-related message types specifically
           if (data.type) {
             switch (data.type) {
               case 'connection':
+                console.log('🔗 [WS] Connection confirmed');
+                return;
               case 'subscription_confirmed':
+                console.log('✅ [WS] Subscription confirmed for simulation:', data.simulationId);
+                return;
               case 'pong':
+                return;
               case 'backend_ready':
+                console.log('🏁 [WS] Backend ready');
                 return;
               case 'error':
-                console.error('Backend WebSocket error:', data.message);
+                console.error('❌ [WS] Backend error:', data.message);
                 setConnectionError(data.message || 'Unknown backend error');
                 return;
-              // NEW: Handle TPS mode confirmation
+              // FIXED: Handle TPS mode confirmation
               case 'tps_mode_changed':
-                console.log('TPS mode changed:', data.mode);
-                return;
-              // NEW: Handle stress test responses
+                console.log('🔄 [WS] TPS mode changed confirmed:', data);
+                // Pass through to message queue for UI handling
+                break;
+              // FIXED: Handle stress test responses
               case 'stress_test_response':
-                console.log('Stress test response:', data);
-                return;
+                console.log('🧪 [WS] Stress test response:', data);
+                // Pass through to message queue for UI handling
+                break;
+              // FIXED: Handle TPS status responses
+              case 'tps_status':
+                console.log('📊 [WS] TPS status received:', data);
+                // Pass through to message queue for UI handling
+                break;
+              default:
+                // Pass through other message types
+                break;
             }
           }
           
@@ -407,11 +442,19 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
             const message: WebSocketMessage = {
               simulationId: data.simulationId,
               event: {
-                type: data.event.type || 'unknown',
+                type: data.event.type || data.type || 'unknown',
                 timestamp: data.event.timestamp || Date.now(),
-                data: data.event.data || {}
+                data: data.event.data || data.data || {}
               }
             };
+            
+            // FIXED: Priority handling for TPS-related messages
+            if (message.event.type === 'external_market_pressure' || 
+                message.event.type === 'tps_mode_changed' ||
+                message.event.type === 'tps_status' ||
+                message.event.type === 'stress_test_response') {
+              console.log(`🎯 [WS] Priority TPS message: ${message.event.type}`, message.event.data);
+            }
             
             messageQueue.current.push({
               message,
@@ -424,20 +467,39 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
             }
             
             processMessageQueue();
+          } else if (data.type) {
+            // Handle direct message types (like TPS confirmations)
+            const message: WebSocketMessage = {
+              simulationId: data.simulationId || simulationId || 'unknown',
+              event: {
+                type: data.type,
+                timestamp: data.timestamp || Date.now(),
+                data: data
+              }
+            };
+            
+            messageQueue.current.push({
+              message,
+              timestamp: Date.now()
+            });
+            
+            processMessageQueue();
           }
           
         } catch (error: unknown) {
           messageStats.current.parseErrors++;
+          console.error('❌ [WS] Message parse error:', getErrorMessage(error));
         }
       };
 
       ws.current.onerror = (error) => {
-        console.error('WebSocket error:', error);
+        console.error('❌ [WS] WebSocket error:', error);
         setIsConnected(false);
         setConnectionError('Backend connection error - check if backend is running');
       };
 
       ws.current.onclose = (event) => {
+        console.log(`🔌 [WS] Connection closed: code=${event.code}, reason=${event.reason}`);
         setIsConnected(false);
         ws.current = null;
         
@@ -458,6 +520,8 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
           reconnectAttempts.current++;
           const delay = Math.min(10000, reconnectDelay * Math.pow(1.5, reconnectAttempts.current - 1));
           
+          console.log(`🔄 [WS] Reconnecting in ${delay}ms (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})`);
+          
           reconnectTimeout.current = setTimeout(() => {
             connect();
           }, delay);
@@ -467,7 +531,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       };
       
     } catch (error: unknown) {
-      console.error('Failed to create WebSocket connection:', getErrorMessage(error));
+      console.error('❌ [WS] Failed to create WebSocket connection:', getErrorMessage(error));
       setIsConnected(false);
       setConnectionError('Failed to create backend connection - check configuration');
     }
@@ -475,8 +539,10 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
 
   useEffect(() => {
     if (simulationId) {
+      console.log(`🎯 [WS] Setting up WebSocket for simulation: ${simulationId}`);
       connect();
     } else {
+      console.log('🔌 [WS] No simulation ID - closing connection');
       if (ws.current) {
         try {
           ws.current.close(1000, 'No simulation ID');
@@ -500,13 +566,14 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       if (ws.current) {
         if (simulationId && ws.current.readyState === WebSocket.OPEN) {
           try {
+            console.log(`📡 [WS] Unsubscribing from simulation: ${simulationId}`);
             ws.current.send(JSON.stringify({
               type: 'unsubscribe',
               simulationId: simulationId,
               timestamp: Date.now()
             }));
           } catch (error: unknown) {
-            console.error('Error unsubscribing:', getErrorMessage(error));
+            console.error('❌ [WS] Error unsubscribing:', getErrorMessage(error));
           }
         }
         
@@ -532,10 +599,12 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     }
   }, [isPaused, simulationId, setPauseState]);
 
+  // FIXED: Enhanced ping with TPS status request
   useEffect(() => {
     const pingInterval = setInterval(() => {
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
         try {
+          // Send regular ping
           ws.current.send(JSON.stringify({
             type: 'ping',
             timestamp: Date.now(),
@@ -546,14 +615,19 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
               queueSize: messageQueue.current.length
             }
           }));
+          
+          // Periodically request TPS status if we have a simulation
+          if (simulationId && Math.random() < 0.3) { // 30% chance per ping
+            sendStressTestMessage('get_tps_status', { simulationId });
+          }
         } catch (error: unknown) {
-          console.error('Ping error:', getErrorMessage(error));
+          console.error('❌ [WS] Ping error:', getErrorMessage(error));
         }
       }
-    }, 25000);
+    }, 25000); // Every 25 seconds
 
     return () => clearInterval(pingInterval);
-  }, [simulationId]);
+  }, [simulationId, sendStressTestMessage]);
 
   return { 
     isConnected, 
@@ -561,7 +635,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     setPauseState,
     connectionError,
     messageStats: messageStats.current,
-    // NEW: Export stress test functions
+    // FIXED: Export enhanced stress test functions
     sendTPSModeChange,
     sendStressTestMessage
   };
