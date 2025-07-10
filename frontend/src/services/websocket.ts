@@ -256,6 +256,42 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     }
   }, [simulationId]);
 
+  // NEW: Function to send TPS mode changes
+  const sendTPSModeChange = useCallback((mode: string) => {
+    if (ws.current && ws.current.readyState === WebSocket.OPEN && simulationId) {
+      try {
+        const message = {
+          type: 'set_tps_mode',
+          simulationId,
+          mode,
+          timestamp: Date.now()
+        };
+        ws.current.send(JSON.stringify(message));
+        console.log(`TPS mode change sent: ${mode} for simulation ${simulationId}`);
+      } catch (error: unknown) {
+        console.error('Error sending TPS mode change:', getErrorMessage(error));
+      }
+    }
+  }, [simulationId]);
+
+  // NEW: Function to send custom stress test messages
+  const sendStressTestMessage = useCallback((messageType: string, data: any) => {
+    if (ws.current && ws.current.readyState === WebSocket.OPEN && simulationId) {
+      try {
+        const message = {
+          type: messageType,
+          simulationId,
+          timestamp: Date.now(),
+          ...data
+        };
+        ws.current.send(JSON.stringify(message));
+        console.log(`Stress test message sent: ${messageType}`);
+      } catch (error: unknown) {
+        console.error('Error sending stress test message:', getErrorMessage(error));
+      }
+    }
+  }, [simulationId]);
+
   const connect = useCallback(() => {
     try {
       if (reconnectTimeout.current) {
@@ -278,6 +314,9 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       
       ws.current = new WebSocket(wsUrl);
       ws.current.binaryType = 'arraybuffer';
+      
+      // CRITICAL: Store WebSocket reference globally for StressTestController
+      (window as any).wsConnection = ws.current;
       
       ws.current.onopen = () => {
         setIsConnected(true);
@@ -314,7 +353,9 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
                     binaryHandling: true,
                     encodingFallbacks: ['utf-8', 'latin1', 'ascii'],
                     ultraFastMode: true,
-                    maxMessageRate: 1000
+                    maxMessageRate: 1000,
+                    stressTestSupport: true, // NEW: Indicate stress test support
+                    tpsModeSupport: true     // NEW: Indicate TPS mode support
                   }
                 };
                 
@@ -350,6 +391,14 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
               case 'error':
                 console.error('Backend WebSocket error:', data.message);
                 setConnectionError(data.message || 'Unknown backend error');
+                return;
+              // NEW: Handle TPS mode confirmation
+              case 'tps_mode_changed':
+                console.log('TPS mode changed:', data.mode);
+                return;
+              // NEW: Handle stress test responses
+              case 'stress_test_response':
+                console.log('Stress test response:', data);
                 return;
             }
           }
@@ -392,6 +441,9 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
         setIsConnected(false);
         ws.current = null;
         
+        // Clear global reference
+        (window as any).wsConnection = null;
+        
         if (event.code === 1006) {
           setConnectionError('Backend connection lost unexpectedly');
         } else if (event.code === 1001) {
@@ -433,6 +485,9 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
         }
         ws.current = null;
         setIsConnected(false);
+        
+        // Clear global reference
+        (window as any).wsConnection = null;
       }
     }
 
@@ -461,6 +516,9 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
           // Ignore close errors
         }
         ws.current = null;
+        
+        // Clear global reference
+        (window as any).wsConnection = null;
       }
       
       messageQueue.current = [];
@@ -502,6 +560,9 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     lastMessage, 
     setPauseState,
     connectionError,
-    messageStats: messageStats.current
+    messageStats: messageStats.current,
+    // NEW: Export stress test functions
+    sendTPSModeChange,
+    sendStressTestMessage
   };
 };
