@@ -1,4 +1,4 @@
-// backend/src/services/simulation/ExternalMarketEngine.ts - FIXED: Complete traderMix
+// backend/src/services/simulation/ExternalMarketEngine.ts - COMPLETE: Enhanced TPS Processing & Metrics
 import { v4 as uuidv4 } from 'uuid';
 import { 
   SimulationState, 
@@ -12,7 +12,7 @@ import {
 import { ObjectPool } from '../../utils/objectPool';
 
 export class ExternalMarketEngine implements IExternalMarketEngine {
-  // FIXED: Initialize in constructor
+  // Initialize in constructor
   private orderPool: ObjectPool<ExternalOrder>;
   private currentTPSMode: TPSMode = TPSMode.NORMAL;
   private externalOrderQueue: ExternalOrder[] = [];
@@ -20,11 +20,17 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
   private orderGenerationWorkers: any[] = [];
   private orderCounter: number = 0;
   
+  // Add metrics tracking
+  private processedOrdersCount: number = 0;
+  private rejectedOrdersCount: number = 0;
+  private lastTPSCalculation: number = 0;
+  private tpsHistory: number[] = [];
+  
   constructor(
     private processOrder: (order: ExternalOrder, simulation: SimulationState) => Trade | null,
     private broadcastEvent: (simulationId: string, event: any) => void
   ) {
-    // FIXED: Initialize object pool in constructor
+    // Initialize object pool in constructor
     this.orderPool = new ObjectPool<ExternalOrder>(
       () => ({
         id: '',
@@ -96,10 +102,10 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
     }
   };
 
-  // FIXED: TPS mode configurations with complete trader mix
+  // TPS mode configurations with complete trader mix
   private readonly tpsModeConfigs = {
     [TPSMode.NORMAL]: {
-      targetTPS: 10,
+      targetTPS: 25,
       traderMix: {
         [ExternalTraderType.MARKET_MAKER]: 0.4,
         [ExternalTraderType.RETAIL_TRADER]: 0.4,
@@ -108,10 +114,11 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
         [ExternalTraderType.WHALE]: 0.0,
         [ExternalTraderType.PANIC_SELLER]: 0.0
       },
-      volatilityMultiplier: 1
+      volatilityMultiplier: 1,
+      orderBurstSize: 1
     },
     [TPSMode.BURST]: {
-      targetTPS: 100,
+      targetTPS: 150,
       traderMix: {
         [ExternalTraderType.RETAIL_TRADER]: 0.5,
         [ExternalTraderType.ARBITRAGE_BOT]: 0.3,
@@ -120,10 +127,11 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
         [ExternalTraderType.WHALE]: 0.0,
         [ExternalTraderType.PANIC_SELLER]: 0.0
       },
-      volatilityMultiplier: 1.5
+      volatilityMultiplier: 1.5,
+      orderBurstSize: 3
     },
     [TPSMode.STRESS]: {
-      targetTPS: 1000,
+      targetTPS: 1500,
       traderMix: {
         [ExternalTraderType.PANIC_SELLER]: 0.3,
         [ExternalTraderType.ARBITRAGE_BOT]: 0.3,
@@ -132,10 +140,11 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
         [ExternalTraderType.WHALE]: 0.1,
         [ExternalTraderType.MARKET_MAKER]: 0.0
       },
-      volatilityMultiplier: 3
+      volatilityMultiplier: 3,
+      orderBurstSize: 10
     },
     [TPSMode.HFT]: {
-      targetTPS: 10000,
+      targetTPS: 15000,
       traderMix: {
         [ExternalTraderType.ARBITRAGE_BOT]: 0.4,
         [ExternalTraderType.MEV_BOT]: 0.3,
@@ -144,21 +153,29 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
         [ExternalTraderType.PANIC_SELLER]: 0.05,
         [ExternalTraderType.RETAIL_TRADER]: 0.0
       },
-      volatilityMultiplier: 5
+      volatilityMultiplier: 5,
+      orderBurstSize: 50
     }
   };
 
   setTPSMode(mode: TPSMode): void {
     this.currentTPSMode = mode;
-    console.log(`External Market Engine: TPS mode set to ${TPSMode[mode]}`);
+    console.log(`🔧 [EXTERNAL MARKET] TPS mode set to ${TPSMode[mode]}`);
     
     // Reset timing when mode changes
     this.lastProcessTime = 0;
+    this.lastTPSCalculation = 0;
+    this.processedOrdersCount = 0;
+    this.rejectedOrdersCount = 0;
+    this.tpsHistory = [];
     
-    // Worker scaling disabled for now
-    console.log('External order generation will run in-process');
+    // Clear any backlogged orders when switching modes
+    this.externalOrderQueue = [];
+    
+    console.log(`🎯 [EXTERNAL MARKET] Target TPS: ${this.tpsModeConfigs[mode].targetTPS}`);
   }
 
+  // Enhanced order generation with better TPS distribution
   generateExternalOrders(simulation: SimulationState): ExternalOrder[] {
     const config = this.tpsModeConfigs[this.currentTPSMode];
     const now = Date.now();
@@ -172,19 +189,24 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
     const timeDelta = now - this.lastProcessTime;
     this.lastProcessTime = now;
 
-    // Calculate number of orders to generate based on time elapsed
+    // Better TPS calculation - more consistent order generation
     const targetOrdersPerSecond = config.targetTPS;
+    const baseOrdersToGenerate = (targetOrdersPerSecond * timeDelta) / 1000;
+    
+    // Add some randomness but ensure minimum activity
+    const randomMultiplier = 0.8 + (Math.random() * 0.4); // 80% to 120% of target
     const ordersToGenerate = Math.max(
-      this.currentTPSMode === TPSMode.NORMAL ? 1 : 0, // At least 1 order per tick in normal mode
-      Math.ceil((targetOrdersPerSecond * timeDelta) / 1000)
+      this.currentTPSMode === TPSMode.NORMAL ? 1 : 2, // Minimum orders per tick
+      Math.ceil(baseOrdersToGenerate * randomMultiplier)
     );
     
     const orders: ExternalOrder[] = [];
 
-    // Cap orders per tick to prevent overwhelming the system
-    const cappedOrders = Math.min(ordersToGenerate, this.getMaxOrdersPerTick());
+    // Use burst size for high TPS modes
+    const burstSize = config.orderBurstSize;
+    const effectiveOrders = Math.min(ordersToGenerate * burstSize, this.getMaxOrdersPerTick());
 
-    for (let i = 0; i < cappedOrders; i++) {
+    for (let i = 0; i < effectiveOrders; i++) {
       const traderType = this.selectTraderType(config.traderMix);
       const order = this.generateOrderForTrader(traderType, simulation);
       if (order) {
@@ -192,10 +214,17 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
       }
     }
 
+    if (orders.length > 0) {
+      console.log(`🏭 [ORDER GEN] Generated ${orders.length} orders in ${TPSMode[this.currentTPSMode]} mode (target: ${targetOrdersPerSecond} TPS)`);
+    }
+
     return orders;
   }
 
+  // Enhanced order processing with better metrics tracking
   processExternalOrders(simulation: SimulationState): Trade[] {
+    const startTime = Date.now();
+    
     // Generate new orders
     const newOrders = this.generateExternalOrders(simulation);
     this.externalOrderQueue.push(...newOrders);
@@ -207,23 +236,52 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
     const maxOrdersPerTick = this.getMaxOrdersPerTick();
     const ordersToProcess = this.externalOrderQueue.splice(0, maxOrdersPerTick);
     const trades: Trade[] = [];
+    let processedCount = 0;
+    let rejectedCount = 0;
 
     for (const order of ordersToProcess) {
       try {
         const trade = this.processOrder(order, simulation);
         if (trade) {
           trades.push(trade);
+          processedCount++;
+        } else {
+          rejectedCount++;
         }
       } catch (error) {
         console.error('Error processing external order:', error);
+        rejectedCount++;
       } finally {
         this.orderPool.release(order);
       }
     }
 
-    // Broadcast market pressure metrics
-    if (trades.length > 0 || this.externalOrderQueue.length > 0) {
+    // Update metrics tracking
+    this.processedOrdersCount += processedCount;
+    this.rejectedOrdersCount += rejectedCount;
+    
+    // Calculate TPS every second
+    const now = Date.now();
+    if (now - this.lastTPSCalculation >= 1000) {
+      const actualTPS = processedCount;
+      this.tpsHistory.push(actualTPS);
+      
+      // Keep only last 10 seconds of TPS data
+      if (this.tpsHistory.length > 10) {
+        this.tpsHistory.shift();
+      }
+      
+      this.lastTPSCalculation = now;
+    }
+
+    // Enhanced market pressure broadcasting
+    if (trades.length > 0 || this.externalOrderQueue.length > 10) {
       this.broadcastMarketPressure(simulation.id, trades.length, this.externalOrderQueue.length);
+    }
+
+    // Debug logging for high activity
+    if (trades.length > 5) {
+      console.log(`💹 [TRADES] Processed ${trades.length} external trades in ${TPSMode[this.currentTPSMode]} mode`);
     }
 
     return trades;
@@ -261,13 +319,23 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
     return null;
   }
 
+  // Enhanced market pressure metrics
   getMarketPressureMetrics(): {
     currentTPS: number;
+    actualTPS: number;
     queueDepth: number;
     dominantTraderType: ExternalTraderType;
     marketSentiment: 'bullish' | 'bearish' | 'neutral';
+    processedOrders: number;
+    rejectedOrders: number;
+    avgTPS: number;
   } {
     const config = this.tpsModeConfigs[this.currentTPSMode];
+    
+    // Calculate average TPS from history
+    const avgTPS = this.tpsHistory.length > 0 
+      ? Math.round(this.tpsHistory.reduce((sum, tps) => sum + tps, 0) / this.tpsHistory.length)
+      : 0;
     
     // Analyze queue for sentiment
     let buyPressure = 0;
@@ -293,9 +361,13 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
 
     return {
       currentTPS: config.targetTPS,
+      actualTPS: avgTPS,
       queueDepth: this.externalOrderQueue.length,
       dominantTraderType,
-      marketSentiment
+      marketSentiment,
+      processedOrders: this.processedOrdersCount,
+      rejectedOrders: this.rejectedOrdersCount,
+      avgTPS: avgTPS
     };
   }
 
@@ -306,7 +378,9 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
     }
 
     const orders: ExternalOrder[] = [];
-    const cascadeSize = Math.floor(Math.random() * 20) + 10; // 10-30 liquidations
+    const cascadeSize = Math.floor(Math.random() * 30) + 20; // 20-50 liquidations
+
+    console.log(`💥 [LIQUIDATION] Generating ${cascadeSize} liquidation orders`);
 
     for (let i = 0; i < cascadeSize; i++) {
       const order = this.orderPool.acquire();
@@ -319,18 +393,18 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
       order.timestamp = Date.now() + i; // Stagger slightly
       order.traderType = ExternalTraderType.PANIC_SELLER;
       order.action = 'sell';
-      order.price = simulation.currentPrice * (0.9 - i * 0.01); // Cascading lower prices
-      order.quantity = (Math.random() * 50000 + 10000) / order.price;
+      order.price = simulation.currentPrice * (0.85 - i * 0.005); // Cascading lower prices
+      order.quantity = (Math.random() * 80000 + 20000) / order.price; // Larger liquidation sizes
       order.priority = 3;
       order.strategy = 'liquidation';
       
       orders.push(order);
     }
 
-    // Add directly to queue
-    this.externalOrderQueue.push(...orders);
+    // Add directly to queue with high priority
+    this.externalOrderQueue.unshift(...orders);
 
-    console.log(`Liquidation cascade triggered: ${cascadeSize} orders`);
+    console.log(`✅ [LIQUIDATION] Liquidation cascade queued: ${cascadeSize} orders`);
     return orders;
   }
 
@@ -348,6 +422,7 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
     return ExternalTraderType.RETAIL_TRADER;
   }
 
+  // Enhanced order generation with better price logic
   private generateOrderForTrader(
     traderType: ExternalTraderType, 
     simulation: SimulationState
@@ -355,7 +430,7 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
     const config = this.traderConfigs[traderType];
     const { currentPrice, marketConditions } = simulation;
 
-    // Decide action based on trader type and market conditions
+    // More sophisticated action selection based on trader type and market conditions
     let action: 'buy' | 'sell' = 'buy';
     
     switch (traderType) {
@@ -365,10 +440,14 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
         break;
         
       case ExternalTraderType.RETAIL_TRADER:
-        // Retail follows momentum
-        if (marketConditions.trend === 'bullish') action = Math.random() > 0.3 ? 'buy' : 'sell';
-        else if (marketConditions.trend === 'bearish') action = Math.random() > 0.7 ? 'buy' : 'sell';
-        else action = Math.random() > 0.5 ? 'buy' : 'sell';
+        // Retail follows momentum with some contrarian behavior
+        if (marketConditions.trend === 'bullish') {
+          action = Math.random() > 0.25 ? 'buy' : 'sell'; // 75% buy in bull market
+        } else if (marketConditions.trend === 'bearish') {
+          action = Math.random() > 0.75 ? 'buy' : 'sell'; // 25% buy in bear market
+        } else {
+          action = Math.random() > 0.5 ? 'buy' : 'sell';
+        }
         break;
         
       case ExternalTraderType.MARKET_MAKER:
@@ -377,22 +456,28 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
         break;
         
       case ExternalTraderType.MEV_BOT:
-        // MEV bots look for specific opportunities
-        return null; // Generated separately via detectMEVOpportunity
+        // MEV bots are generated separately
+        return null;
         
       case ExternalTraderType.WHALE:
         // Whales accumulate on dips, distribute on pumps
-        if (currentPrice < simulation.parameters.initialPrice * 0.9) {
-          action = 'buy';
-        } else if (currentPrice > simulation.parameters.initialPrice * 1.2) {
-          action = 'sell';
+        const priceRatio = currentPrice / simulation.parameters.initialPrice;
+        if (priceRatio < 0.9) {
+          action = 'buy'; // Accumulate on dips
+        } else if (priceRatio > 1.3) {
+          action = 'sell'; // Distribute on pumps
         } else {
-          return null; // Whales don't always trade
+          // Less active in middle ranges
+          if (Math.random() > 0.7) {
+            action = Math.random() > 0.5 ? 'buy' : 'sell';
+          } else {
+            return null;
+          }
         }
         break;
         
       case ExternalTraderType.PANIC_SELLER:
-        // Always sells
+        // Always sells, with increasing urgency
         action = 'sell';
         break;
     }
@@ -409,32 +494,50 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
     order.traderType = traderType;
     order.action = action;
     
-    // Price based on trader type and action
-    const priceDeviation = config.priceDeviation * (Math.random() * 2 - 1);
+    // Better price calculation based on trader type and market conditions
+    let priceDeviation = config.priceDeviation;
+    
+    // Increase deviation in high volatility
+    const volatilityMultiplier = Math.min(3, 1 + (marketConditions.volatility || 1));
+    priceDeviation *= volatilityMultiplier;
+    
+    // Apply TPS mode multiplier
+    const tpsConfig = this.tpsModeConfigs[this.currentTPSMode];
+    priceDeviation *= tpsConfig.volatilityMultiplier;
+    
+    const randomDeviation = (Math.random() * 2 - 1) * priceDeviation;
+    
     if (action === 'buy') {
-      order.price = currentPrice * (1 + Math.abs(priceDeviation));
+      // Buyers willing to pay more
+      order.price = currentPrice * (1 + Math.abs(randomDeviation));
     } else {
-      order.price = currentPrice * (1 - Math.abs(priceDeviation));
+      // Sellers willing to accept less
+      order.price = currentPrice * (1 - Math.abs(randomDeviation));
     }
     
-    // Quantity based on trader type
-    const orderValue = config.sizeRange.min + 
+    // Better quantity calculation with TPS mode scaling
+    const baseOrderValue = config.sizeRange.min + 
       Math.random() * (config.sizeRange.max - config.sizeRange.min);
-    order.quantity = orderValue / order.price;
     
+    // Scale order sizes based on TPS mode
+    const sizeMultiplier = tpsConfig.volatilityMultiplier;
+    const finalOrderValue = baseOrderValue * sizeMultiplier;
+    
+    order.quantity = finalOrderValue / order.price;
     order.priority = config.priority;
     order.strategy = config.strategy;
     
     return order;
   }
 
+  // Better max orders calculation for different TPS modes
   private getMaxOrdersPerTick(): number {
     switch (this.currentTPSMode) {
-      case TPSMode.NORMAL: return 1;
-      case TPSMode.BURST: return 10;
-      case TPSMode.STRESS: return 100;
+      case TPSMode.NORMAL: return 5;
+      case TPSMode.BURST: return 25;
+      case TPSMode.STRESS: return 200;
       case TPSMode.HFT: return 1000;
-      default: return 1;
+      default: return 5;
     }
   }
 
@@ -443,11 +546,14 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
     console.log(`Worker pool scaling disabled - would scale to ${size} workers`);
   }
 
+  // Enhanced market pressure broadcasting
   private broadcastMarketPressure(
     simulationId: string, 
     processedOrders: number, 
     queueDepth: number
   ): void {
+    const metrics = this.getMarketPressureMetrics();
+    
     this.broadcastEvent(simulationId, {
       type: 'external_market_pressure',
       timestamp: Date.now(),
@@ -455,7 +561,7 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
         tpsMode: TPSMode[this.currentTPSMode],
         processedOrders,
         queueDepth,
-        metrics: this.getMarketPressureMetrics()
+        metrics: metrics
       }
     });
   }
@@ -464,6 +570,10 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
     this.externalOrderQueue = [];
     this.orderCounter = 0;
     this.lastProcessTime = 0;
+    this.processedOrdersCount = 0;
+    this.rejectedOrdersCount = 0;
+    this.tpsHistory = [];
+    this.lastTPSCalculation = 0;
     console.log('ExternalMarketEngine cleanup complete');
   }
 }
