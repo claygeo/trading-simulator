@@ -1,5 +1,5 @@
-// frontend/src/components/PriceChart.tsx - Production version
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+// frontend/src/components/PriceChart.tsx - FIXED: Chart Reset Issue Resolution
+import React, { useEffect, useRef, useState, useCallback, useMemo, useImperativeHandle, forwardRef } from 'react';
 import { 
   createChart, 
   IChartApi, 
@@ -40,16 +40,28 @@ interface PriceChartProps {
   scenarioData?: any;
   symbol?: string;
   dynamicView?: boolean;
+  // RESET FIX: Add simulation ID to detect resets
+  simulationId?: string;
+  // RESET FIX: Add reset counter for forcing resets
+  resetCounter?: number;
 }
 
-const PriceChart: React.FC<PriceChartProps> = ({
+// RESET FIX: Add ref interface for manual reset capability
+export interface PriceChartRef {
+  forceReset: () => void;
+  clearChart: () => void;
+}
+
+const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
   priceHistory = [],
   currentPrice = 0,
   trades = [],
   scenarioData,
   symbol = 'TOKEN/USDT',
-  dynamicView = true
-}) => {
+  dynamicView = true,
+  simulationId,
+  resetCounter = 0
+}, ref) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -65,6 +77,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const lastCandleCountRef = useRef<number>(0);
   const updateThrottleRef = useRef<NodeJS.Timeout | null>(null);
   const isUpdatingRef = useRef<boolean>(false);
+  
+  // RESET FIX: Track simulation and reset state
+  const lastSimulationIdRef = useRef<string | null>(null);
+  const lastResetCounterRef = useRef<number>(0);
+  const isResettingRef = useRef<boolean>(false);
   
   const initialZoomSetRef = useRef<boolean>(false);
   const shouldAutoFitRef = useRef<boolean>(true);
@@ -129,10 +146,95 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return { candleData, volumeData };
   }, [priceHistory]);
 
+  // RESET FIX: Enhanced chart clearing function
+  const clearChartData = useCallback(() => {
+    if (!candlestickSeriesRef.current || !volumeSeriesRef.current) return;
+    
+    try {
+      // Clear all series data
+      candlestickSeriesRef.current.setData([]);
+      volumeSeriesRef.current.setData([]);
+      
+      // Reset chart state
+      chartState.current = {
+        lastCandleCount: 0,
+        hasEverHadData: false,
+        buildStarted: false,
+        initialRenderComplete: true
+      };
+      
+      // Reset refs
+      lastCandleCountRef.current = 0;
+      lastUpdateRef.current = 0;
+      initialZoomSetRef.current = false;
+      shouldAutoFitRef.current = true;
+      isUpdatingRef.current = false;
+      
+      // Update component state
+      setChartStatus('empty');
+      setCandleCount(0);
+      setIsLiveBuilding(false);
+      setBuildingStartTime(null);
+      
+      console.log('🔄 Chart data cleared successfully');
+      
+    } catch (error) {
+      console.error('❌ Error clearing chart data:', error);
+    }
+  }, []);
+
+  // RESET FIX: Force reset function for external calls
+  const forceReset = useCallback(() => {
+    console.log('🚨 FORCE RESET: Manually resetting chart');
+    isResettingRef.current = true;
+    
+    clearChartData();
+    
+    // Small delay to ensure clearing is complete
+    setTimeout(() => {
+      isResettingRef.current = false;
+      console.log('✅ FORCE RESET: Complete');
+    }, 100);
+  }, [clearChartData]);
+
+  // RESET FIX: Expose reset methods via ref
+  useImperativeHandle(ref, () => ({
+    forceReset,
+    clearChart: clearChartData
+  }), [forceReset, clearChartData]);
+
+  // RESET FIX: Detect simulation changes and reset counter changes
+  useEffect(() => {
+    const simulationChanged = simulationId && simulationId !== lastSimulationIdRef.current;
+    const resetCounterChanged = resetCounter !== lastResetCounterRef.current;
+    
+    if (simulationChanged || resetCounterChanged) {
+      console.log('🔄 SIMULATION CHANGE DETECTED:', {
+        oldSimId: lastSimulationIdRef.current,
+        newSimId: simulationId,
+        oldResetCounter: lastResetCounterRef.current,
+        newResetCounter: resetCounter,
+        simulationChanged,
+        resetCounterChanged
+      });
+      
+      // Update tracking refs
+      lastSimulationIdRef.current = simulationId || null;
+      lastResetCounterRef.current = resetCounter;
+      
+      // Force chart reset
+      if (isChartReady) {
+        forceReset();
+      }
+    }
+  }, [simulationId, resetCounter, isChartReady, forceReset]);
+
+  // RESET FIX: Enhanced chart initialization with better cleanup
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
     setChartStatus('initializing');
+    isResettingRef.current = false;
 
     try {
       const chart = createChart(chartContainerRef.current, {
@@ -204,9 +306,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
       candlestickSeriesRef.current = candlestickSeries;
       volumeSeriesRef.current = volumeSeries;
       
+      // RESET FIX: Ensure series start completely empty
       candlestickSeries.setData([]);
       volumeSeries.setData([]);
       
+      // RESET FIX: Initialize all state properly
       initialZoomSetRef.current = false;
       shouldAutoFitRef.current = true;
       
@@ -219,6 +323,12 @@ const PriceChart: React.FC<PriceChartProps> = ({
       
       lastCandleCountRef.current = 0;
       lastUpdateRef.current = 0;
+      isUpdatingRef.current = false;
+      isResettingRef.current = false;
+      
+      // RESET FIX: Track current simulation
+      lastSimulationIdRef.current = simulationId || null;
+      lastResetCounterRef.current = resetCounter;
       
       setIsChartReady(true);
       setChartStatus('empty');
@@ -226,12 +336,16 @@ const PriceChart: React.FC<PriceChartProps> = ({
       setIsLiveBuilding(false);
       setBuildingStartTime(null);
 
+      console.log('✅ Chart initialized successfully for simulation:', simulationId);
+
     } catch (error) {
-      console.error('Failed to create chart:', error);
+      console.error('❌ Failed to create chart:', error);
       setChartStatus('error');
     }
 
     return () => {
+      console.log('🧹 Cleaning up chart component');
+      
       if (updateThrottleRef.current) {
         clearTimeout(updateThrottleRef.current);
         updateThrottleRef.current = null;
@@ -241,10 +355,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
         try {
           chartRef.current.remove();
         } catch (error) {
-          // Ignore cleanup errors
+          console.warn('Warning during chart cleanup:', error);
         }
       }
       
+      // RESET FIX: Complete state reset on cleanup
       chartRef.current = null;
       candlestickSeriesRef.current = null;
       volumeSeriesRef.current = null;
@@ -264,11 +379,15 @@ const PriceChart: React.FC<PriceChartProps> = ({
       setIsLiveBuilding(false);
       setBuildingStartTime(null);
       isUpdatingRef.current = false;
+      isResettingRef.current = false;
+      
+      lastSimulationIdRef.current = null;
+      lastResetCounterRef.current = 0;
     };
-  }, []);
+  }, []); // RESET FIX: Remove dependencies to prevent unnecessary recreations
 
   const setOptimalZoom = useCallback((candleData: CandlestickData[], force: boolean = false) => {
-    if (!chartRef.current || !candleData.length) return;
+    if (!chartRef.current || !candleData.length || isResettingRef.current) return;
 
     const candleCount = candleData.length;
     
@@ -299,8 +418,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }
   }, [calculateOptimalVisibleRange, dynamicView]);
 
+  // RESET FIX: Enhanced chart update with better reset detection
   const updateChart = useCallback((candleData: CandlestickData[], volumeData: HistogramData[]) => {
-    if (!isChartReady || !candlestickSeriesRef.current || !volumeSeriesRef.current || isUpdatingRef.current) {
+    if (!isChartReady || !candlestickSeriesRef.current || !volumeSeriesRef.current || isUpdatingRef.current || isResettingRef.current) {
       return;
     }
 
@@ -324,36 +444,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
     try {
       const incomingCandleCount = candleData.length;
 
+      // RESET FIX: Enhanced empty data handling
       if (incomingCandleCount === 0) {
-        candlestickSeriesRef.current.setData([]);
-        volumeSeriesRef.current.setData([]);
+        console.log('📊 CHART RESET: Clearing chart due to empty data');
         
-        setChartStatus('empty');
-        setCandleCount(0);
-        setIsLiveBuilding(false);
-        setBuildingStartTime(null);
-        
-        chartState.current.lastCandleCount = 0;
-        chartState.current.buildStarted = false;
-        lastCandleCountRef.current = 0;
-        initialZoomSetRef.current = false;
-        shouldAutoFitRef.current = true;
-        
-        isUpdatingRef.current = false;
-        return;
-      }
-
-      if (incomingCandleCount > 0 && lastCandleCountRef.current === 0) {
-        if (!chartState.current.hasEverHadData) {
-          chartState.current.hasEverHadData = true;
-          chartState.current.buildStarted = true;
-          setIsLiveBuilding(true);
-          setBuildingStartTime(Date.now());
-          setChartStatus('building');
-        }
-      }
-
-      if (incomingCandleCount < lastCandleCountRef.current) {
         candlestickSeriesRef.current.setData([]);
         volumeSeriesRef.current.setData([]);
         
@@ -373,6 +467,63 @@ const PriceChart: React.FC<PriceChartProps> = ({
         return;
       }
 
+      // RESET FIX: Detect significant data reduction (likely a reset)
+      if (incomingCandleCount > 0 && lastCandleCountRef.current > 0 && incomingCandleCount < lastCandleCountRef.current * 0.5) {
+        console.log('📊 CHART RESET: Detected significant data reduction', {
+          previous: lastCandleCountRef.current,
+          incoming: incomingCandleCount,
+          ratio: incomingCandleCount / lastCandleCountRef.current
+        });
+        
+        // Force complete reset
+        candlestickSeriesRef.current.setData([]);
+        volumeSeriesRef.current.setData([]);
+        
+        // Reset state
+        chartState.current.lastCandleCount = 0;
+        chartState.current.buildStarted = false;
+        chartState.current.hasEverHadData = false;
+        lastCandleCountRef.current = 0;
+        initialZoomSetRef.current = false;
+        shouldAutoFitRef.current = true;
+        
+        // Small delay then set new data
+        setTimeout(() => {
+          if (candlestickSeriesRef.current && volumeSeriesRef.current && !isResettingRef.current) {
+            candlestickSeriesRef.current.setData(candleData);
+            volumeSeriesRef.current.setData(volumeData);
+            
+            chartState.current.lastCandleCount = incomingCandleCount;
+            lastCandleCountRef.current = incomingCandleCount;
+            setCandleCount(incomingCandleCount);
+            
+            if (incomingCandleCount > 0) {
+              chartState.current.hasEverHadData = true;
+              chartState.current.buildStarted = true;
+              setIsLiveBuilding(true);
+              setBuildingStartTime(Date.now());
+              setChartStatus('building');
+            }
+            
+            setOptimalZoom(candleData);
+          }
+        }, 50);
+        
+        isUpdatingRef.current = false;
+        return;
+      }
+
+      if (incomingCandleCount > 0 && lastCandleCountRef.current === 0) {
+        if (!chartState.current.hasEverHadData) {
+          chartState.current.hasEverHadData = true;
+          chartState.current.buildStarted = true;
+          setIsLiveBuilding(true);
+          setBuildingStartTime(Date.now());
+          setChartStatus('building');
+        }
+      }
+
+      // Data validation
       let isOrdered = true;
       if (candleData.length > 1) {
         for (let i = 1; i < Math.min(candleData.length, 10); i++) {
@@ -384,6 +535,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       }
 
       if (!isOrdered) {
+        console.warn('⚠️ Chart data is not properly ordered, skipping update');
         isUpdatingRef.current = false;
         return;
       }
@@ -404,7 +556,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       }
 
     } catch (error) {
-      console.error('Error updating chart:', error);
+      console.error('❌ Error updating chart:', error);
       setChartStatus('error');
     } finally {
       isUpdatingRef.current = false;
@@ -418,7 +570,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
   useEffect(() => {
     const handleResize = () => {
-      if (chartRef.current && chartContainerRef.current) {
+      if (chartRef.current && chartContainerRef.current && !isResettingRef.current) {
         try {
           chartRef.current.applyOptions({
             width: chartContainerRef.current.clientWidth,
@@ -436,7 +588,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
   const resetView = useCallback(() => {
     try {
-      if (chartRef.current) {
+      if (chartRef.current && !isResettingRef.current) {
         chartRef.current.timeScale().resetTimeScale();
         initialZoomSetRef.current = false;
         shouldAutoFitRef.current = true;
@@ -453,7 +605,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
   const fitContent = useCallback(() => {
     try {
-      if (chartRef.current) {
+      if (chartRef.current && !isResettingRef.current) {
         chartRef.current.timeScale().fitContent();
         initialZoomSetRef.current = true;
         shouldAutoFitRef.current = false;
@@ -465,7 +617,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
   const optimizeZoom = useCallback(() => {
     const { candleData } = convertPriceHistory;
-    if (candleData.length > 0) {
+    if (candleData.length > 0 && !isResettingRef.current) {
       setOptimalZoom(candleData, true);
     }
   }, [convertPriceHistory, setOptimalZoom]);
@@ -533,9 +685,16 @@ const PriceChart: React.FC<PriceChartProps> = ({
             <span>{statusInfo.icon} {statusInfo.text}</span>
           </div>
           
+          {/* RESET FIX: Show reset tracking info */}
           <div className="bg-purple-900 bg-opacity-75 px-3 py-1 rounded text-xs text-purple-300">
-            🎯 Pro Zoom
+            🔄 Reset: {resetCounter}
           </div>
+          
+          {simulationId && (
+            <div className="bg-cyan-900 bg-opacity-75 px-3 py-1 rounded text-xs text-cyan-300">
+              📡 {simulationId.substring(0, 8)}...
+            </div>
+          )}
           
           {isLiveBuilding && buildingStats && (
             <div className="bg-green-900 bg-opacity-75 px-3 py-1 rounded text-xs text-green-300">
@@ -580,6 +739,14 @@ const PriceChart: React.FC<PriceChartProps> = ({
         >
           📏
         </button>
+        {/* RESET FIX: Manual reset button for testing */}
+        <button
+          onClick={forceReset}
+          className="px-3 py-1 bg-red-700 bg-opacity-80 text-red-300 text-xs rounded hover:bg-opacity-100 transition"
+          title="Force reset chart"
+        >
+          ⚡ Reset
+        </button>
         <button
           className={`px-3 py-1 text-xs rounded transition ${
             dynamicView 
@@ -599,6 +766,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
           <div>🎯 Status: {chartStatus}</div>
           <div>🏗️ Building: {isLiveBuilding ? 'YES' : 'NO'}</div>
           <div>⚡ Updates: {isUpdatingRef.current ? 'ACTIVE' : 'IDLE'}</div>
+          <div>🔄 Resetting: {isResettingRef.current ? 'YES' : 'NO'}</div>
           <div>🎯 Pro Zoom: {initialZoomSetRef.current ? 'SET' : 'PENDING'}</div>
           {buildingStats && (
             <>
@@ -608,6 +776,18 @@ const PriceChart: React.FC<PriceChartProps> = ({
           )}
         </div>
       </div>
+      
+      {/* RESET FIX: Show reset indicator */}
+      {isResettingRef.current && (
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+          <div className="bg-red-900 bg-opacity-90 px-6 py-3 rounded-lg border border-red-500">
+            <div className="text-red-300 text-lg font-medium flex items-center space-x-3">
+              <div className="w-6 h-6 border-4 border-red-300 border-t-transparent rounded-full animate-spin"></div>
+              <span>Resetting Chart...</span>
+            </div>
+          </div>
+        </div>
+      )}
       
       {chartStatus === 'error' && (
         <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75">
@@ -629,13 +809,14 @@ const PriceChart: React.FC<PriceChartProps> = ({
           <div className="text-center text-gray-400">
             <div className="text-6xl mb-6">📊</div>
             <h3 className="text-xl font-bold mb-3">Professional Chart Ready</h3>
-            <p className="text-sm mb-4">Fixed zoom with optimal candle proportions</p>
+            <p className="text-sm mb-4">Enhanced reset management with simulation tracking</p>
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
                 <span>Waiting for backend candle data...</span>
               </div>
-              <div>🎯 Professional zoom management</div>
+              <div>🔄 Advanced reset detection</div>
+              <div>📡 Simulation tracking</div>
               <div>⚡ 30fps update throttling</div>
               <div>📈 Optimal candle proportions</div>
               <div>🔧 TradingView-style display</div>
@@ -652,7 +833,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
             </div>
             {buildingStats && (
               <div className="text-green-400 text-xs mt-1">
-                {buildingStats.elapsed}s elapsed • {buildingStats.candlesPerSecond} candles/sec • Pro zoom active
+                {buildingStats.elapsed}s elapsed • {buildingStats.candlesPerSecond} candles/sec • Enhanced reset management
               </div>
             )}
           </div>
@@ -660,6 +841,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
       )}
     </div>
   );
-};
+});
+
+PriceChart.displayName = 'PriceChart';
 
 export default PriceChart;
