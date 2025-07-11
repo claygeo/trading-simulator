@@ -1,5 +1,5 @@
-// frontend/src/components/mobile/MobileChart.tsx - ISSUE 3 FIX: Dynamic Chart Resizing
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+// frontend/src/components/mobile/MobileChart.tsx - FIXED: Chart Reset + Dynamic Resizing
+import React, { useEffect, useRef, useState, useCallback, useMemo, useImperativeHandle, forwardRef } from 'react';
 import { 
   createChart, 
   IChartApi, 
@@ -41,17 +41,28 @@ interface MobileChartProps {
   symbol?: string;
   dynamicView?: boolean;
   isTabContentExpanded?: boolean;  // ISSUE 3 FIX: New prop for expansion state
+  // RESET FIX: Add simulation tracking props (same as desktop)
+  simulationId?: string;
+  resetCounter?: number;
 }
 
-const MobileChart: React.FC<MobileChartProps> = ({
+// RESET FIX: Add ref interface for manual reset capability (same as desktop)
+export interface MobileChartRef {
+  forceReset: () => void;
+  clearChart: () => void;
+}
+
+const MobileChart = forwardRef<MobileChartRef, MobileChartProps>(({
   priceHistory = [],
   currentPrice = 0,
   trades = [],
   scenarioData,
   symbol = 'TOKEN/USDT',
   dynamicView = true,
-  isTabContentExpanded = false  // ISSUE 3 FIX: Default to collapsed
-}) => {
+  isTabContentExpanded = false,  // ISSUE 3 FIX: Default to collapsed
+  simulationId,
+  resetCounter = 0
+}, ref) => {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -72,6 +83,11 @@ const MobileChart: React.FC<MobileChartProps> = ({
   const updateThrottleRef = useRef<NodeJS.Timeout | null>(null);
   const isUpdatingRef = useRef<boolean>(false);
   const resizeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // RESET FIX: Track simulation and reset state (same as desktop)
+  const lastSimulationIdRef = useRef<string | null>(null);
+  const lastResetCounterRef = useRef<number>(0);
+  const isResettingRef = useRef<boolean>(false);
   
   const initialZoomSetRef = useRef<boolean>(false);
   const shouldAutoFitRef = useRef<boolean>(true);
@@ -153,9 +169,66 @@ const MobileChart: React.FC<MobileChartProps> = ({
     return { candleData, volumeData };
   }, [priceHistory]);
 
+  // RESET FIX: Enhanced chart clearing function (same as desktop)
+  const clearChartData = useCallback(() => {
+    if (!candlestickSeriesRef.current || !volumeSeriesRef.current) return;
+    
+    try {
+      // Clear all series data
+      candlestickSeriesRef.current.setData([]);
+      volumeSeriesRef.current.setData([]);
+      
+      // Reset chart state
+      chartState.current = {
+        lastCandleCount: 0,
+        hasEverHadData: false,
+        buildStarted: false,
+        initialRenderComplete: true
+      };
+      
+      // Reset refs
+      lastCandleCountRef.current = 0;
+      lastUpdateRef.current = 0;
+      initialZoomSetRef.current = false;
+      shouldAutoFitRef.current = true;
+      isUpdatingRef.current = false;
+      
+      // Update component state
+      setChartStatus('empty');
+      setCandleCount(0);
+      setIsLiveBuilding(false);
+      setBuildingStartTime(null);
+      
+      console.log('📱 Mobile chart data cleared successfully');
+      
+    } catch (error) {
+      console.error('❌ Error clearing mobile chart data:', error);
+    }
+  }, []);
+
+  // RESET FIX: Force reset function for external calls (same as desktop)
+  const forceReset = useCallback(() => {
+    console.log('🚨 MOBILE FORCE RESET: Manually resetting chart');
+    isResettingRef.current = true;
+    
+    clearChartData();
+    
+    // Small delay to ensure clearing is complete
+    setTimeout(() => {
+      isResettingRef.current = false;
+      console.log('✅ MOBILE FORCE RESET: Complete');
+    }, 100);
+  }, [clearChartData]);
+
+  // RESET FIX: Expose reset methods via ref (same as desktop)
+  useImperativeHandle(ref, () => ({
+    forceReset,
+    clearChart: clearChartData
+  }), [forceReset, clearChartData]);
+
   // ISSUE 3 FIX: Dynamic chart resize function
   const resizeChart = useCallback(() => {
-    if (!chartRef.current || !chartContainerRef.current) return;
+    if (!chartRef.current || !chartContainerRef.current || isResettingRef.current) return;
 
     setIsResizing(true);
     
@@ -174,16 +247,42 @@ const MobileChart: React.FC<MobileChartProps> = ({
       chartRef.current.timeScale().fitContent();
       
     } catch (error) {
-      console.error('Error resizing chart:', error);
+      console.error('Error resizing mobile chart:', error);
     } finally {
       // Clear resizing state after animation
       setTimeout(() => setIsResizing(false), 300);
     }
   }, [calculateChartHeight]);
 
+  // RESET FIX: Detect simulation changes and reset counter changes (same as desktop)
+  useEffect(() => {
+    const simulationChanged = simulationId && simulationId !== lastSimulationIdRef.current;
+    const resetCounterChanged = resetCounter !== lastResetCounterRef.current;
+    
+    if (simulationChanged || resetCounterChanged) {
+      console.log('📱 MOBILE SIMULATION CHANGE DETECTED:', {
+        oldSimId: lastSimulationIdRef.current,
+        newSimId: simulationId,
+        oldResetCounter: lastResetCounterRef.current,
+        newResetCounter: resetCounter,
+        simulationChanged,
+        resetCounterChanged
+      });
+      
+      // Update tracking refs
+      lastSimulationIdRef.current = simulationId || null;
+      lastResetCounterRef.current = resetCounter;
+      
+      // Force chart reset
+      if (isChartReady) {
+        forceReset();
+      }
+    }
+  }, [simulationId, resetCounter, isChartReady, forceReset]);
+
   // ISSUE 3 FIX: Effect to handle expansion state changes
   useEffect(() => {
-    if (chartRef.current && chartContainerRef.current) {
+    if (chartRef.current && chartContainerRef.current && !isResettingRef.current) {
       // Clear any existing timeout
       if (resizeTimeoutRef.current) {
         clearTimeout(resizeTimeoutRef.current);
@@ -202,10 +301,12 @@ const MobileChart: React.FC<MobileChartProps> = ({
     };
   }, [isTabContentExpanded, resizeChart]);
 
+  // RESET FIX: Enhanced chart initialization with better cleanup (same as desktop)
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
     setChartStatus('initializing');
+    isResettingRef.current = false;
 
     try {
       const initialHeight = calculateChartHeight();
@@ -279,9 +380,11 @@ const MobileChart: React.FC<MobileChartProps> = ({
       candlestickSeriesRef.current = candlestickSeries;
       volumeSeriesRef.current = volumeSeries;
       
+      // RESET FIX: Ensure series start completely empty
       candlestickSeries.setData([]);
       volumeSeries.setData([]);
       
+      // RESET FIX: Initialize all state properly
       initialZoomSetRef.current = false;
       shouldAutoFitRef.current = true;
       
@@ -294,6 +397,12 @@ const MobileChart: React.FC<MobileChartProps> = ({
       
       lastCandleCountRef.current = 0;
       lastUpdateRef.current = 0;
+      isUpdatingRef.current = false;
+      isResettingRef.current = false;
+      
+      // RESET FIX: Track current simulation
+      lastSimulationIdRef.current = simulationId || null;
+      lastResetCounterRef.current = resetCounter;
       
       setChartDimensions({ 
         width: chartContainerRef.current.clientWidth, 
@@ -306,12 +415,16 @@ const MobileChart: React.FC<MobileChartProps> = ({
       setIsLiveBuilding(false);
       setBuildingStartTime(null);
 
+      console.log('✅ Mobile chart initialized successfully for simulation:', simulationId);
+
     } catch (error) {
-      console.error('Failed to create mobile chart:', error);
+      console.error('❌ Failed to create mobile chart:', error);
       setChartStatus('error');
     }
 
     return () => {
+      console.log('🧹 Cleaning up mobile chart component');
+      
       if (updateThrottleRef.current) {
         clearTimeout(updateThrottleRef.current);
         updateThrottleRef.current = null;
@@ -326,10 +439,11 @@ const MobileChart: React.FC<MobileChartProps> = ({
         try {
           chartRef.current.remove();
         } catch (error) {
-          // Ignore cleanup errors
+          console.warn('Warning during mobile chart cleanup:', error);
         }
       }
       
+      // RESET FIX: Complete state reset on cleanup
       chartRef.current = null;
       candlestickSeriesRef.current = null;
       volumeSeriesRef.current = null;
@@ -349,11 +463,15 @@ const MobileChart: React.FC<MobileChartProps> = ({
       setIsLiveBuilding(false);
       setBuildingStartTime(null);
       isUpdatingRef.current = false;
+      isResettingRef.current = false;
+      
+      lastSimulationIdRef.current = null;
+      lastResetCounterRef.current = 0;
     };
-  }, [calculateChartHeight]);
+  }, [calculateChartHeight]); // RESET FIX: Only depend on height calculation
 
   const setOptimalZoom = useCallback((candleData: CandlestickData[], force: boolean = false) => {
-    if (!chartRef.current || !candleData.length) return;
+    if (!chartRef.current || !candleData.length || isResettingRef.current) return;
 
     const candleCount = candleData.length;
     
@@ -384,8 +502,9 @@ const MobileChart: React.FC<MobileChartProps> = ({
     }
   }, [calculateOptimalVisibleRange, dynamicView]);
 
+  // RESET FIX: Enhanced chart update with better reset detection (same as desktop logic)
   const updateChart = useCallback((candleData: CandlestickData[], volumeData: HistogramData[]) => {
-    if (!isChartReady || !candlestickSeriesRef.current || !volumeSeriesRef.current || isUpdatingRef.current) {
+    if (!isChartReady || !candlestickSeriesRef.current || !volumeSeriesRef.current || isUpdatingRef.current || isResettingRef.current) {
       return;
     }
 
@@ -410,36 +529,10 @@ const MobileChart: React.FC<MobileChartProps> = ({
     try {
       const incomingCandleCount = candleData.length;
 
+      // RESET FIX: Enhanced empty data handling
       if (incomingCandleCount === 0) {
-        candlestickSeriesRef.current.setData([]);
-        volumeSeriesRef.current.setData([]);
+        console.log('📱 MOBILE CHART RESET: Clearing chart due to empty data');
         
-        setChartStatus('empty');
-        setCandleCount(0);
-        setIsLiveBuilding(false);
-        setBuildingStartTime(null);
-        
-        chartState.current.lastCandleCount = 0;
-        chartState.current.buildStarted = false;
-        lastCandleCountRef.current = 0;
-        initialZoomSetRef.current = false;
-        shouldAutoFitRef.current = true;
-        
-        isUpdatingRef.current = false;
-        return;
-      }
-
-      if (incomingCandleCount > 0 && lastCandleCountRef.current === 0) {
-        if (!chartState.current.hasEverHadData) {
-          chartState.current.hasEverHadData = true;
-          chartState.current.buildStarted = true;
-          setIsLiveBuilding(true);
-          setBuildingStartTime(Date.now());
-          setChartStatus('building');
-        }
-      }
-
-      if (incomingCandleCount < lastCandleCountRef.current) {
         candlestickSeriesRef.current.setData([]);
         volumeSeriesRef.current.setData([]);
         
@@ -459,6 +552,62 @@ const MobileChart: React.FC<MobileChartProps> = ({
         return;
       }
 
+      // RESET FIX: Detect significant data reduction (likely a reset)
+      if (incomingCandleCount > 0 && lastCandleCountRef.current > 0 && incomingCandleCount < lastCandleCountRef.current * 0.5) {
+        console.log('📱 MOBILE CHART RESET: Detected significant data reduction', {
+          previous: lastCandleCountRef.current,
+          incoming: incomingCandleCount,
+          ratio: incomingCandleCount / lastCandleCountRef.current
+        });
+        
+        // Force complete reset
+        candlestickSeriesRef.current.setData([]);
+        volumeSeriesRef.current.setData([]);
+        
+        // Reset state
+        chartState.current.lastCandleCount = 0;
+        chartState.current.buildStarted = false;
+        chartState.current.hasEverHadData = false;
+        lastCandleCountRef.current = 0;
+        initialZoomSetRef.current = false;
+        shouldAutoFitRef.current = true;
+        
+        // Small delay then set new data
+        setTimeout(() => {
+          if (candlestickSeriesRef.current && volumeSeriesRef.current && !isResettingRef.current) {
+            candlestickSeriesRef.current.setData(candleData);
+            volumeSeriesRef.current.setData(volumeData);
+            
+            chartState.current.lastCandleCount = incomingCandleCount;
+            lastCandleCountRef.current = incomingCandleCount;
+            setCandleCount(incomingCandleCount);
+            
+            if (incomingCandleCount > 0) {
+              chartState.current.hasEverHadData = true;
+              chartState.current.buildStarted = true;
+              setIsLiveBuilding(true);
+              setBuildingStartTime(Date.now());
+              setChartStatus('building');
+            }
+            
+            setOptimalZoom(candleData);
+          }
+        }, 50);
+        
+        isUpdatingRef.current = false;
+        return;
+      }
+
+      if (incomingCandleCount > 0 && lastCandleCountRef.current === 0) {
+        if (!chartState.current.hasEverHadData) {
+          chartState.current.hasEverHadData = true;
+          chartState.current.buildStarted = true;
+          setIsLiveBuilding(true);
+          setBuildingStartTime(Date.now());
+          setChartStatus('building');
+        }
+      }
+
       // Data validation
       let isOrdered = true;
       if (candleData.length > 1) {
@@ -471,6 +620,7 @@ const MobileChart: React.FC<MobileChartProps> = ({
       }
 
       if (!isOrdered) {
+        console.warn('⚠️ Mobile chart data is not properly ordered, skipping update');
         isUpdatingRef.current = false;
         return;
       }
@@ -491,7 +641,7 @@ const MobileChart: React.FC<MobileChartProps> = ({
       }
 
     } catch (error) {
-      console.error('Error updating mobile chart:', error);
+      console.error('❌ Error updating mobile chart:', error);
       setChartStatus('error');
     } finally {
       isUpdatingRef.current = false;
@@ -533,7 +683,7 @@ const MobileChart: React.FC<MobileChartProps> = ({
 
   const resetView = useCallback(() => {
     try {
-      if (chartRef.current) {
+      if (chartRef.current && !isResettingRef.current) {
         chartRef.current.timeScale().resetTimeScale();
         initialZoomSetRef.current = false;
         shouldAutoFitRef.current = true;
@@ -550,7 +700,7 @@ const MobileChart: React.FC<MobileChartProps> = ({
 
   const fitContent = useCallback(() => {
     try {
-      if (chartRef.current) {
+      if (chartRef.current && !isResettingRef.current) {
         chartRef.current.timeScale().fitContent();
         initialZoomSetRef.current = true;
         shouldAutoFitRef.current = false;
@@ -562,7 +712,7 @@ const MobileChart: React.FC<MobileChartProps> = ({
 
   const optimizeZoom = useCallback(() => {
     const { candleData } = convertPriceHistory;
-    if (candleData.length > 0) {
+    if (candleData.length > 0 && !isResettingRef.current) {
       setOptimalZoom(candleData, true);
     }
   }, [convertPriceHistory, setOptimalZoom]);
@@ -649,6 +799,11 @@ const MobileChart: React.FC<MobileChartProps> = ({
             </span>
           </div>
           
+          {/* RESET FIX: Reset tracking info */}
+          <div className="bg-red-900 bg-opacity-75 px-2 py-1 rounded text-xs text-red-300">
+            🔄 R{resetCounter}
+          </div>
+          
           {currentPrice > 0 && (
             <div className="bg-gray-900 bg-opacity-75 px-2 py-1 rounded">
               <span className="text-white text-sm font-mono">
@@ -688,6 +843,14 @@ const MobileChart: React.FC<MobileChartProps> = ({
         >
           {isResizing ? '↻' : '📐'}
         </button>
+        {/* RESET FIX: Manual reset button for testing */}
+        <button
+          onClick={forceReset}
+          className="px-2 py-1 bg-red-700 bg-opacity-80 text-red-300 text-xs rounded hover:bg-opacity-100 transition"
+          title="Force reset mobile chart"
+        >
+          ⚡
+        </button>
       </div>
       
       {/* Mobile building indicator */}
@@ -716,6 +879,18 @@ const MobileChart: React.FC<MobileChartProps> = ({
         </div>
       )}
       
+      {/* RESET FIX: Show reset indicator */}
+      {isResettingRef.current && (
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+          <div className="bg-red-900 bg-opacity-90 px-4 py-2 rounded-lg border border-red-500">
+            <div className="text-red-300 text-sm font-medium flex items-center space-x-2">
+              <div className="w-4 h-4 border-2 border-red-300 border-t-transparent rounded-full animate-spin"></div>
+              <span>📱 Resetting Mobile Chart...</span>
+            </div>
+          </div>
+        </div>
+      )}
+      
       {/* Mobile error state */}
       {chartStatus === 'error' && (
         <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75">
@@ -738,7 +913,7 @@ const MobileChart: React.FC<MobileChartProps> = ({
           <div className="text-center text-gray-400">
             <div className="text-4xl mb-4">📊</div>
             <h3 className="text-lg font-bold mb-2">Mobile Chart Ready</h3>
-            <p className="text-sm mb-3">Dynamic resizing enabled</p>
+            <p className="text-sm mb-3">Enhanced with reset management</p>
             <div className="space-y-1 text-xs">
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
@@ -746,6 +921,7 @@ const MobileChart: React.FC<MobileChartProps> = ({
               </div>
               <div>📱 Mobile optimized • Dynamic sizing</div>
               <div>🤏 Pinch to zoom • Touch friendly</div>
+              <div>🔄 Advanced reset detection</div>
               <div>📐 Responsive: {isTabContentExpanded ? 'Expanded' : 'Standard'} mode</div>
             </div>
           </div>
@@ -753,6 +929,8 @@ const MobileChart: React.FC<MobileChartProps> = ({
       )}
     </div>
   );
-};
+});
+
+MobileChart.displayName = 'MobileChart';
 
 export default MobileChart;
