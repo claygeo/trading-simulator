@@ -1,4 +1,4 @@
-// backend/src/services/simulation/types.ts - COMPLETE INTERFACE DEFINITIONS FOR ULTRA-FAST MODE
+// backend/src/services/simulation/types.ts - ENHANCED: Dynamic Price Range Support
 import { TraderProfile } from '../../types/traders';
 
 // Export TraderProfile from main types
@@ -20,6 +20,18 @@ export enum ExternalTraderType {
   MEV_BOT = 'MEV_BOT',
   WHALE = 'WHALE',
   PANIC_SELLER = 'PANIC_SELLER'
+}
+
+// ENHANCED: Price range types for dynamic pricing
+export type PriceRangeCategory = 'micro' | 'small' | 'mid' | 'large' | 'mega';
+
+export interface PriceRangeDefinition {
+  min: number;
+  max: number;
+  weight: number;
+  description: string;
+  liquidityMultiplier: number;
+  volatilityMultiplier: number;
 }
 
 // ULTRA FAST: Enhanced Timeframe type with faster intervals
@@ -188,7 +200,7 @@ export interface Trader {
   simulationPnl?: number; // P&L specific to current simulation
 }
 
-// ULTRA FAST: Enhanced SimulationParameters interface
+// ENHANCED: SimulationParameters interface with dynamic pricing support
 export interface SimulationParameters {
   timeCompressionFactor: number; // how fast time moves (1x = real-time)
   initialPrice: number; // starting token price
@@ -196,6 +208,9 @@ export interface SimulationParameters {
   volatilityFactor: number; // multiplier for price volatility
   duration: number; // simulation duration in minutes
   scenarioType?: string; // type of market scenario
+  // NEW: Dynamic pricing parameters
+  priceRange?: PriceRangeCategory | 'random'; // price range category
+  customPrice?: number; // custom starting price override
 }
 
 // ENHANCED: SimulationState interface with comprehensive state tracking
@@ -258,19 +273,58 @@ export interface PerformanceConfig {
   highFrequencyMode: boolean;
 }
 
-// ULTRA FAST: Enhanced SIMULATION_CONSTANTS with aggressive parameters
+// ENHANCED: SIMULATION_CONSTANTS with dynamic pricing definitions
 export const SIMULATION_CONSTANTS = {
   BASE_UPDATE_INTERVAL: 50, // 50ms for ultra-fast updates (was 100ms)
   MAX_RECENT_TRADES: 5000, // keep more trades (was 1000)
   MIN_PRICE: 0.000001, // minimum token price
   DEFAULT_LIQUIDITY_PERCENTAGE: 0.2, // higher default liquidity (was 0.1)
-  PRICE_RANGES: [
-    { min: 0.01, max: 0.1, weight: 0.2 },   // Micro cap
-    { min: 0.1, max: 1, weight: 0.3 },      // Small cap
-    { min: 1, max: 10, weight: 0.3 },       // Mid cap
-    { min: 10, max: 50, weight: 0.2 }       // Large cap
-  ],
-  // ULTRA FAST: New constants for rapid trading
+  
+  // ENHANCED: Dynamic price ranges with realistic distributions
+  PRICE_RANGES: {
+    micro: { 
+      min: 0.0001, 
+      max: 0.01, 
+      weight: 0.25, 
+      description: 'Micro-cap tokens',
+      liquidityMultiplier: 0.5,
+      volatilityMultiplier: 1.8
+    },
+    small: { 
+      min: 0.01, 
+      max: 1, 
+      weight: 0.30, 
+      description: 'Small-cap tokens',
+      liquidityMultiplier: 0.8,
+      volatilityMultiplier: 1.4
+    },
+    mid: { 
+      min: 1, 
+      max: 10, 
+      weight: 0.25, 
+      description: 'Mid-cap tokens',
+      liquidityMultiplier: 1.0,
+      volatilityMultiplier: 1.0
+    },
+    large: { 
+      min: 10, 
+      max: 100, 
+      weight: 0.15, 
+      description: 'Large-cap tokens',
+      liquidityMultiplier: 1.5,
+      volatilityMultiplier: 0.8
+    },
+    mega: { 
+      min: 100, 
+      max: 1000, 
+      weight: 0.05, 
+      description: 'Mega-cap tokens',
+      liquidityMultiplier: 2.0,
+      volatilityMultiplier: 0.6
+    }
+  } as Record<PriceRangeCategory, PriceRangeDefinition>,
+  
+  // ULTRA FAST: Enhanced constants for rapid trading
   ULTRA_FAST_MODE: {
     MIN_CANDLE_INTERVAL: 3000, // 3 seconds minimum
     MAX_CANDLE_INTERVAL: 15000, // 15 seconds maximum
@@ -278,6 +332,16 @@ export const SIMULATION_CONSTANTS = {
     BASE_VOLATILITY_MULTIPLIER: 2.0, // double base volatility
     MAX_TRADES_PER_TICK: 500, // maximum trades per update
     AGGRESSIVE_TIME_COMPRESSION: 100 // maximum time compression factor
+  },
+  
+  // NEW: Dynamic pricing constants
+  DYNAMIC_PRICING: {
+    LOG_NORMAL_DISTRIBUTION: true, // use log-normal for realistic clustering
+    PRICE_VARIATION_FACTOR: 0.1, // ±10% variation within range
+    MIN_CUSTOM_PRICE: 0.0001, // minimum custom price
+    MAX_CUSTOM_PRICE: 10000, // maximum custom price
+    DEFAULT_RANGE: 'random' as const, // default to random selection
+    RANGE_TRANSITION_SMOOTHING: 0.05 // 5% smoothing between ranges
   }
 };
 
@@ -287,7 +351,8 @@ export interface IMarketEngine {
   updatePriceHighFrequency(simulation: SimulationState, volatilityFactor: number): Promise<void>;
   processExternalOrder(order: ExternalOrder, simulation: SimulationState): Trade | null;
   calculateBaseVolatility(price: number): number;
-  generateRandomTokenPrice(): number;
+  generateRandomTokenPrice(priceRange?: PriceRangeCategory | 'random'): number;
+  getPriceCategory(price: number): { category: string; description: string; range: string };
 }
 
 export interface ITraderEngine {
@@ -354,15 +419,28 @@ export interface AggressiveMarketConfig {
   noiseLevel: number; // market microstructure noise level
 }
 
+// ENHANCED: Dynamic pricing configuration
+export interface DynamicPricingConfig {
+  enableLogNormalDistribution: boolean; // use log-normal distribution
+  priceVariationFactor: number; // variation within range
+  rangeTransitionSmoothing: number; // smoothing between ranges
+  customPriceValidation: {
+    min: number;
+    max: number;
+  };
+  defaultPriceRange: PriceRangeCategory | 'random';
+}
+
 // ULTRA FAST: Comprehensive configuration for maximum activity mode
 export interface MaximumActivityConfig {
   candleConfig: UltraFastCandleConfig;
   tradingConfig: RapidTradingConfig;
   marketConfig: AggressiveMarketConfig;
   performanceConfig: PerformanceConfig;
+  pricingConfig: DynamicPricingConfig; // NEW: Dynamic pricing config
 }
 
-// Export default ultra-fast configuration
+// Export enhanced ultra-fast configuration with dynamic pricing
 export const ULTRA_FAST_CONFIG: MaximumActivityConfig = {
   candleConfig: {
     minInterval: 3000, // 3 seconds
@@ -393,5 +471,66 @@ export const ULTRA_FAST_CONFIG: MaximumActivityConfig = {
     },
     batchSize: 100,
     highFrequencyMode: true
+  },
+  pricingConfig: {
+    enableLogNormalDistribution: true,
+    priceVariationFactor: 0.1, // ±10% variation
+    rangeTransitionSmoothing: 0.05, // 5% smoothing
+    customPriceValidation: {
+      min: 0.0001,
+      max: 10000
+    },
+    defaultPriceRange: 'random'
+  }
+};
+
+// NEW: Helper functions for dynamic pricing
+export const PricingHelpers = {
+  // Get price range definition by category
+  getPriceRangeDefinition(category: PriceRangeCategory): PriceRangeDefinition {
+    return SIMULATION_CONSTANTS.PRICE_RANGES[category];
+  },
+  
+  // Validate custom price
+  isValidCustomPrice(price: number): boolean {
+    const config = ULTRA_FAST_CONFIG.pricingConfig;
+    return price >= config.customPriceValidation.min && 
+           price <= config.customPriceValidation.max;
+  },
+  
+  // Get all available price range categories
+  getAvailablePriceRanges(): PriceRangeCategory[] {
+    return Object.keys(SIMULATION_CONSTANTS.PRICE_RANGES) as PriceRangeCategory[];
+  },
+  
+  // Determine price category from price value
+  categorizePriceValue(price: number): PriceRangeCategory {
+    const ranges = SIMULATION_CONSTANTS.PRICE_RANGES;
+    
+    for (const [category, range] of Object.entries(ranges)) {
+      if (price >= range.min && price <= range.max) {
+        return category as PriceRangeCategory;
+      }
+    }
+    
+    // Fallback logic
+    if (price < ranges.micro.min) return 'micro';
+    if (price > ranges.mega.max) return 'mega';
+    
+    return 'mid'; // Default fallback
+  },
+  
+  // Calculate appropriate liquidity for price
+  calculateLiquidityForPrice(price: number, baseAmount: number = 1000000): number {
+    const category = this.categorizePriceValue(price);
+    const multiplier = SIMULATION_CONSTANTS.PRICE_RANGES[category].liquidityMultiplier;
+    return baseAmount * multiplier;
+  },
+  
+  // Calculate appropriate volatility for price
+  calculateVolatilityForPrice(price: number, baseVolatility: number = 0.01): number {
+    const category = this.categorizePriceValue(price);
+    const multiplier = SIMULATION_CONSTANTS.PRICE_RANGES[category].volatilityMultiplier;
+    return baseVolatility * multiplier;
   }
 };
