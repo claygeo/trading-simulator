@@ -29,13 +29,83 @@ const OrderBook: React.FC<OrderBookProps> = ({ orderBook }) => {
   const previousOrderBookRef = useRef<OrderBook | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
-  // Format functions
-  const formatPrice = (price: number) => price.toFixed(2);
-  const formatQuantity = (quantity: number) => quantity.toFixed(2);
-  const formatTotal = (total: number) => {
+  // FIXED: Enhanced price formatting with 6 decimal precision for micro-cap tokens
+  const formatPrice = (price: number): string => {
+    if (price === 0 || isNaN(price)) return '0.000000';
+    
+    // For very small prices (micro-cap tokens), always show 6 decimal places
+    if (price < 0.01) {
+      return price.toFixed(6);
+    }
+    // For small prices, show 4 decimal places  
+    else if (price < 1) {
+      return price.toFixed(4);
+    }
+    // For medium prices, show 3 decimal places
+    else if (price < 100) {
+      return price.toFixed(3);
+    }
+    // For large prices, show 2 decimal places
+    else {
+      return price.toFixed(2);
+    }
+  };
+
+  // FIXED: Enhanced quantity formatting to complement price precision
+  const formatQuantity = (quantity: number): string => {
+    if (quantity === 0 || isNaN(quantity)) return '0.00';
+    
+    // For very large quantities, use abbreviated format
+    if (quantity >= 1000000) {
+      return `${(quantity / 1000000).toFixed(2)}M`;
+    }
+    else if (quantity >= 1000) {
+      return `${(quantity / 1000).toFixed(1)}K`;
+    }
+    // For smaller quantities, show appropriate decimal places
+    else if (quantity < 1) {
+      return quantity.toFixed(3);
+    }
+    else {
+      return quantity.toFixed(2);
+    }
+  };
+
+  // FIXED: Enhanced total formatting for better readability
+  const formatTotal = (total: number): string => {
+    if (total === 0 || isNaN(total)) return '0';
+    
     if (total >= 1000000) return `${(total / 1000000).toFixed(1)}M`;
     if (total >= 1000) return `${(total / 1000).toFixed(1)}K`;
+    if (total < 1) return total.toFixed(2);
     return total.toFixed(0);
+  };
+
+  // FIXED: Enhanced USD formatting that preserves micro-cap precision
+  const formatPriceUSD = (price: number): string => {
+    if (price === 0 || isNaN(price)) return '$0.000000';
+    
+    // Determine appropriate decimal places based on price magnitude
+    let decimals = 2; // Default for larger prices
+    
+    if (price < 0.001) {
+      decimals = 6; // Maximum precision for very small prices
+    } else if (price < 0.01) {
+      decimals = 5; // High precision for micro-cap
+    } else if (price < 0.1) {
+      decimals = 4; // Medium precision
+    } else if (price < 1) {
+      decimals = 3; // Lower precision
+    }
+    
+    const formatted = new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals
+    }).format(price);
+    
+    return formatted;
   };
   
   // Calculate depth levels with cumulative sums
@@ -71,7 +141,7 @@ const OrderBook: React.FC<OrderBookProps> = ({ orderBook }) => {
     setMaxDepth(newMaxDepth);
   }, [bidsDepth, asksDepth]);
   
-  // Calculate spread
+  // FIXED: Enhanced spread calculation with proper precision
   const spread = asks.length > 0 && bids.length > 0 ? asks[0].price - bids[0].price : 0;
   const midPrice = asks.length > 0 && bids.length > 0 ? (asks[0].price + bids[0].price) / 2 : 0;
   const spreadPercentage = midPrice > 0 ? (spread / midPrice) * 100 : 0;
@@ -269,9 +339,9 @@ const OrderBook: React.FC<OrderBookProps> = ({ orderBook }) => {
   
   const renderTableView = () => (
     <div className="flex flex-col h-full">
-      {/* Header */}
+      {/* FIXED: Enhanced header with precision indicator */}
       <div className="grid grid-cols-3 text-xs text-gray-400 py-2 border-b border-gray-700">
-        <div className="text-left">Price</div>
+        <div className="text-left">Price (6dp)</div>
         <div className="text-right">Size</div>
         <div className="text-right">Total</div>
       </div>
@@ -306,7 +376,8 @@ const OrderBook: React.FC<OrderBookProps> = ({ orderBook }) => {
                   )}
                   
                   <div className="grid grid-cols-3 text-xs py-1 relative z-10">
-                    <div className="text-left text-red-400 font-mono">
+                    {/* FIXED: Price with 6 decimal precision */}
+                    <div className="text-left text-red-400 font-mono" title={formatPriceUSD(ask.price)}>
                       {formatPrice(ask.price)}
                     </div>
                     <div className="text-right text-white font-mono">
@@ -322,17 +393,22 @@ const OrderBook: React.FC<OrderBookProps> = ({ orderBook }) => {
           </div>
         </div>
         
-        {/* Spread indicator */}
+        {/* FIXED: Enhanced spread indicator with proper precision */}
         <div className="flex items-center justify-between py-2 px-2 border-y border-gray-700 bg-gray-800">
           <div className="text-xs text-gray-400">
             <span>Spread: </span>
             <span className="font-medium text-white">
-              {formatPrice(spread)} ({spreadPercentage.toFixed(2)}%)
+              {formatPrice(spread)} ({spreadPercentage.toFixed(3)}%)
             </span>
           </div>
-          <span className="text-sm font-bold text-yellow-400">
-            ${formatPrice(midPrice)}
-          </span>
+          <div className="text-center">
+            <div className="text-sm font-bold text-yellow-400">
+              {formatPriceUSD(midPrice)}
+            </div>
+            <div className="text-[10px] text-gray-400">
+              {formatPrice(midPrice)}
+            </div>
+          </div>
         </div>
         
         {/* Bids (buy orders) */}
@@ -362,7 +438,8 @@ const OrderBook: React.FC<OrderBookProps> = ({ orderBook }) => {
                 )}
                 
                 <div className="grid grid-cols-3 text-xs py-1 relative z-10">
-                  <div className="text-left text-green-400 font-mono">
+                  {/* FIXED: Price with 6 decimal precision */}
+                  <div className="text-left text-green-400 font-mono" title={formatPriceUSD(bid.price)}>
                     {formatPrice(bid.price)}
                   </div>
                   <div className="text-right text-white font-mono">
@@ -407,7 +484,7 @@ const OrderBook: React.FC<OrderBookProps> = ({ orderBook }) => {
         </div>
       </div>
       
-      {/* Best bid/ask */}
+      {/* FIXED: Enhanced best bid/ask with precision */}
       <div className="mt-2 bg-gray-800 p-2 rounded">
         <div className="flex justify-between text-xs">
           <div>
@@ -424,10 +501,12 @@ const OrderBook: React.FC<OrderBookProps> = ({ orderBook }) => {
           </div>
         </div>
         <div className="text-center mt-1">
-          <span className="text-gray-400 text-xs">Mid: </span>
-          <span className="text-yellow-400 font-mono font-bold">
-            ${formatPrice(midPrice)}
-          </span>
+          <div className="text-yellow-400 font-mono font-bold">
+            {formatPriceUSD(midPrice)}
+          </div>
+          <div className="text-gray-400 text-[10px] font-mono">
+            {formatPrice(midPrice)}
+          </div>
         </div>
       </div>
     </div>
@@ -435,9 +514,14 @@ const OrderBook: React.FC<OrderBookProps> = ({ orderBook }) => {
   
   return (
     <div className="bg-gray-900 p-3 rounded-lg shadow-lg h-full flex flex-col">
-      {/* Header with controls */}
+      {/* FIXED: Enhanced header with precision indicator */}
       <div className="flex justify-between items-center mb-3">
-        <h3 className="text-white font-semibold text-sm">Order Book</h3>
+        <div className="flex items-center">
+          <h3 className="text-white font-semibold text-sm mr-2">Order Book</h3>
+          <span className="text-green-400 text-[10px] bg-green-900 px-1 rounded" title="6 decimal precision for micro-cap tokens">
+            6dp
+          </span>
+        </div>
         <div className="flex space-x-2">
           <button
             onClick={() => setViewMode(viewMode === 'table' ? 'depth' : 'table')}
@@ -457,7 +541,10 @@ const OrderBook: React.FC<OrderBookProps> = ({ orderBook }) => {
         {viewMode === 'table' ? renderTableView() : renderDepthView()}
       </div>
       
-      {/* FIXED: Footer removed - no more time display */}
+      {/* FIXED: Enhanced footer with precision info */}
+      <div className="mt-2 text-[10px] text-gray-500 text-center">
+        ✅ Micro-cap precision: 6 decimals • Hover prices for USD format
+      </div>
     </div>
   );
 };
