@@ -1,4 +1,4 @@
-// frontend/src/components/Dashboard.tsx - FIXED: Dynamic Pricing Support + TypeScript Error
+// frontend/src/components/Dashboard.tsx - FIXED: Interface Compatibility + TypeScript Error
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -11,7 +11,7 @@ import RecentTrades from './RecentTrades';
 import ParticipantsOverview from './ParticipantsOverview';
 import PerformanceMonitor from './PerformanceMonitor';
 import StressTestController from './StressTestController';
-import SimulationControls from './SimulationControls'; // FIXED: Import the controls component
+import SimulationControls from './SimulationControls';
 
 // Mobile components - will lazy load to avoid initial import errors
 const MobileDashboard = React.lazy(() => import('./mobile/MobileDashboard'));
@@ -26,14 +26,15 @@ interface ChartPricePoint {
   volume?: number;
 }
 
-// FIXED: Define SimulationParameters interface
+// FIXED: Match SimulationControls interface exactly
 interface SimulationParameters {
   timeCompressionFactor: number;
-  initialPrice?: number;
-  initialLiquidity?: number;
-  volatilityFactor?: number;
-  duration?: number;
-  scenarioType?: string;
+  initialPrice?: number; // FIXED: Made optional - should not be used with dynamic pricing
+  initialLiquidity: number; // FIXED: Required to match SimulationControls
+  volatilityFactor: number; // FIXED: Required to match SimulationControls
+  duration: number; // FIXED: Required to match SimulationControls
+  scenarioType: string; // FIXED: Required to match SimulationControls
+  // FIXED: Dynamic pricing parameters
   priceRange?: 'micro' | 'small' | 'mid' | 'large' | 'mega' | 'random';
   customPrice?: number;
   useCustomPrice?: boolean;
@@ -212,16 +213,17 @@ const Dashboard: React.FC = () => {
   const [simulationRegistrationStatus, setSimulationRegistrationStatus] = useState<'creating' | 'pending' | 'ready' | 'error'>('creating');
   const [initializationStep, setInitializationStep] = useState<string>('Starting...');
   
-  // FIXED: Add dynamic pricing state with proper typing
+  // FIXED: Add dynamic pricing state with proper typing matching SimulationControls
   const [dynamicPricingInfo, setDynamicPricingInfo] = useState<any>(null);
   const [simulationParameters, setSimulationParameters] = useState<SimulationParameters>({
     priceRange: 'random',
     customPrice: undefined,
     useCustomPrice: false,
     timeCompressionFactor: 1,
-    volatilityFactor: 1.0,
-    duration: 3600,
-    scenarioType: 'standard'
+    initialLiquidity: 1000000, // FIXED: Required field, default 1M
+    volatilityFactor: 1.0, // FIXED: Required field
+    duration: 3600, // FIXED: Required field
+    scenarioType: 'standard' // FIXED: Required field
   });
   
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -555,6 +557,7 @@ const Dashboard: React.FC = () => {
           volatilityFactor: simulationParameters.volatilityFactor,
           scenarioType: simulationParameters.scenarioType,
           timeCompressionFactor: simulationParameters.timeCompressionFactor,
+          initialLiquidity: simulationParameters.initialLiquidity,
           // FIXED: Dynamic pricing parameters
           priceRange: simulationParameters.priceRange,
           customPrice: simulationParameters.useCustomPrice ? simulationParameters.customPrice : undefined,
@@ -932,6 +935,14 @@ const Dashboard: React.FC = () => {
     }
   }, [simulationId]);
 
+  // FIXED: Handle speed change from SimulationControls (string input)
+  const handleSpeedChangeFromControls = useCallback((speedString: string) => {
+    const speedKey = speedString as keyof typeof speedMap;
+    if (speedKey in speedMap) {
+      handleSpeedChange(speedKey);
+    }
+  }, [handleSpeedChange]);
+
   // FIXED: Handle simulation parameters change (for dynamic pricing) - TypeScript error resolved
   const handleParametersChange = useCallback((newParams: Partial<SimulationParameters>) => {
     setSimulationParameters((prev: SimulationParameters) => ({
@@ -1016,7 +1027,7 @@ const Dashboard: React.FC = () => {
             🖥️ Desktop mode • Enhanced mobile detection
           </div>
           <div className="mt-2 text-sm text-green-500">
-            ✅ TypeScript build error FIXED
+            ✅ TypeScript interface compatibility FIXED
           </div>
         </div>
       </div>
@@ -1140,7 +1151,7 @@ const Dashboard: React.FC = () => {
             </div>
             
             <div className="ml-2 text-xs text-green-500">
-              ✅ TS Fixed
+              ✅ Interface Fixed
             </div>
             
             {currentScenario && (
@@ -1330,7 +1341,7 @@ const Dashboard: React.FC = () => {
             <RecentTrades trades={recentTrades} />
           </div>
           
-          {/* FIXED: Add SimulationControls component */}
+          {/* FIXED: Add SimulationControls component with proper interface */}
           <div style={{ overflow: 'hidden' }}>
             <SimulationControls
               isRunning={simulation?.isRunning || false}
@@ -1339,7 +1350,7 @@ const Dashboard: React.FC = () => {
               onPause={handlePauseSimulation}
               onReset={handleResetSimulation}
               parameters={simulationParameters}
-              onSpeedChange={handleSpeedChange}
+              onSpeedChange={handleSpeedChangeFromControls}
               onParametersChange={handleParametersChange}
             />
           </div>
