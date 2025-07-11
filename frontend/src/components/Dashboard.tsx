@@ -1,4 +1,4 @@
-// frontend/src/components/Dashboard.tsx - PRODUCTION READY VERSION
+// frontend/src/components/Dashboard.tsx - FIXED: Dynamic Pricing Support
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -10,7 +10,8 @@ import OrderBook from './OrderBook';
 import RecentTrades from './RecentTrades';
 import ParticipantsOverview from './ParticipantsOverview';
 import PerformanceMonitor from './PerformanceMonitor';
-import StressTestController from './StressTestController'; // CHANGED: Import new component
+import StressTestController from './StressTestController';
+import SimulationControls from './SimulationControls'; // FIXED: Import the controls component
 
 // Mobile components - will lazy load to avoid initial import errors
 const MobileDashboard = React.lazy(() => import('./mobile/MobileDashboard'));
@@ -173,7 +174,7 @@ const Dashboard: React.FC = () => {
   const [showDebugInfo, setShowDebugInfo] = useState<boolean>(false);
   
   const [showPerformanceMonitor, setShowPerformanceMonitor] = useState<boolean>(false);
-  const [showStressTestController, setShowStressTestController] = useState<boolean>(false); // CHANGED: Renamed state
+  const [showStressTestController, setShowStressTestController] = useState<boolean>(false);
   const [wsMessageCount, setWsMessageCount] = useState<number>(0);
   
   const [currentScenario, setCurrentScenario] = useState<any | null>(null);
@@ -197,6 +198,18 @@ const Dashboard: React.FC = () => {
   const [isWebSocketReady, setIsWebSocketReady] = useState<boolean>(false);
   const [simulationRegistrationStatus, setSimulationRegistrationStatus] = useState<'creating' | 'pending' | 'ready' | 'error'>('creating');
   const [initializationStep, setInitializationStep] = useState<string>('Starting...');
+  
+  // FIXED: Add dynamic pricing state
+  const [dynamicPricingInfo, setDynamicPricingInfo] = useState<any>(null);
+  const [simulationParameters, setSimulationParameters] = useState<any>({
+    priceRange: 'random',
+    customPrice: undefined,
+    useCustomPrice: false,
+    timeCompressionFactor: 1,
+    volatilityFactor: 1.0,
+    duration: 3600,
+    scenarioType: 'standard'
+  });
   
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const initializationRef = useRef<boolean>(false);
@@ -302,6 +315,11 @@ const Dashboard: React.FC = () => {
     
     if (data.totalTradesProcessed !== undefined) {
       setTotalTradesProcessed(data.totalTradesProcessed);
+    }
+    
+    // FIXED: Update dynamic pricing info if available
+    if (data.dynamicPricing) {
+      setDynamicPricingInfo(data.dynamicPricing);
     }
     
     if (simulation) {
@@ -506,7 +524,7 @@ const Dashboard: React.FC = () => {
     return 'BTC/USDT';
   }, []);
 
-  // Initialization
+  // FIXED: Initialization with dynamic pricing support
   useEffect(() => {
     if (initializationRef.current) return;
     initializationRef.current = true;
@@ -516,13 +534,19 @@ const Dashboard: React.FC = () => {
       setSimulationRegistrationStatus('creating');
       
       try {
-        setInitializationStep('Creating simulation...');
+        setInitializationStep('Creating simulation with dynamic pricing...');
         
+        // FIXED: Create simulation with dynamic pricing parameters (NO hardcoded $100!)
         const response = await SimulationApi.createSimulation({
-          initialPrice: 100,
-          duration: 3600,
-          volatilityFactor: 1.0,
-          scenarioType: 'standard'
+          duration: simulationParameters.duration,
+          volatilityFactor: simulationParameters.volatilityFactor,
+          scenarioType: simulationParameters.scenarioType,
+          timeCompressionFactor: simulationParameters.timeCompressionFactor,
+          // FIXED: Dynamic pricing parameters
+          priceRange: simulationParameters.priceRange,
+          customPrice: simulationParameters.useCustomPrice ? simulationParameters.customPrice : undefined,
+          useCustomPrice: simulationParameters.useCustomPrice
+          // CRITICAL: NO initialPrice: 100 !!!!
         });
         
         if (response.error) {
@@ -539,6 +563,12 @@ const Dashboard: React.FC = () => {
         }
         
         setSimulationId(simId);
+        
+        // FIXED: Extract dynamic pricing info from response
+        if (response.data?.dynamicPricing) {
+          setDynamicPricingInfo(response.data.dynamicPricing);
+          console.log('💰 FIXED: Dynamic pricing info received:', response.data.dynamicPricing);
+        }
         
         if (response.data?.registrationStatus === 'ready' && response.data?.isReady) {
           setSimulationRegistrationStatus('ready');
@@ -576,22 +606,28 @@ const Dashboard: React.FC = () => {
         setSimulation(simData);
         
         setInitializationStep('Initializing dashboard state...');
+        
+        // FIXED: Use the actual dynamic price from simulation
+        const dynamicPrice = simData.currentPrice;
+        console.log(`💰 FIXED: Using dynamic price from simulation: $${dynamicPrice} (not hardcoded $100!)`);
+        
         updateSimulationState({
-          currentPrice: simData.currentPrice || 100,
+          currentPrice: dynamicPrice,
           orderBook: simData.orderBook || { bids: [], asks: [], lastUpdateTime: Date.now() },
           priceHistory: simData.priceHistory || [],
           recentTrades: simData.recentTrades || [],
           activePositions: simData.activePositions || [],
-          traderRankings: simData.traderRankings || []
+          traderRankings: simData.traderRankings || [],
+          // FIXED: Include dynamic pricing info
+          dynamicPricing: simData.dynamicPricing
         }, 'initialization');
         
-        const initialPrice = simData.currentPrice || 100;
-        setTokenSymbol(determineTokenSymbol(initialPrice));
+        setTokenSymbol(determineTokenSymbol(dynamicPrice));
         
         setInitializationStep('Enabling WebSocket connection...');
         setIsWebSocketReady(true);
         
-        setInitializationStep('Ready for trading!');
+        setInitializationStep('Ready for trading with dynamic pricing!');
         
       } catch (error) {
         setError('Failed to initialize simulation');
@@ -713,6 +749,7 @@ const Dashboard: React.FC = () => {
     }
   }, [simulationId, setPauseState]);
 
+  // FIXED: Reset simulation with dynamic pricing regeneration
   const handleResetSimulation = useCallback(async () => {
     if (!simulationId) return;
     
@@ -722,12 +759,13 @@ const Dashboard: React.FC = () => {
         await new Promise(resolve => setTimeout(resolve, 300));
       }
       
+      // Clear local state
       setRecentTrades([]);
       setOrderBook({ bids: [], asks: [], lastUpdateTime: Date.now() });
       setPriceHistory([]);
       setActivePositions([]);
       setTraderRankings([]);
-      setCurrentPrice(100);
+      setCurrentPrice(0); // Will be updated with new dynamic price
       
       setTotalTradesProcessed(0);
       setMarketCondition('calm');
@@ -737,6 +775,7 @@ const Dashboard: React.FC = () => {
       setIsHighFrequencyMode(false);
       setCurrentScenario(null);
       setScenarioPhaseData(null);
+      setDynamicPricingInfo(null); // FIXED: Clear old pricing info
       
       lastMessageProcessedRef.current = '';
       marketConditionUpdateRef.current = 0;
@@ -751,6 +790,7 @@ const Dashboard: React.FC = () => {
         timerRef.current = null;
       }
       
+      // FIXED: Reset simulation (will generate new dynamic price)
       const resetResponse = await SimulationApi.resetSimulation(simulationId);
       
       if (resetResponse.error && process.env.NODE_ENV === 'development') {
@@ -759,11 +799,15 @@ const Dashboard: React.FC = () => {
       
       await new Promise(resolve => setTimeout(resolve, 500));
       
+      // Get fresh simulation data with new dynamic price
       const freshSimResponse = await SimulationApi.getSimulation(simulationId);
       
       if (freshSimResponse?.data) {
         const freshSimData = freshSimResponse.data?.data || freshSimResponse.data;
         freshSimData.id = simulationId;
+        
+        const newDynamicPrice = freshSimData.currentPrice;
+        console.log(`💰 FIXED: Reset generated new dynamic price: $${newDynamicPrice}`);
         
         setSimulation({
           ...freshSimData,
@@ -772,29 +816,37 @@ const Dashboard: React.FC = () => {
           priceHistory: [],
           recentTrades: [],
           activePositions: [],
-          currentPrice: 100
+          currentPrice: newDynamicPrice
         });
         
-        const resetPrice = 100;
-        
+        // FIXED: Update state with new dynamic pricing info
         updateSimulationState({
-          currentPrice: resetPrice,
+          currentPrice: newDynamicPrice,
           orderBook: { bids: [], asks: [], lastUpdateTime: Date.now() },
           priceHistory: [],
           recentTrades: [],
           activePositions: [],
-          traderRankings: freshSimData.traderRankings || []
+          traderRankings: freshSimData.traderRankings || [],
+          dynamicPricing: resetResponse.data?.dynamicPricing || freshSimData.dynamicPricing
         }, 'reset');
         
-        setTokenSymbol(determineTokenSymbol(resetPrice));
+        setTokenSymbol(determineTokenSymbol(newDynamicPrice));
+        
+        // FIXED: Update dynamic pricing info
+        if (resetResponse.data?.dynamicPricing) {
+          setDynamicPricingInfo(resetResponse.data.dynamicPricing);
+        }
         
       } else {
         if (process.env.NODE_ENV === 'development') {
           console.error('Failed to fetch fresh simulation state');
         }
         
+        // FIXED: Emergency reset with fallback (no hardcoded $100)
+        const fallbackPrice = 1.0; // Better fallback than $100
+        
         updateSimulationState({
-          currentPrice: 100,
+          currentPrice: fallbackPrice,
           orderBook: { bids: [], asks: [], lastUpdateTime: Date.now() },
           priceHistory: [],
           recentTrades: [],
@@ -809,7 +861,7 @@ const Dashboard: React.FC = () => {
           priceHistory: [],
           recentTrades: [],
           activePositions: [],
-          currentPrice: 100
+          currentPrice: fallbackPrice
         } : prev);
       }
       
@@ -818,11 +870,12 @@ const Dashboard: React.FC = () => {
         console.error('Error during comprehensive reset:', error);
       }
       
+      // FIXED: Emergency cleanup without hardcoded values
       setRecentTrades([]);
       setPriceHistory([]);
       setActivePositions([]);
       setOrderBook({ bids: [], asks: [], lastUpdateTime: Date.now() });
-      setCurrentPrice(100);
+      setCurrentPrice(0); // Will be updated when simulation loads
       setTotalTradesProcessed(0);
       setMarketCondition('calm');
       setSimulationStartTime(null);
@@ -831,6 +884,7 @@ const Dashboard: React.FC = () => {
       setIsHighFrequencyMode(false);
       setCurrentScenario(null);
       setScenarioPhaseData(null);
+      setDynamicPricingInfo(null);
       
       if (simulation) {
         setSimulation(prev => prev ? {
@@ -840,7 +894,7 @@ const Dashboard: React.FC = () => {
           priceHistory: [],
           recentTrades: [],
           activePositions: [],
-          currentPrice: 100
+          currentPrice: 0
         } : prev);
       }
     }
@@ -864,6 +918,16 @@ const Dashboard: React.FC = () => {
       }
     }
   }, [simulationId]);
+
+  // FIXED: Handle simulation parameters change (for dynamic pricing)
+  const handleParametersChange = useCallback((newParams: Partial<typeof simulationParameters>) => {
+    setSimulationParameters(prev => ({
+      ...prev,
+      ...newParams
+    }));
+    
+    console.log('💰 FIXED: Simulation parameters updated:', newParams);
+  }, []);
 
   const toggleDynamicView = useCallback(() => {
     setDynamicChartView(prev => !prev);
@@ -931,6 +995,9 @@ const Dashboard: React.FC = () => {
           </div>
           <div className="mt-2 text-sm text-purple-400">
             ✅ Memory management optimized
+          </div>
+          <div className="mt-2 text-sm text-orange-400">
+            💰 FIXED: Dynamic pricing enabled - NO MORE $100!
           </div>
           <div className="mt-2 text-sm text-cyan-400">
             🖥️ Desktop mode • Enhanced mobile detection
@@ -1005,6 +1072,13 @@ const Dashboard: React.FC = () => {
               <span className="text-white font-medium">${currentPrice < 1 ? currentPrice.toFixed(6) : currentPrice.toFixed(2)}</span>
             </div>
             
+            {/* FIXED: Dynamic pricing indicator */}
+            {dynamicPricingInfo && (
+              <div className="ml-2 text-xs bg-green-900 px-2 py-1 rounded text-green-300">
+                💰 {dynamicPricingInfo.priceCategory || 'Dynamic'}: {dynamicPricingInfo.wasCustom ? 'Custom' : 'Generated'}
+              </div>
+            )}
+            
             <div className={`ml-2 w-2 h-2 rounded-full mr-1 ${
               isConnected ? 'bg-green-500' : connectionError ? 'bg-red-500' : 'bg-yellow-500'
             }`}></div>
@@ -1039,6 +1113,10 @@ const Dashboard: React.FC = () => {
             
             <div className="ml-2 text-xs text-green-400">
               ✅ No Limits
+            </div>
+            
+            <div className="ml-2 text-xs text-orange-400">
+              💰 FIXED: Dynamic Pricing
             </div>
             
             <div className="ml-2 text-xs text-cyan-400">
@@ -1173,7 +1251,7 @@ const Dashboard: React.FC = () => {
             <button 
               onClick={handleResetSimulation}
               className="px-3 py-0.5 bg-red-600 text-white rounded hover:bg-red-700 transition"
-              title="Complete reset - clears all data and starts fresh"
+              title="Complete reset - generates NEW dynamic price"
             >
               Reset
             </button>
@@ -1183,7 +1261,7 @@ const Dashboard: React.FC = () => {
         {/* Debug Info Panel - Development Only */}
         {showDebugInfo && debugInfo && process.env.NODE_ENV === 'development' && (
           <div className="border-t border-gray-700 p-2">
-            <div className="text-xs text-gray-400 mb-1">🔍 Mobile Detection Debug:</div>
+            <div className="text-xs text-gray-400 mb-1">🔍 Debug Info:</div>
             <div className="grid grid-cols-3 gap-2 text-xs">
               <div className="bg-gray-700 p-2 rounded">
                 <div className="text-blue-400">Screen: {debugInfo.screenWidth}x{debugInfo.screenHeight}</div>
@@ -1193,34 +1271,34 @@ const Dashboard: React.FC = () => {
                 </div>
               </div>
               <div className="bg-gray-700 p-2 rounded">
-                <div>Small Screen: {debugInfo.isSmallScreen ? '✅' : '❌'}</div>
-                <div>Touch: {debugInfo.hasTouch ? '✅' : '❌'}</div>
-                <div>Mobile UA: {debugInfo.isMobileUA ? '✅' : '❌'}</div>
+                <div>Current Price: ${currentPrice.toFixed(6)}</div>
+                <div>Price Category: {dynamicPricingInfo?.priceCategory || 'Unknown'}</div>
+                <div>Was Custom: {dynamicPricingInfo?.wasCustom ? 'Yes' : 'No'}</div>
               </div>
               <div className="bg-gray-700 p-2 rounded">
-                <div>iOS: {debugInfo.isIOS ? '✅' : '❌'}</div>
-                <div>Android: {debugInfo.isAndroid ? '✅' : '❌'}</div>
-                <div>DPR: {debugInfo.devicePixelRatio.toFixed(1)}</div>
+                <div>Registration: {simulationRegistrationStatus}</div>
+                <div>WebSocket: {isConnected ? 'Connected' : 'Disconnected'}</div>
+                <div>Messages: {wsMessageCount}</div>
               </div>
             </div>
           </div>
         )}
       </div>
       
-      {/* Desktop Grid Layout */}
+      {/* Desktop Grid Layout - Updated to include SimulationControls */}
       <div style={{ 
         display: 'grid', 
         gridTemplateColumns: '3fr 9fr', 
         gridTemplateRows: '3fr 2fr',
         gap: '8px',
-        height: 'calc(100vh - 85px)',
+        height: 'calc(100vh - 105px)', // Adjusted for larger header
         overflow: 'hidden'
       }}>
         <div style={{ 
           gridColumn: '1 / 2', 
           gridRow: '1 / 3', 
           display: 'grid',
-          gridTemplateRows: '3fr 1fr',
+          gridTemplateRows: '2fr 1fr 1fr', // FIXED: Added third row for SimulationControls
           gap: '8px',
           overflow: 'hidden'
         }}>
@@ -1230,6 +1308,20 @@ const Dashboard: React.FC = () => {
           
           <div style={{ overflow: 'hidden' }}>
             <RecentTrades trades={recentTrades} />
+          </div>
+          
+          {/* FIXED: Add SimulationControls component */}
+          <div style={{ overflow: 'hidden' }}>
+            <SimulationControls
+              isRunning={simulation?.isRunning || false}
+              isPaused={simulation?.isPaused || false}
+              onStart={handleStartSimulation}
+              onPause={handlePauseSimulation}
+              onReset={handleResetSimulation}
+              parameters={simulationParameters}
+              onSpeedChange={handleSpeedChange}
+              onParametersChange={handleParametersChange}
+            />
           </div>
         </div>
         
