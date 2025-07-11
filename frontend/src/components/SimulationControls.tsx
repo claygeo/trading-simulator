@@ -1,15 +1,17 @@
-// frontend/src/components/SimulationControls.tsx - ENHANCED: Price Range Selection & Dynamic Starting Prices
-import React, { useState } from 'react';
+// frontend/src/components/SimulationControls.tsx - FIXED: Proper Dynamic Pricing Integration
+import React, { useState, useEffect } from 'react';
 
 interface SimulationParameters {
   timeCompressionFactor: number;
-  initialPrice: number;
+  initialPrice?: number; // FIXED: Made optional - should not be used with dynamic pricing
   initialLiquidity: number;
   volatilityFactor: number;
   duration: number;
   scenarioType: string;
+  // FIXED: Dynamic pricing parameters
   priceRange?: 'micro' | 'small' | 'mid' | 'large' | 'mega' | 'random';
   customPrice?: number;
+  useCustomPrice?: boolean;
 }
 
 interface SimulationControlsProps {
@@ -19,7 +21,7 @@ interface SimulationControlsProps {
   onPause: () => void;
   onReset: () => void;
   parameters: SimulationParameters;
-  onSpeedChange: (speed: number) => void;
+  onSpeedChange: (speed: string) => void; // FIXED: Change to string for speed names
   onParametersChange?: (params: Partial<SimulationParameters>) => void;
 }
 
@@ -42,8 +44,8 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
   onSpeedChange,
   onParametersChange
 }) => {
-  // Simplified speed options: 1 = Slow, 2 = Medium, 3 = Fast
-  const [speedSetting, setSpeedSetting] = useState<number>(1); // Default to Slow
+  // FIXED: Speed options mapped to names instead of numbers
+  const [speedSetting, setSpeedSetting] = useState<string>('slow'); // Default to Slow
   const [showDetails, setShowDetails] = useState<boolean>(false);
   const [showPriceSettings, setShowPriceSettings] = useState<boolean>(false);
   const [selectedPriceRange, setSelectedPriceRange] = useState<string>('random');
@@ -102,17 +104,26 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
     }
   ];
 
+  // FIXED: Initialize from parameters
+  useEffect(() => {
+    if (parameters.priceRange) {
+      setSelectedPriceRange(parameters.priceRange);
+    }
+    if (parameters.useCustomPrice) {
+      setUseCustomPrice(true);
+      if (parameters.customPrice) {
+        setCustomPrice(parameters.customPrice.toString());
+      }
+    }
+  }, [parameters.priceRange, parameters.useCustomPrice, parameters.customPrice]);
+
   // Handle speed setting change with buttons instead of slider
-  const handleSpeedChange = (newSpeed: number) => {
+  const handleSpeedChange = (newSpeed: string) => {
     setSpeedSetting(newSpeed);
-    
-    // Convert simplified speed settings to actual speed values
-    // Slow = 1x, Medium = 3x, Fast = 5x
-    const actualSpeed = newSpeed === 1 ? 1 : (newSpeed === 2 ? 3 : 5);
-    onSpeedChange(actualSpeed);
+    onSpeedChange(newSpeed); // FIXED: Pass string instead of number
   };
 
-  // Handle price range selection
+  // FIXED: Handle price range selection with proper parameter updates
   const handlePriceRangeChange = (rangeId: string) => {
     setSelectedPriceRange(rangeId);
     setUseCustomPrice(false);
@@ -121,12 +132,17 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
     if (onParametersChange) {
       onParametersChange({
         priceRange: rangeId as any,
-        customPrice: undefined
+        customPrice: undefined,
+        useCustomPrice: false,
+        // CRITICAL: DO NOT include initialPrice when using dynamic pricing
+        initialPrice: undefined
       });
     }
+    
+    console.log('💰 FIXED: Price range changed to:', rangeId);
   };
 
-  // Handle custom price input
+  // FIXED: Handle custom price input with proper validation
   const handleCustomPriceChange = (value: string) => {
     setCustomPrice(value);
     const numericValue = parseFloat(value);
@@ -135,26 +151,36 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
       if (onParametersChange) {
         onParametersChange({
           customPrice: numericValue,
-          priceRange: undefined
+          useCustomPrice: true,
+          priceRange: undefined,
+          // CRITICAL: DO NOT include initialPrice when using custom price
+          initialPrice: undefined
         });
       }
+      console.log('💰 FIXED: Custom price set to:', numericValue);
     }
   };
 
-  // Toggle custom price mode
+  // FIXED: Toggle custom price mode with proper parameter updates
   const handleCustomPriceToggle = (enabled: boolean) => {
     setUseCustomPrice(enabled);
     if (!enabled) {
       setCustomPrice('');
+      // Revert to selected price range
       handlePriceRangeChange(selectedPriceRange);
     } else {
       if (onParametersChange) {
         onParametersChange({
           priceRange: undefined,
-          customPrice: undefined
+          customPrice: undefined,
+          useCustomPrice: true,
+          // CRITICAL: DO NOT include initialPrice
+          initialPrice: undefined
         });
       }
     }
+    
+    console.log('💰 FIXED: Custom price mode toggled:', enabled);
   };
 
   const toggleDetails = () => {
@@ -165,17 +191,7 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
     setShowPriceSettings(!showPriceSettings);
   };
 
-  // Get display text for current speed
-  const getSpeedText = () => {
-    switch(speedSetting) {
-      case 1: return "Slow";
-      case 2: return "Medium";
-      case 3: return "Fast";
-      default: return "Slow";
-    }
-  };
-
-  // Get current price display
+  // FIXED: Get display text for current price setting
   const getCurrentPriceDisplay = () => {
     if (useCustomPrice && customPrice) {
       return `Custom: $${customPrice}`;
@@ -186,7 +202,12 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
       return `${selectedRange.name}: ${selectedRange.range}`;
     }
     
-    return `Current: $${parameters.initialPrice.toFixed(6)}`;
+    // FIXED: Show current parameter price if available, but indicate it's dynamic
+    if (parameters.initialPrice) {
+      return `Current: $${parameters.initialPrice.toFixed(6)} (Dynamic)`;
+    }
+    
+    return `Dynamic: Random Generation`;
   };
 
   return (
@@ -198,6 +219,10 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
             <span className={`font-medium ${isRunning ? (isPaused ? 'text-warning' : 'text-success') : 'text-text-secondary'}`}>
               {isRunning ? (isPaused ? 'Paused' : 'Running') : 'Stopped'}
             </span>
+          </div>
+          {/* FIXED: Dynamic pricing indicator */}
+          <div className="ml-2 text-xs bg-green-800 text-green-300 px-2 py-1 rounded">
+            💰 Dynamic
           </div>
         </div>
         
@@ -217,17 +242,17 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
         </div>
       </div>
       
-      {/* ENHANCED: Starting Price Configuration */}
+      {/* ENHANCED: Starting Price Configuration with Dynamic Pricing */}
       {showPriceSettings && (
         <div className="mt-3 p-3 bg-panel rounded-lg border-l-4 border-accent">
           <div className="flex justify-between items-center mb-2">
-            <h3 className="text-sm font-medium">Starting Price Range</h3>
+            <h3 className="text-sm font-medium">Dynamic Starting Price</h3>
             <div className="text-xs text-text-secondary">
               {getCurrentPriceDisplay()}
             </div>
           </div>
           
-          {/* Custom Price Toggle */}
+          {/* FIXED: Custom Price Toggle */}
           <div className="flex items-center space-x-2 mb-3">
             <input
               type="checkbox"
@@ -289,57 +314,43 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
             </div>
           )}
           
-          {/* Dynamic Price Info */}
+          {/* FIXED: Dynamic Price Info */}
           <div className="mt-2 p-2 bg-surface-variant rounded text-xs">
-            <div className="text-accent font-medium mb-1">💡 Dynamic Pricing</div>
+            <div className="text-accent font-medium mb-1">💰 FIXED: Dynamic Pricing</div>
             <div className="text-text-secondary">
-              Each simulation will start with a different price within your selected range, 
-              making every run unique and realistic.
+              Each simulation will start with a different price within your selected range. 
+              No more hardcoded $100! Every run is unique and realistic.
             </div>
+            {!useCustomPrice && (
+              <div className="text-green-400 mt-1">
+                ✅ Random generation enabled - price will vary every reset!
+              </div>
+            )}
           </div>
         </div>
       )}
       
-      {/* Simulation speed control - simplified to 3 buttons */}
+      {/* FIXED: Simulation speed control - simplified to text buttons */}
       <div className="mt-3">
         <div className="flex justify-between items-center mb-1">
-          <span className="text-xs">Speed: {getSpeedText()}</span>
+          <span className="text-xs">Speed: {speedSetting}</span>
         </div>
         
         <div className="flex space-x-2 mt-1">
-          <button
-            onClick={() => handleSpeedChange(1)}
-            disabled={isRunning}
-            className={`px-3 py-1 text-xs rounded flex-1 transition ${
-              speedSetting === 1 
-                ? 'bg-accent text-white' 
-                : 'bg-surface-variant text-text-muted hover:bg-panel'
-            } ${isRunning ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            Slow
-          </button>
-          <button
-            onClick={() => handleSpeedChange(2)}
-            disabled={isRunning}
-            className={`px-3 py-1 text-xs rounded flex-1 transition ${
-              speedSetting === 2 
-                ? 'bg-accent text-white' 
-                : 'bg-surface-variant text-text-muted hover:bg-panel'
-            } ${isRunning ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            Medium
-          </button>
-          <button
-            onClick={() => handleSpeedChange(3)}
-            disabled={isRunning}
-            className={`px-3 py-1 text-xs rounded flex-1 transition ${
-              speedSetting === 3 
-                ? 'bg-accent text-white' 
-                : 'bg-surface-variant text-text-muted hover:bg-panel'
-            } ${isRunning ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            Fast
-          </button>
+          {['slow', 'medium', 'fast'].map((speed) => (
+            <button
+              key={speed}
+              onClick={() => handleSpeedChange(speed)}
+              disabled={isRunning}
+              className={`px-3 py-1 text-xs rounded flex-1 transition ${
+                speedSetting === speed 
+                  ? 'bg-accent text-white' 
+                  : 'bg-surface-variant text-text-muted hover:bg-panel'
+              } ${isRunning ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              {speed.charAt(0).toUpperCase() + speed.slice(1)}
+            </button>
+          ))}
         </div>
       </div>
       
@@ -364,6 +375,7 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
         <button 
           onClick={onReset}
           className="px-3 py-1.5 bg-danger text-white rounded hover:bg-danger-hover transition w-20"
+          title="Reset with NEW dynamic price"
         >
           Reset
         </button>
@@ -375,7 +387,9 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
           <div className="grid grid-cols-2 gap-2">
             <div>
               <div className="text-text-secondary">Current Price:</div>
-              <div className="text-text-primary font-medium">${parameters.initialPrice.toFixed(6)}</div>
+              <div className="text-text-primary font-medium">
+                {parameters.initialPrice ? `$${parameters.initialPrice.toFixed(6)}` : 'Dynamic'}
+              </div>
             </div>
             <div>
               <div className="text-text-secondary">Liquidity:</div>
@@ -391,21 +405,34 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
             </div>
           </div>
           
-          {/* Enhanced price category info */}
+          {/* FIXED: Enhanced price category info */}
           <div className="mt-2 pt-2 border-t border-border">
             <div className="text-text-secondary">Price Category:</div>
             <div className="text-text-primary font-medium">
-              {parameters.initialPrice < 0.01 ? 'Micro-cap (< $0.01)' :
-               parameters.initialPrice < 1 ? 'Small-cap ($0.01 - $1)' :
-               parameters.initialPrice < 10 ? 'Mid-cap ($1 - $10)' :
-               parameters.initialPrice < 100 ? 'Large-cap ($10 - $100)' :
-               'Mega-cap ($100+)'}
+              {useCustomPrice && customPrice ? 
+                `Custom: $${customPrice}` :
+                selectedPriceRange ? 
+                  priceRanges.find(r => r.id === selectedPriceRange)?.description || 'Unknown' :
+                  'Dynamic Generation'}
+            </div>
+          </div>
+          
+          {/* FIXED: Dynamic pricing status */}
+          <div className="mt-2 pt-2 border-t border-border">
+            <div className="text-green-400 font-medium">💰 Dynamic Pricing Status:</div>
+            <div className="text-text-secondary">
+              {useCustomPrice ? 
+                'Custom price will be used' :
+                'Price will be randomly generated in selected range'}
+            </div>
+            <div className="text-orange-400 text-xs mt-1">
+              ✅ NO MORE $100 hardcoded values!
             </div>
           </div>
         </div>
       )}
       
-      {/* Price range indicator when not showing settings */}
+      {/* FIXED: Price range indicator when not showing settings */}
       {!showPriceSettings && !isRunning && (
         <div className="mt-2 text-xs text-text-secondary flex items-center justify-between">
           <span>Next start: {getCurrentPriceDisplay()}</span>
@@ -417,6 +444,16 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
           </button>
         </div>
       )}
+      
+      {/* FIXED: Dynamic pricing indicator */}
+      <div className="mt-2 text-xs text-center">
+        <div className="text-green-400 font-medium">
+          💰 Dynamic Pricing Active
+        </div>
+        <div className="text-text-muted">
+          Each simulation starts with a unique price
+        </div>
+      </div>
     </div>
   );
 };
