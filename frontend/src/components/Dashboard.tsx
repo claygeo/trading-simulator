@@ -1,4 +1,4 @@
-// frontend/src/components/Dashboard.tsx - FIXED: Remove Duplicate Controls, More Space for Trading Data
+// frontend/src/components/Dashboard.tsx - FIXED: Clean Header with Debug Info Popup
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -11,7 +11,6 @@ import RecentTrades from './RecentTrades';
 import ParticipantsOverview from './ParticipantsOverview';
 import PerformanceMonitor from './PerformanceMonitor';
 import StressTestController from './StressTestController';
-// REMOVED: SimulationControls import - using header controls only
 
 // Mobile components - will lazy load to avoid initial import errors
 const MobileDashboard = React.lazy(() => import('./mobile/MobileDashboard'));
@@ -185,7 +184,9 @@ const Dashboard: React.FC = () => {
   const [simulationSpeed, setSimulationSpeed] = useState<number>(1);
   const [simulationStartTime, setSimulationStartTime] = useState<number | null>(null);
   const [elapsedTime, setElapsedTime] = useState<string>("00:00:00");
-  const [showDebugInfo, setShowDebugInfo] = useState<boolean>(false);
+  
+  // FIXED: Debug info popup state
+  const [showDebugPopup, setShowDebugPopup] = useState<boolean>(false);
   
   const [showPerformanceMonitor, setShowPerformanceMonitor] = useState<boolean>(false);
   const [showStressTestController, setShowStressTestController] = useState<boolean>(false);
@@ -625,7 +626,7 @@ const Dashboard: React.FC = () => {
         
         // FIXED: Use the actual dynamic price from simulation
         const dynamicPrice = simData.currentPrice;
-        console.log(`💰 FIXED: Using dynamic price from simulation: $${dynamicPrice} (not hardcoded $100!)`);
+        console.log(`💰 FIXED: Using dynamic price from simulation: ${dynamicPrice} (not hardcoded $100!)`);
         
         updateSimulationState({
           currentPrice: dynamicPrice,
@@ -823,7 +824,7 @@ const Dashboard: React.FC = () => {
         freshSimData.id = simulationId;
         
         const newDynamicPrice = freshSimData.currentPrice;
-        console.log(`💰 FIXED: Reset generated new dynamic price: $${newDynamicPrice}`);
+        console.log(`💰 FIXED: Reset generated new dynamic price: ${newDynamicPrice}`);
         
         setSimulation({
           ...freshSimData,
@@ -935,9 +936,6 @@ const Dashboard: React.FC = () => {
     }
   }, [simulationId]);
 
-  // REMOVED: handleSpeedChangeFromControls - no longer needed
-  // REMOVED: handleParametersChange - no longer needed
-
   const toggleDynamicView = useCallback(() => {
     setDynamicChartView(prev => !prev);
   }, [dynamicChartView]);
@@ -1037,15 +1035,15 @@ const Dashboard: React.FC = () => {
             </button>
             {process.env.NODE_ENV === 'development' && (
               <button 
-                onClick={() => setShowDebugInfo(!showDebugInfo)} 
+                onClick={() => setShowDebugPopup(!showDebugPopup)} 
                 className="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded transition"
               >
-                {showDebugInfo ? 'Hide' : 'Show'} Debug
+                {showDebugPopup ? 'Hide' : 'Show'} Debug
               </button>
             )}
           </div>
           
-          {showDebugInfo && debugInfo && process.env.NODE_ENV === 'development' && (
+          {showDebugPopup && debugInfo && process.env.NODE_ENV === 'development' && (
             <div className="mt-4 p-3 bg-gray-700 rounded text-left text-xs">
               <pre>{JSON.stringify(debugInfo, null, 2)}</pre>
             </div>
@@ -1074,71 +1072,51 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="h-screen w-full bg-gray-900 text-white p-2 flex flex-col overflow-hidden">
-      {/* Desktop Header */}
+      {/* FIXED: Clean, minimal header for production use */}
       <div className="flex flex-col mb-2 bg-gray-800 rounded-md shadow-sm">
         <div className="flex justify-between items-center h-10 p-2">
           <div className="flex items-center">
-            <h1 className="text-base font-bold mr-2">Trading Simulation (Desktop)</h1>
+            <h1 className="text-base font-bold mr-3">Trading Simulator</h1>
+            
+            {/* Essential trading info only */}
             <div className="ml-2 text-xs bg-gray-700 px-2 py-1 rounded">
               <span className="text-gray-400 mr-1">{tokenSymbol}:</span>
               <span className="text-white font-medium">${currentPrice < 1 ? currentPrice.toFixed(6) : currentPrice.toFixed(2)}</span>
             </div>
             
-            {/* FIXED: Dynamic pricing indicator */}
+            {/* FIXED: Dynamic pricing indicator (essential) */}
             {dynamicPricingInfo && (
               <div className="ml-2 text-xs bg-green-900 px-2 py-1 rounded text-green-300">
-                💰 {dynamicPricingInfo.priceCategory || 'Dynamic'}: {dynamicPricingInfo.wasCustom ? 'Custom' : 'Generated'}
+                💰 {dynamicPricingInfo.priceCategory || 'Dynamic'}
               </div>
             )}
             
-            <div className={`ml-2 w-2 h-2 rounded-full mr-1 ${
-              isConnected ? 'bg-green-500' : connectionError ? 'bg-red-500' : 'bg-yellow-500'
-            }`}></div>
-            <span className="text-xs text-gray-400">
-              {isConnected ? 'Connected' : connectionError || 'Connecting...'}
-            </span>
-            
-            <div className={`ml-2 text-xs px-2 py-1 rounded ${
-              simulationRegistrationStatus === 'ready' ? 'bg-green-900 text-green-300' :
-              simulationRegistrationStatus === 'pending' ? 'bg-yellow-900 text-yellow-300' :
-              simulationRegistrationStatus === 'error' ? 'bg-red-900 text-red-300' :
-              'bg-blue-900 text-blue-300'
-            }`}>
-              Reg: {simulationRegistrationStatus}
+            {/* Connection status (essential) */}
+            <div className="ml-2 flex items-center">
+              <div className={`w-2 h-2 rounded-full mr-1 ${
+                isConnected ? 'bg-green-500' : connectionError ? 'bg-red-500' : 'bg-yellow-500'
+              }`}></div>
+              <span className="text-xs text-gray-400">
+                {isConnected ? 'Connected' : connectionError || 'Connecting...'}
+              </span>
             </div>
             
-            <div className="ml-2 text-xs text-gray-400">
-              Candles: {priceHistory.length} | Trades: <span className="text-accent font-bold">{formatTradeCount(recentTrades.length)}</span> | Msgs: {wsMessageCount}
+            {/* Market condition (essential) */}
+            <div className="ml-3 flex items-center">
+              <span className="text-xs text-gray-400 mr-1">Market:</span>
+              <span className={`text-xs font-medium ${
+                marketCondition === 'bullish' ? 'text-green-400' :
+                marketCondition === 'bearish' ? 'text-red-400' :
+                marketCondition === 'volatile' ? 'text-orange-400' :
+                marketCondition === 'crash' ? 'text-red-600' :
+                marketCondition === 'building' ? 'text-blue-400' :
+                'text-gray-400'
+              }`}>
+                {marketCondition.toUpperCase()}
+              </span>
             </div>
             
-            {recentTrades.length > ULTRA_FAST_CONFIG.PERFORMANCE_MODE_THRESHOLD && (
-              <div className="ml-2 text-xs text-yellow-400">
-                🧠 HF Mode
-              </div>
-            )}
-            
-            <div className={`ml-2 text-xs px-2 py-1 rounded ${
-              isWebSocketReady ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300'
-            }`}>
-              WS: {isWebSocketReady ? 'Ready' : 'Waiting'}
-            </div>
-            
-            <div className="ml-2 text-xs text-green-400">
-              ✅ No Limits
-            </div>
-            
-            <div className="ml-2 text-xs text-orange-400">
-              💰 FIXED: Dynamic Pricing
-            </div>
-            
-            <div className="ml-2 text-xs text-cyan-400">
-              🖥️ Desktop
-            </div>
-            
-            <div className="ml-2 text-xs text-red-400">
-              🗑️ Streamlined
-            </div>
-            
+            {/* Current scenario (if active) */}
             {currentScenario && (
               <div className="ml-2 text-xs text-purple-400 px-2 py-1 bg-purple-900 rounded">
                 📈 {currentScenario.scenarioName || 'Scenario Active'}
@@ -1147,10 +1125,20 @@ const Dashboard: React.FC = () => {
           </div>
           
           <div className="flex items-center space-x-2">
+            {/* Essential timer */}
             <div className="text-xs bg-gray-700 px-2 py-1 rounded">
               <span className="text-gray-400">Time:</span>
               <span className="ml-1 font-mono text-white">{elapsedTime}</span>
             </div>
+            
+            {/* FIXED: Debug info button (ℹ️) - opens popup with all debug details */}
+            <button 
+              onClick={() => setShowDebugPopup(!showDebugPopup)}
+              className="text-gray-400 hover:text-blue-400 text-sm transition"
+              title="Show debug information"
+            >
+              ℹ️
+            </button>
             
             <button 
               onClick={toggleDynamicView}
@@ -1180,17 +1168,6 @@ const Dashboard: React.FC = () => {
             >
               Stress
             </button>
-
-            {process.env.NODE_ENV === 'development' && (
-              <button 
-                onClick={() => setShowDebugInfo(!showDebugInfo)}
-                className={`text-xs px-2 py-1 rounded transition ${
-                  showDebugInfo ? 'text-yellow-400 bg-yellow-900' : 'text-gray-400 hover:text-gray-300'
-                }`}
-              >
-                Debug
-              </button>
-            )}
           </div>
         </div>
         
@@ -1211,20 +1188,6 @@ const Dashboard: React.FC = () => {
                   {speed.charAt(0).toUpperCase() + speed.slice(1)}
                 </button>
               ))}
-            </div>
-            
-            <div className="ml-4 flex items-center space-x-2">
-              <span className="text-xs text-gray-400">Market:</span>
-              <span className={`text-xs font-medium ${
-                marketCondition === 'bullish' ? 'text-green-400' :
-                marketCondition === 'bearish' ? 'text-red-400' :
-                marketCondition === 'volatile' ? 'text-orange-400' :
-                marketCondition === 'crash' ? 'text-red-600' :
-                marketCondition === 'building' ? 'text-blue-400' :
-                'text-gray-400'
-              }`}>
-                {marketCondition.toUpperCase()}
-              </span>
             </div>
             
             {isHighFrequencyMode && (
@@ -1273,33 +1236,123 @@ const Dashboard: React.FC = () => {
             </button>
           </div>
         </div>
+      </div>
 
-        {/* Debug Info Panel - Development Only */}
-        {showDebugInfo && debugInfo && process.env.NODE_ENV === 'development' && (
-          <div className="border-t border-gray-700 p-2">
-            <div className="text-xs text-gray-400 mb-1">🔍 Debug Info:</div>
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              <div className="bg-gray-700 p-2 rounded">
-                <div className="text-blue-400">Screen: {debugInfo.screenWidth}x{debugInfo.screenHeight}</div>
-                <div className="text-green-400">Score: {debugInfo.mobileScore}/10</div>
-                <div className={`${debugInfo.finalDecision ? 'text-red-400' : 'text-green-400'}`}>
-                  Mode: {debugInfo.finalDecision ? 'Mobile' : 'Desktop'}
+      {/* FIXED: Debug Info Popup - All technical details moved here */}
+      {showDebugPopup && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 p-6 rounded-lg shadow-lg max-w-4xl max-h-[80vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-white">Debug Information</h3>
+              <button 
+                onClick={() => setShowDebugPopup(false)}
+                className="text-gray-400 hover:text-white text-xl"
+              >
+                ✕
+              </button>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              {/* Simulation Status */}
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="text-blue-400 font-semibold mb-2">Simulation Status</div>
+                <div className="space-y-1 text-xs">
+                  <div>Registration: <span className="text-green-400">{simulationRegistrationStatus}</span></div>
+                  <div>WebSocket: <span className={isConnected ? 'text-green-400' : 'text-red-400'}>{isConnected ? 'Connected' : 'Disconnected'}</span></div>
+                  <div>WebSocket Ready: <span className={isWebSocketReady ? 'text-green-400' : 'text-yellow-400'}>{isWebSocketReady ? 'Yes' : 'No'}</span></div>
+                  <div>Running: <span className={simulation.isRunning ? 'text-green-400' : 'text-gray-400'}>{simulation.isRunning ? 'Yes' : 'No'}</span></div>
+                  <div>Paused: <span className={simulation.isPaused ? 'text-yellow-400' : 'text-gray-400'}>{simulation.isPaused ? 'Yes' : 'No'}</span></div>
                 </div>
               </div>
-              <div className="bg-gray-700 p-2 rounded">
-                <div>Current Price: ${currentPrice.toFixed(6)}</div>
-                <div>Price Category: {dynamicPricingInfo?.priceCategory || 'Unknown'}</div>
-                <div>Was Custom: {dynamicPricingInfo?.wasCustom ? 'Yes' : 'No'}</div>
+
+              {/* Performance Metrics */}
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="text-purple-400 font-semibold mb-2">Performance Metrics</div>
+                <div className="space-y-1 text-xs">
+                  <div>Messages: <span className="text-white">{wsMessageCount}</span></div>
+                  <div>Candles: <span className="text-white">{priceHistory.length}</span></div>
+                  <div>Trades: <span className="text-accent font-bold">{formatTradeCount(recentTrades.length)}</span></div>
+                  <div>Active Positions: <span className="text-white">{activePositions.length}</span></div>
+                  <div>Traders: <span className="text-white">{traderRankings.length}</span></div>
+                  <div>HF Mode: <span className={isHighFrequencyMode ? 'text-yellow-400' : 'text-gray-400'}>{isHighFrequencyMode ? 'Active' : 'Inactive'}</span></div>
+                </div>
               </div>
-              <div className="bg-gray-700 p-2 rounded">
-                <div>Registration: {simulationRegistrationStatus}</div>
-                <div>WebSocket: {isConnected ? 'Connected' : 'Disconnected'}</div>
-                <div>Messages: {wsMessageCount}</div>
+
+              {/* Dynamic Pricing Info */}
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="text-green-400 font-semibold mb-2">Dynamic Pricing</div>
+                <div className="space-y-1 text-xs">
+                  <div>Current Price: <span className="text-white">${currentPrice.toFixed(6)}</span></div>
+                  <div>Category: <span className="text-green-400">{dynamicPricingInfo?.priceCategory || 'Unknown'}</span></div>
+                  <div>Was Custom: <span className={dynamicPricingInfo?.wasCustom ? 'text-yellow-400' : 'text-gray-400'}>{dynamicPricingInfo?.wasCustom ? 'Yes' : 'No'}</span></div>
+                  <div>Token Symbol: <span className="text-white">{tokenSymbol}</span></div>
+                  <div>✅ FIXED: <span className="text-green-400">No hardcoded $100!</span></div>
+                </div>
+              </div>
+
+              {/* Mobile Detection (Development) */}
+              {process.env.NODE_ENV === 'development' && debugInfo && (
+                <div className="bg-gray-700 p-3 rounded">
+                  <div className="text-cyan-400 font-semibold mb-2">Mobile Detection</div>
+                  <div className="space-y-1 text-xs">
+                    <div>Screen: <span className="text-white">{debugInfo.screenWidth}x{debugInfo.screenHeight}</span></div>
+                    <div>Score: <span className="text-white">{debugInfo.mobileScore}/10</span></div>
+                    <div>Mode: <span className={debugInfo.finalDecision ? 'text-red-400' : 'text-green-400'}>{debugInfo.finalDecision ? 'Mobile' : 'Desktop'}</span></div>
+                    <div>Touch: <span className={debugInfo.hasTouch ? 'text-green-400' : 'text-gray-400'}>{debugInfo.hasTouch ? 'Yes' : 'No'}</span></div>
+                  </div>
+                </div>
+              )}
+
+              {/* Memory Management */}
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="text-orange-400 font-semibold mb-2">Memory Management</div>
+                <div className="space-y-1 text-xs">
+                  <div>Memory Threshold: <span className="text-white">{ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD}</span></div>
+                  <div>Performance Threshold: <span className="text-white">{ULTRA_FAST_CONFIG.PERFORMANCE_MODE_THRESHOLD}</span></div>
+                  <div>Max Price History: <span className="text-white">{ULTRA_FAST_CONFIG.MAX_PRICE_HISTORY}</span></div>
+                  <div>Max Positions: <span className="text-white">{ULTRA_FAST_CONFIG.MAX_ACTIVE_POSITIONS}</span></div>
+                </div>
+              </div>
+
+              {/* System Information */}
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="text-yellow-400 font-semibold mb-2">System Information</div>
+                <div className="space-y-1 text-xs">
+                  <div>Environment: <span className="text-white">{process.env.NODE_ENV}</span></div>
+                  <div>Hostname: <span className="text-white">{window.location.hostname}</span></div>
+                  <div>Protocol: <span className="text-white">{window.location.protocol}</span></div>
+                  <div>✅ Limits Removed: <span className="text-green-400">Ultra-fast mode</span></div>
+                  <div>🗑️ UI Streamlined: <span className="text-red-400">Duplicates removed</span></div>
+                </div>
               </div>
             </div>
+
+            {/* Message Stats (if available) */}
+            {messageStats && (
+              <div className="mt-4 bg-gray-700 p-3 rounded">
+                <div className="text-red-400 font-semibold mb-2">WebSocket Message Stats</div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div>Received: <span className="text-white">{messageStats.received}</span></div>
+                  <div>Processed: <span className="text-white">{messageStats.processed}</span></div>
+                  <div>Dropped: <span className="text-red-400">{messageStats.dropped}</span></div>
+                  <div>Text Messages: <span className="text-white">{messageStats.textMessages}</span></div>
+                  <div>Array Buffer: <span className="text-white">{messageStats.arrayBufferMessages}</span></div>
+                  <div>Parse Errors: <span className="text-red-400">{messageStats.parseErrors}</span></div>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-4 text-center">
+              <button 
+                onClick={() => setShowDebugPopup(false)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded transition"
+              >
+                Close Debug Info
+              </button>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
       
       {/* FIXED: Simplified Grid Layout - No More Duplicate Controls! */}
       <div style={{ 
