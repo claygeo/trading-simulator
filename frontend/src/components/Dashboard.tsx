@@ -1,4 +1,4 @@
-// frontend/src/components/Dashboard.tsx - FIXED: Dynamic Pricing Support
+// frontend/src/components/Dashboard.tsx - FIXED: Dynamic Pricing Support + TypeScript Error
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -24,6 +24,19 @@ interface ChartPricePoint {
   low: number;
   close: number;
   volume?: number;
+}
+
+// FIXED: Define SimulationParameters interface
+interface SimulationParameters {
+  timeCompressionFactor: number;
+  initialPrice?: number;
+  initialLiquidity?: number;
+  volatilityFactor?: number;
+  duration?: number;
+  scenarioType?: string;
+  priceRange?: 'micro' | 'small' | 'mid' | 'large' | 'mega' | 'random';
+  customPrice?: number;
+  useCustomPrice?: boolean;
 }
 
 // ENHANCED MOBILE DETECTION with better reliability
@@ -199,9 +212,9 @@ const Dashboard: React.FC = () => {
   const [simulationRegistrationStatus, setSimulationRegistrationStatus] = useState<'creating' | 'pending' | 'ready' | 'error'>('creating');
   const [initializationStep, setInitializationStep] = useState<string>('Starting...');
   
-  // FIXED: Add dynamic pricing state
+  // FIXED: Add dynamic pricing state with proper typing
   const [dynamicPricingInfo, setDynamicPricingInfo] = useState<any>(null);
-  const [simulationParameters, setSimulationParameters] = useState<any>({
+  const [simulationParameters, setSimulationParameters] = useState<SimulationParameters>({
     priceRange: 'random',
     customPrice: undefined,
     useCustomPrice: false,
@@ -919,9 +932,9 @@ const Dashboard: React.FC = () => {
     }
   }, [simulationId]);
 
-  // FIXED: Handle simulation parameters change (for dynamic pricing)
-  const handleParametersChange = useCallback((newParams: Partial<typeof simulationParameters>) => {
-    setSimulationParameters(prev => ({
+  // FIXED: Handle simulation parameters change (for dynamic pricing) - TypeScript error resolved
+  const handleParametersChange = useCallback((newParams: Partial<SimulationParameters>) => {
+    setSimulationParameters((prev: SimulationParameters) => ({
       ...prev,
       ...newParams
     }));
@@ -1001,6 +1014,9 @@ const Dashboard: React.FC = () => {
           </div>
           <div className="mt-2 text-sm text-cyan-400">
             🖥️ Desktop mode • Enhanced mobile detection
+          </div>
+          <div className="mt-2 text-sm text-green-500">
+            ✅ TypeScript build error FIXED
           </div>
         </div>
       </div>
@@ -1121,6 +1137,10 @@ const Dashboard: React.FC = () => {
             
             <div className="ml-2 text-xs text-cyan-400">
               🖥️ Desktop
+            </div>
+            
+            <div className="ml-2 text-xs text-green-500">
+              ✅ TS Fixed
             </div>
             
             {currentScenario && (
