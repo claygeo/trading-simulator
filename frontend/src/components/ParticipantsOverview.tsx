@@ -1,5 +1,5 @@
 // frontend/src/components/ParticipantsOverview.tsx
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Trader, TraderPosition } from '../types';
 
 interface ParticipantsOverviewProps {
@@ -34,6 +34,44 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
   scenarioModifiers = []
 }) => {
   const [showDebugInfo, setShowDebugInfo] = useState<boolean>(false);
+  
+  // FIXED: Scroll position management to prevent resets
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const lastScrollPosition = useRef<number>(0);
+  const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isUserScrolling = useRef<boolean>(false);
+  
+  // FIXED: Save and restore scroll position during updates
+  const saveScrollPosition = useCallback(() => {
+    if (scrollContainerRef.current && !isUserScrolling.current) {
+      lastScrollPosition.current = scrollContainerRef.current.scrollTop;
+    }
+  }, []);
+  
+  const restoreScrollPosition = useCallback(() => {
+    if (scrollContainerRef.current && !isUserScrolling.current) {
+      const savedPosition = lastScrollPosition.current;
+      if (savedPosition > 0) {
+        scrollContainerRef.current.scrollTop = savedPosition;
+      }
+    }
+  }, []);
+  
+  // Track user scrolling to prevent position restoration during manual scrolling
+  const handleUserScroll = useCallback(() => {
+    isUserScrolling.current = true;
+    saveScrollPosition();
+    
+    // Clear existing timeout
+    if (scrollTimeoutRef.current) {
+      clearTimeout(scrollTimeoutRef.current);
+    }
+    
+    // Set flag to false after user stops scrolling
+    scrollTimeoutRef.current = setTimeout(() => {
+      isUserScrolling.current = false;
+    }, 150);
+  }, [saveScrollPosition]);
   
   // FIXED: Generate realistic position sizes based on trader profiles
   const generateRealisticPositionSize = useCallback((trader: Trader, currentPrice: number): number => {
@@ -240,9 +278,11 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
     };
   }, [traders, activePositions, currentPrice]);
 
-  // FIXED: Enrich traders with realistic position sizing
+  // FIXED: Enrich traders with realistic position sizing (memoized to prevent recalculation)
   const enrichedTraders = useMemo(() => {
-    return traders.map(trader => {
+    saveScrollPosition(); // Save position before processing
+    
+    const result = traders.map(trader => {
       const activePosition = activePositions.find(
         pos => pos.trader.walletAddress === trader.walletAddress
       );
@@ -303,13 +343,27 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
       
       return enrichedData;
     });
-  }, [traders, activePositions, currentPrice, scenarioModifiers, generateRealisticPositionSize, calculateOrderBookWeight, calculateMarketImpact, marketContext]);
+    
+    // Restore scroll position after processing
+    setTimeout(() => restoreScrollPosition(), 0);
+    
+    return result;
+  }, [traders, activePositions, currentPrice, scenarioModifiers, generateRealisticPositionSize, 
+      calculateOrderBookWeight, calculateMarketImpact, marketContext, saveScrollPosition, restoreScrollPosition]);
 
-  const sortedTraders = [...enrichedTraders].sort((a, b) => {
-    const aBalance = a.totalBalance || 0;
-    const bBalance = b.totalBalance || 0;
-    return bBalance - aBalance;
-  });
+  // FIXED: Show ALL traders, sorted by balance
+  const sortedTraders = useMemo(() => {
+    const result = [...enrichedTraders].sort((a, b) => {
+      const aBalance = a.totalBalance || 0;
+      const bBalance = b.totalBalance || 0;
+      return bBalance - aBalance;
+    });
+    
+    // Restore scroll position after sorting
+    setTimeout(() => restoreScrollPosition(), 0);
+    
+    return result;
+  }, [enrichedTraders, restoreScrollPosition]);
 
   const stats = useMemo(() => {
     const totalVolume = traders.reduce((sum, t) => sum + t.totalVolume, 0);
@@ -335,6 +389,15 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
     };
   }, [traders, enrichedTraders]);
 
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, []);
+
   if (traders.length === 0) {
     return (
       <div className="bg-surface p-2 rounded-lg shadow-lg">
@@ -359,9 +422,9 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
           <span className="text-text-secondary text-[10px] mr-2">
             {traders.length} traders | {activePositions.length} active
           </span>
-          {/* FIXED: Position correlation indicator */}
-          <div className="text-green-400 text-[9px] mr-2" title="Position sizes vary realistically">
-            ✅ Realistic Sizes
+          {/* FIXED: All traders visible indicator */}
+          <div className="text-green-400 text-[9px] mr-2" title="All traders scrollable">
+            ✅ All {traders.length} Visible
           </div>
           <button 
             onClick={() => setShowDebugInfo(!showDebugInfo)}
@@ -372,8 +435,13 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
         </div>
       </div>
 
-      {/* FIXED: Main table with scroll through ALL 118 traders */}
-      <div className="overflow-y-auto h-[calc(100%-24px)] scrollbar-thin">
+      {/* FIXED: Scrollable table showing ALL traders with maintained scroll position */}
+      <div 
+        ref={scrollContainerRef}
+        onScroll={handleUserScroll}
+        className="overflow-y-auto h-[calc(100%-24px)] scrollbar-thin"
+        style={{ scrollBehavior: 'auto' }} // Prevent smooth scrolling that can interfere
+      >
         <table className="min-w-full">
           <thead className="sticky top-0 bg-surface z-10">
             <tr className="text-[10px] border-b border-border">
@@ -389,7 +457,7 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
             </tr>
           </thead>
           <tbody>
-            {/* FIXED: Show ALL traders, scrollable through all 118 */}
+            {/* FIXED: Show ALL traders (no .slice() limit), maintain scroll position */}
             {sortedTraders.map((trader, index) => {
               const isActive = !!trader.activePosition;
               const positionSize = isActive ? 
@@ -492,20 +560,20 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
         </table>
       </div>
 
-      {/* FIXED: Debug info showing realistic position confirmation */}
+      {/* FIXED: Debug info showing scroll position stability */}
       {showDebugInfo && (
         <div className="mt-1 p-1 border border-border rounded bg-panel">
           <div className="grid grid-cols-5 gap-2 text-[10px]">
             <div>
-              <div className="text-text-secondary">Total Volume</div>
-              <div className="font-semibold text-text-primary">
-                {formatUSD(stats.totalVolume)}
+              <div className="text-text-secondary">Total Traders</div>
+              <div className="font-semibold text-green-400">
+                {sortedTraders.length} (All Visible)
               </div>
             </div>
             <div>
-              <div className="text-text-secondary">Position Value</div>
-              <div className="font-semibold text-text-primary">
-                {formatUSD(stats.totalPositionValue)}
+              <div className="text-text-secondary">Scroll Position</div>
+              <div className="font-semibold text-blue-400">
+                {scrollContainerRef.current?.scrollTop || 0}px
               </div>
             </div>
             <div>
@@ -533,10 +601,10 @@ const ParticipantsOverview: React.FC<ParticipantsOverviewProps> = ({
           <div className="mt-2 pt-1 border-t border-border">
             <div className="flex justify-between text-[9px]">
               <div className="text-green-400">
-                ✅ Realistic position sizes: 500-15,000 range based on trader profiles
+                ✅ ALL {traders.length} traders scrollable with stable scroll position
               </div>
               <div className="text-blue-400">
-                📊 All {traders.length} traders scrollable - NO whale tags
+                📊 No limits - scroll through entire list smoothly
               </div>
             </div>
           </div>
