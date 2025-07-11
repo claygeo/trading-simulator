@@ -1,4 +1,4 @@
-// backend/src/services/simulation/SimulationManager.ts - FIXED: TPS Method Conflicts & Metrics Broadcasting
+// backend/src/services/simulation/SimulationManager.ts - COMPLETE: Dynamic Starting Price Implementation
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import {
@@ -28,6 +28,12 @@ import duneApi from '../../api/duneApi';
 import traderService from '../traderService';
 import { TransactionQueue } from '../transactionQueue';
 import { BroadcastManager } from '../broadcastManager';
+
+// NEW: Enhanced simulation parameters with price range options
+export interface EnhancedSimulationParameters extends SimulationParameters {
+  priceRange?: 'micro' | 'small' | 'mid' | 'large' | 'mega' | 'random';
+  customPrice?: number;
+}
 
 export class SimulationManager {
   // Core state with aggressive timing
@@ -329,8 +335,8 @@ export class SimulationManager {
     this.broadcastService.registerClient(client);
   }
 
-  // PRODUCTION: Create simulation with error handling
-  async createSimulation(parameters: Partial<SimulationParameters> = {}): Promise<ExtendedSimulationState> {
+  // FIXED: Enhanced createSimulation with dynamic price generation
+  async createSimulation(parameters: Partial<EnhancedSimulationParameters> = {}): Promise<ExtendedSimulationState> {
     const simulationId = uuidv4();
     
     try {
@@ -484,36 +490,57 @@ export class SimulationManager {
     }
   }
 
-  private createSimulationWithDummyTraders(simulationId: string, parameters: Partial<SimulationParameters> = {}): Promise<ExtendedSimulationState> {
+  private createSimulationWithDummyTraders(simulationId: string, parameters: Partial<EnhancedSimulationParameters> = {}): Promise<ExtendedSimulationState> {
     const dummyTraders = this.dataGenerator.generateDummyTraders(10);
     const traderProfiles = traderService.generateTraderProfiles(dummyTraders);
     
     return Promise.resolve(this.finalizeSimulationCreation(simulationId, parameters, dummyTraders, traderProfiles));
   }
 
-  // PRODUCTION: Finalize simulation creation
+  // FIXED: Enhanced simulation creation with dynamic price generation
   private finalizeSimulationCreation(
     simulationId: string,
-    parameters: Partial<SimulationParameters>,
+    parameters: Partial<EnhancedSimulationParameters>,
     traders: any[],
     traderProfiles: any[]
   ): ExtendedSimulationState {
     
-    const randomInitialPrice = parameters.initialPrice || this.marketEngine.generateRandomTokenPrice();
+    // FIXED: Enhanced dynamic price generation logic
+    let dynamicInitialPrice: number;
+    
+    if (parameters.customPrice && parameters.customPrice > 0) {
+      // Use custom price if provided
+      dynamicInitialPrice = parameters.customPrice;
+      console.log(`💰 CUSTOM PRICE: Using user-specified price $${dynamicInitialPrice}`);
+    } else if (parameters.initialPrice && parameters.initialPrice > 0) {
+      // Use explicit initial price if provided (backwards compatibility)
+      dynamicInitialPrice = parameters.initialPrice;
+      console.log(`💰 EXPLICIT PRICE: Using parameter-specified price $${dynamicInitialPrice}`);
+    } else {
+      // Generate dynamic random price based on range
+      const priceRange = parameters.priceRange;
+      dynamicInitialPrice = this.marketEngine.generateRandomTokenPrice(priceRange);
+      
+      // Get price category info for logging
+      const priceInfo = this.marketEngine.getPriceCategory(dynamicInitialPrice);
+      console.log(`🎲 DYNAMIC PRICE: Generated $${dynamicInitialPrice} (${priceInfo.description}: ${priceInfo.range})`);
+    }
     
     const defaultParams: SimulationParameters = {
       timeCompressionFactor: 50, // 50x speed for ultra-fast mode
-      initialPrice: randomInitialPrice,
-      initialLiquidity: randomInitialPrice < 1 ? 100000 : 
-                       randomInitialPrice < 10 ? 1000000 : 
-                       randomInitialPrice < 100 ? 10000000 : 
-                       50000000,
+      initialPrice: dynamicInitialPrice, // FIXED: Use dynamic price
+      initialLiquidity: this.calculateDynamicLiquidity(dynamicInitialPrice), // ENHANCED: Dynamic liquidity
       volatilityFactor: 2.0,
       duration: 60 * 24,
       scenarioType: 'standard'
     };
     
     const finalParams = { ...defaultParams, ...parameters };
+    
+    // ENSURE: Final price is always dynamic, never fixed
+    if (!parameters.customPrice && !parameters.initialPrice) {
+      finalParams.initialPrice = dynamicInitialPrice;
+    }
     
     this.simulationSpeeds.set(simulationId, finalParams.timeCompressionFactor);
     
@@ -529,7 +556,13 @@ export class SimulationManager {
     
     const currentRealTime = Date.now();
     const simulationStartTime = currentRealTime;
-    const currentPrice = finalParams.initialPrice;
+    const currentPrice = finalParams.initialPrice; // Use the dynamic price
+    
+    console.log(`🚀 SIMULATION CREATED: ${simulationId}`);
+    console.log(`   💰 Starting Price: $${currentPrice}`);
+    console.log(`   💧 Liquidity Pool: $${(finalParams.initialLiquidity / 1000000).toFixed(2)}M`);
+    console.log(`   ⚡ Speed: ${finalParams.timeCompressionFactor}x`);
+    console.log(`   🎯 Price Category: ${this.marketEngine.getPriceCategory(currentPrice).description}`);
     
     const simulation: ExtendedSimulationState = {
       id: simulationId,
@@ -579,6 +612,33 @@ export class SimulationManager {
     this.timeframeManager.clearCache(simulationId);
     
     return simulation;
+  }
+
+  // NEW: Calculate dynamic liquidity based on token price
+  private calculateDynamicLiquidity(price: number): number {
+    // Realistic liquidity scaling based on token price category
+    if (price < 0.001) {
+      // Micro-cap tokens: Lower liquidity
+      return 50000 + Math.random() * 150000; // $50K - $200K
+    } else if (price < 0.01) {
+      // Small micro-cap: Moderate liquidity
+      return 100000 + Math.random() * 300000; // $100K - $400K
+    } else if (price < 0.1) {
+      // Large micro-cap: Higher liquidity
+      return 200000 + Math.random() * 500000; // $200K - $700K
+    } else if (price < 1) {
+      // Small-cap: Substantial liquidity
+      return 500000 + Math.random() * 1500000; // $500K - $2M
+    } else if (price < 10) {
+      // Mid-cap: Large liquidity pools
+      return 1000000 + Math.random() * 4000000; // $1M - $5M
+    } else if (price < 100) {
+      // Large-cap: Very large pools
+      return 5000000 + Math.random() * 15000000; // $5M - $20M
+    } else {
+      // Mega-cap: Enormous liquidity
+      return 10000000 + Math.random() * 40000000; // $10M - $50M
+    }
   }
 
   getSimulation(id: string): ExtendedSimulationState | undefined {
@@ -1022,19 +1082,30 @@ export class SimulationManager {
     const currentRealTime = Date.now();
     const simulationStartTime = currentRealTime;
     
-    // Reset all simulation state completely
+    // FIXED: Generate new dynamic price on reset
+    const newDynamicPrice = this.marketEngine.generateRandomTokenPrice();
+    const newDynamicLiquidity = this.calculateDynamicLiquidity(newDynamicPrice);
+    
+    console.log(`🔄 SIMULATION RESET: ${id}`);
+    console.log(`   💰 New Starting Price: $${newDynamicPrice}`);
+    console.log(`   💧 New Liquidity Pool: $${(newDynamicLiquidity / 1000000).toFixed(2)}M`);
+    console.log(`   🎯 New Price Category: ${this.marketEngine.getPriceCategory(newDynamicPrice).description}`);
+    
+    // Reset all simulation state completely with new dynamic values
     simulation.startTime = simulationStartTime;
     simulation.currentTime = simulationStartTime;
     simulation.endTime = simulationStartTime + (params.duration * 60 * 1000);
     simulation.priceHistory = []; // CRITICAL: Clear price history
-    simulation.currentPrice = params.initialPrice;
-    simulation.marketConditions.volatility = this.marketEngine.calculateBaseVolatility(params.initialPrice) * params.volatilityFactor;
+    simulation.currentPrice = newDynamicPrice; // NEW: Dynamic price
+    simulation.parameters.initialPrice = newDynamicPrice; // UPDATE: Parameters
+    simulation.parameters.initialLiquidity = newDynamicLiquidity; // UPDATE: Dynamic liquidity
+    simulation.marketConditions.volatility = this.marketEngine.calculateBaseVolatility(newDynamicPrice) * params.volatilityFactor;
     
     simulation.isRunning = false;
     simulation.isPaused = false;
     simulation.orderBook = {
-      bids: this.orderBookManager.generateInitialOrderBook('bids', simulation.currentPrice, simulation.parameters.initialLiquidity),
-      asks: this.orderBookManager.generateInitialOrderBook('asks', simulation.currentPrice, simulation.parameters.initialLiquidity),
+      bids: this.orderBookManager.generateInitialOrderBook('bids', newDynamicPrice, newDynamicLiquidity),
+      asks: this.orderBookManager.generateInitialOrderBook('asks', newDynamicPrice, newDynamicLiquidity),
       lastUpdateTime: simulation.startTime
     };
     simulation.activePositions = []; // CRITICAL: Clear positions
@@ -1387,8 +1458,6 @@ export class SimulationManager {
     this.simulations.set(simulationId, simulation);
   }
 
-  // REMOVED: Duplicate setTPSMode method - replaced with setTPSModeAsync only
-
   enableHighFrequencyMode(simulationId: string): void {
     const simulation = this.simulations.get(simulationId);
     if (!simulation) return;
@@ -1399,6 +1468,60 @@ export class SimulationManager {
     simulation.marketConditions.volume *= 2;
     
     this.simulations.set(simulationId, simulation);
+  }
+
+  // NEW: Get available price ranges for UI
+  public getAvailablePriceRanges(): Array<{
+    id: string;
+    name: string;
+    description: string;
+    range: string;
+    example: string;
+  }> {
+    return [
+      {
+        id: 'random',
+        name: 'Random',
+        description: 'Weighted random selection',
+        range: 'All ranges',
+        example: 'Varied'
+      },
+      {
+        id: 'micro',
+        name: 'Micro-cap',
+        description: 'Very low price tokens',
+        range: '< $0.01',
+        example: '$0.0001 - $0.01'
+      },
+      {
+        id: 'small',
+        name: 'Small-cap',
+        description: 'Low price tokens',
+        range: '$0.01 - $1',
+        example: '$0.05, $0.25, $0.75'
+      },
+      {
+        id: 'mid',
+        name: 'Mid-cap',
+        description: 'Medium price tokens',
+        range: '$1 - $10',
+        example: '$2.50, $5.75, $8.25'
+      },
+      {
+        id: 'large',
+        name: 'Large-cap',
+        description: 'High price tokens',
+        range: '$10 - $100',
+        example: '$25, $50, $85'
+      },
+      {
+        id: 'mega',
+        name: 'Mega-cap',
+        description: 'Very high price tokens',
+        range: '$100+',
+        example: '$250, $500, $750'
+      }
+    ];
   }
 }
 
