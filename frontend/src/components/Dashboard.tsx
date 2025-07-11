@@ -1,4 +1,4 @@
-// frontend/src/components/Dashboard.tsx - FIXED: Interface Compatibility + TypeScript Error
+// frontend/src/components/Dashboard.tsx - FIXED: Remove Duplicate Controls, More Space for Trading Data
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -11,7 +11,7 @@ import RecentTrades from './RecentTrades';
 import ParticipantsOverview from './ParticipantsOverview';
 import PerformanceMonitor from './PerformanceMonitor';
 import StressTestController from './StressTestController';
-import SimulationControls from './SimulationControls';
+// REMOVED: SimulationControls import - using header controls only
 
 // Mobile components - will lazy load to avoid initial import errors
 const MobileDashboard = React.lazy(() => import('./mobile/MobileDashboard'));
@@ -26,7 +26,7 @@ interface ChartPricePoint {
   volume?: number;
 }
 
-// FIXED: Match SimulationControls interface exactly
+// FIXED: Match SimulationControls interface exactly (kept for parameter management)
 interface SimulationParameters {
   timeCompressionFactor: number;
   initialPrice?: number; // FIXED: Made optional - should not be used with dynamic pricing
@@ -213,7 +213,7 @@ const Dashboard: React.FC = () => {
   const [simulationRegistrationStatus, setSimulationRegistrationStatus] = useState<'creating' | 'pending' | 'ready' | 'error'>('creating');
   const [initializationStep, setInitializationStep] = useState<string>('Starting...');
   
-  // FIXED: Add dynamic pricing state with proper typing matching SimulationControls
+  // FIXED: Add dynamic pricing state with proper typing
   const [dynamicPricingInfo, setDynamicPricingInfo] = useState<any>(null);
   const [simulationParameters, setSimulationParameters] = useState<SimulationParameters>({
     priceRange: 'random',
@@ -935,23 +935,8 @@ const Dashboard: React.FC = () => {
     }
   }, [simulationId]);
 
-  // FIXED: Handle speed change from SimulationControls (string input)
-  const handleSpeedChangeFromControls = useCallback((speedString: string) => {
-    const speedKey = speedString as keyof typeof speedMap;
-    if (speedKey in speedMap) {
-      handleSpeedChange(speedKey);
-    }
-  }, [handleSpeedChange]);
-
-  // FIXED: Handle simulation parameters change (for dynamic pricing) - TypeScript error resolved
-  const handleParametersChange = useCallback((newParams: Partial<SimulationParameters>) => {
-    setSimulationParameters((prev: SimulationParameters) => ({
-      ...prev,
-      ...newParams
-    }));
-    
-    console.log('💰 FIXED: Simulation parameters updated:', newParams);
-  }, []);
+  // REMOVED: handleSpeedChangeFromControls - no longer needed
+  // REMOVED: handleParametersChange - no longer needed
 
   const toggleDynamicView = useCallback(() => {
     setDynamicChartView(prev => !prev);
@@ -1026,8 +1011,8 @@ const Dashboard: React.FC = () => {
           <div className="mt-2 text-sm text-cyan-400">
             🖥️ Desktop mode • Enhanced mobile detection
           </div>
-          <div className="mt-2 text-sm text-green-500">
-            ✅ TypeScript interface compatibility FIXED
+          <div className="mt-2 text-sm text-red-400">
+            🗑️ Duplicate controls removed • More space for trading data
           </div>
         </div>
       </div>
@@ -1150,8 +1135,8 @@ const Dashboard: React.FC = () => {
               🖥️ Desktop
             </div>
             
-            <div className="ml-2 text-xs text-green-500">
-              ✅ Interface Fixed
+            <div className="ml-2 text-xs text-red-400">
+              🗑️ Streamlined
             </div>
             
             {currentScenario && (
@@ -1316,46 +1301,38 @@ const Dashboard: React.FC = () => {
         )}
       </div>
       
-      {/* Desktop Grid Layout - Updated to include SimulationControls */}
+      {/* FIXED: Simplified Grid Layout - No More Duplicate Controls! */}
       <div style={{ 
         display: 'grid', 
         gridTemplateColumns: '3fr 9fr', 
         gridTemplateRows: '3fr 2fr',
         gap: '8px',
-        height: 'calc(100vh - 105px)', // Adjusted for larger header
+        height: 'calc(100vh - 105px)',
         overflow: 'hidden'
       }}>
+        {/* IMPROVED: Left sidebar - Only OrderBook and RecentTrades (more space!) */}
         <div style={{ 
           gridColumn: '1 / 2', 
           gridRow: '1 / 3', 
           display: 'grid',
-          gridTemplateRows: '2fr 1fr 1fr', // FIXED: Added third row for SimulationControls
+          gridTemplateRows: '1fr 1fr', // FIXED: Equal space for OrderBook and RecentTrades
           gap: '8px',
           overflow: 'hidden'
         }}>
+          {/* ENHANCED: OrderBook gets more space */}
           <div style={{ overflow: 'hidden' }}>
             <OrderBook orderBook={orderBook} />
           </div>
           
+          {/* ENHANCED: RecentTrades gets more space */}
           <div style={{ overflow: 'hidden' }}>
             <RecentTrades trades={recentTrades} />
           </div>
           
-          {/* FIXED: Add SimulationControls component with proper interface */}
-          <div style={{ overflow: 'hidden' }}>
-            <SimulationControls
-              isRunning={simulation?.isRunning || false}
-              isPaused={simulation?.isPaused || false}
-              onStart={handleStartSimulation}
-              onPause={handlePauseSimulation}
-              onReset={handleResetSimulation}
-              parameters={simulationParameters}
-              onSpeedChange={handleSpeedChangeFromControls}
-              onParametersChange={handleParametersChange}
-            />
-          </div>
+          {/* REMOVED: SimulationControls component - no more duplicate controls! */}
         </div>
         
+        {/* Price Chart - unchanged */}
         <div style={{ 
           gridColumn: '2 / 3', 
           gridRow: '1 / 2', 
@@ -1374,6 +1351,7 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
         
+        {/* Participants Overview - unchanged */}
         <div style={{ gridColumn: '2 / 3', gridRow: '2 / 3', overflow: 'hidden' }}>
           <ParticipantsOverview 
             traders={traderRankings} 
