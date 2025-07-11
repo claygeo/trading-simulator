@@ -1,4 +1,4 @@
-// frontend/src/components/PriceChart.tsx - FIXED: Chart Reset Issue Resolution
+// frontend/src/components/PriceChart.tsx - FIXED: Complete Chart Reset Solution
 import React, { useEffect, useRef, useState, useCallback, useMemo, useImperativeHandle, forwardRef } from 'react';
 import { 
   createChart, 
@@ -50,6 +50,7 @@ interface PriceChartProps {
 export interface PriceChartRef {
   forceReset: () => void;
   clearChart: () => void;
+  recreateChart: () => void; // NEW: Complete chart recreation
 }
 
 const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
@@ -82,6 +83,7 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
   const lastSimulationIdRef = useRef<string | null>(null);
   const lastResetCounterRef = useRef<number>(0);
   const isResettingRef = useRef<boolean>(false);
+  const chartCreationKeyRef = useRef<number>(0); // NEW: Track chart recreations
   
   const initialZoomSetRef = useRef<boolean>(false);
   const shouldAutoFitRef = useRef<boolean>(true);
@@ -146,16 +148,79 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
     return { candleData, volumeData };
   }, [priceHistory]);
 
+  // RESET FIX: Create chart series - separated into its own function
+  const createChartSeries = useCallback(() => {
+    if (!chartRef.current) return;
+
+    try {
+      // CRITICAL: Remove existing series completely before creating new ones
+      if (candlestickSeriesRef.current) {
+        chartRef.current.removeSeries(candlestickSeriesRef.current);
+        candlestickSeriesRef.current = null;
+      }
+      
+      if (volumeSeriesRef.current) {
+        chartRef.current.removeSeries(volumeSeriesRef.current);
+        volumeSeriesRef.current = null;
+      }
+
+      // Create fresh candlestick series
+      const candlestickSeries = chartRef.current.addCandlestickSeries({
+        upColor: '#22C55E',
+        downColor: '#EF4444',
+        borderUpColor: '#22C55E',
+        borderDownColor: '#EF4444',
+        wickUpColor: '#22C55E',
+        wickDownColor: '#EF4444',
+        priceFormat: {
+          type: 'price',
+          precision: 6,
+          minMove: 0.000001,
+        },
+      });
+
+      // Create fresh volume series
+      const volumeSeries = chartRef.current.addHistogramSeries({
+        color: '#26a69a',
+        priceFormat: { 
+          type: 'volume',
+          precision: 0,
+        },
+        priceScaleId: 'volume',
+      });
+
+      // Configure volume scale
+      chartRef.current.priceScale('volume').applyOptions({
+        scaleMargins: { top: 0.85, bottom: 0 },
+      });
+
+      // Update refs
+      candlestickSeriesRef.current = candlestickSeries;
+      volumeSeriesRef.current = volumeSeries;
+
+      console.log('✅ CHART SERIES: Created fresh series');
+
+    } catch (error) {
+      console.error('❌ Error creating chart series:', error);
+      throw error;
+    }
+  }, []);
+
   // RESET FIX: Enhanced chart clearing function
   const clearChartData = useCallback(() => {
-    if (!candlestickSeriesRef.current || !volumeSeriesRef.current) return;
-    
     try {
-      // Clear all series data
-      candlestickSeriesRef.current.setData([]);
-      volumeSeriesRef.current.setData([]);
+      console.log('🧹 CLEARING CHART: Starting complete clear');
       
-      // Reset chart state
+      // Method 1: Clear existing series data
+      if (candlestickSeriesRef.current && volumeSeriesRef.current) {
+        candlestickSeriesRef.current.setData([]);
+        volumeSeriesRef.current.setData([]);
+      }
+
+      // Method 2: Recreate series entirely (THIS IS THE KEY FIX)
+      createChartSeries();
+      
+      // Reset all state
       chartState.current = {
         lastCandleCount: 0,
         hasEverHadData: false,
@@ -176,32 +241,143 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
       setIsLiveBuilding(false);
       setBuildingStartTime(null);
       
-      console.log('🔄 Chart data cleared successfully');
+      console.log('✅ CLEARING CHART: Complete clear successful');
       
     } catch (error) {
       console.error('❌ Error clearing chart data:', error);
+      // Fallback: try to recreate entire chart
+      recreateChart();
     }
-  }, []);
+  }, [createChartSeries]);
+
+  // RESET FIX: Complete chart recreation function
+  const recreateChart = useCallback(() => {
+    if (!chartContainerRef.current) return;
+
+    console.log('🔄 RECREATING CHART: Starting complete recreation');
+    isResettingRef.current = true;
+
+    try {
+      // Step 1: Destroy existing chart completely
+      if (chartRef.current) {
+        try {
+          chartRef.current.remove();
+        } catch (error) {
+          console.warn('Warning during chart removal:', error);
+        }
+      }
+
+      // Step 2: Clear all refs
+      chartRef.current = null;
+      candlestickSeriesRef.current = null;
+      volumeSeriesRef.current = null;
+
+      // Step 3: Increment creation key to force new instance
+      chartCreationKeyRef.current += 1;
+
+      // Step 4: Small delay to ensure cleanup
+      setTimeout(() => {
+        if (!chartContainerRef.current) {
+          isResettingRef.current = false;
+          return;
+        }
+
+        try {
+          // Step 5: Create completely fresh chart
+          const chart = createChart(chartContainerRef.current, {
+            width: chartContainerRef.current.clientWidth,
+            height: chartContainerRef.current.clientHeight,
+            layout: {
+              background: { type: ColorType.Solid, color: '#0B1426' },
+              textColor: '#9CA3AF',
+            },
+            grid: {
+              vertLines: { color: '#1C2951' },
+              horzLines: { color: '#1C2951' },
+            },
+            crosshair: {
+              mode: CrosshairMode.Normal,
+            },
+            rightPriceScale: {
+              borderColor: '#1C2951',
+              scaleMargins: { top: 0.1, bottom: 0.2 },
+            },
+            timeScale: {
+              borderColor: '#1C2951',
+              timeVisible: true,
+              secondsVisible: false,
+              barSpacing: 12,
+              minBarSpacing: 0.5,
+              rightOffset: 5,
+              shiftVisibleRangeOnNewBar: false,
+            },
+            handleScroll: {
+              mouseWheel: true,
+              pressedMouseMove: true,
+            },
+            handleScale: {
+              axisPressedMouseMove: true,
+              mouseWheel: true,
+              pinch: true,
+            },
+          });
+
+          chartRef.current = chart;
+
+          // Step 6: Create fresh series
+          createChartSeries();
+
+          // Step 7: Reset all state
+          chartState.current = {
+            lastCandleCount: 0,
+            hasEverHadData: false,
+            buildStarted: false,
+            initialRenderComplete: true
+          };
+          
+          lastCandleCountRef.current = 0;
+          lastUpdateRef.current = 0;
+          initialZoomSetRef.current = false;
+          shouldAutoFitRef.current = true;
+          isUpdatingRef.current = false;
+          
+          setIsChartReady(true);
+          setChartStatus('empty');
+          setCandleCount(0);
+          setIsLiveBuilding(false);
+          setBuildingStartTime(null);
+
+          console.log('✅ RECREATING CHART: Complete recreation successful');
+
+        } catch (error) {
+          console.error('❌ Error recreating chart:', error);
+          setChartStatus('error');
+        } finally {
+          isResettingRef.current = false;
+        }
+      }, 100);
+
+    } catch (error) {
+      console.error('❌ Error during chart recreation:', error);
+      isResettingRef.current = false;
+      setChartStatus('error');
+    }
+  }, [createChartSeries]);
 
   // RESET FIX: Force reset function for external calls
   const forceReset = useCallback(() => {
-    console.log('🚨 FORCE RESET: Manually resetting chart');
-    isResettingRef.current = true;
+    console.log('🚨 FORCE RESET: Starting aggressive chart reset');
     
-    clearChartData();
-    
-    // Small delay to ensure clearing is complete
-    setTimeout(() => {
-      isResettingRef.current = false;
-      console.log('✅ FORCE RESET: Complete');
-    }, 100);
-  }, [clearChartData]);
+    // Use the nuclear option: complete chart recreation
+    recreateChart();
+  }, [recreateChart]);
 
   // RESET FIX: Expose reset methods via ref
   useImperativeHandle(ref, () => ({
     forceReset,
-    clearChart: clearChartData
-  }), [forceReset, clearChartData]);
+    clearChart: clearChartData,
+    recreateChart
+  }), [forceReset, clearChartData, recreateChart]);
 
   // RESET FIX: Detect simulation changes and reset counter changes
   useEffect(() => {
@@ -222,14 +398,14 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
       lastSimulationIdRef.current = simulationId || null;
       lastResetCounterRef.current = resetCounter;
       
-      // Force chart reset
+      // Force complete chart recreation on any change
       if (isChartReady) {
-        forceReset();
+        recreateChart();
       }
     }
-  }, [simulationId, resetCounter, isChartReady, forceReset]);
+  }, [simulationId, resetCounter, isChartReady, recreateChart]);
 
-  // RESET FIX: Enhanced chart initialization with better cleanup
+  // RESET FIX: Enhanced chart initialization
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -275,45 +451,12 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
         },
       });
 
-      const candlestickSeries = chart.addCandlestickSeries({
-        upColor: '#22C55E',
-        downColor: '#EF4444',
-        borderUpColor: '#22C55E',
-        borderDownColor: '#EF4444',
-        wickUpColor: '#22C55E',
-        wickDownColor: '#EF4444',
-        priceFormat: {
-          type: 'price',
-          precision: 6,
-          minMove: 0.000001,
-        },
-      });
-
-      const volumeSeries = chart.addHistogramSeries({
-        color: '#26a69a',
-        priceFormat: { 
-          type: 'volume',
-          precision: 0,
-        },
-        priceScaleId: 'volume',
-      });
-
-      chart.priceScale('volume').applyOptions({
-        scaleMargins: { top: 0.85, bottom: 0 },
-      });
-
       chartRef.current = chart;
-      candlestickSeriesRef.current = candlestickSeries;
-      volumeSeriesRef.current = volumeSeries;
       
-      // RESET FIX: Ensure series start completely empty
-      candlestickSeries.setData([]);
-      volumeSeries.setData([]);
+      // Create initial series
+      createChartSeries();
       
-      // RESET FIX: Initialize all state properly
-      initialZoomSetRef.current = false;
-      shouldAutoFitRef.current = true;
-      
+      // Initialize all state
       chartState.current = {
         lastCandleCount: 0,
         hasEverHadData: false,
@@ -325,10 +468,13 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
       lastUpdateRef.current = 0;
       isUpdatingRef.current = false;
       isResettingRef.current = false;
+      initialZoomSetRef.current = false;
+      shouldAutoFitRef.current = true;
       
-      // RESET FIX: Track current simulation
+      // Track current simulation
       lastSimulationIdRef.current = simulationId || null;
       lastResetCounterRef.current = resetCounter;
+      chartCreationKeyRef.current = 1;
       
       setIsChartReady(true);
       setChartStatus('empty');
@@ -359,7 +505,7 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
         }
       }
       
-      // RESET FIX: Complete state reset on cleanup
+      // Complete state reset on cleanup
       chartRef.current = null;
       candlestickSeriesRef.current = null;
       volumeSeriesRef.current = null;
@@ -384,7 +530,7 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
       lastSimulationIdRef.current = null;
       lastResetCounterRef.current = 0;
     };
-  }, []); // RESET FIX: Remove dependencies to prevent unnecessary recreations
+  }, []); // No dependencies to prevent unnecessary recreations
 
   const setOptimalZoom = useCallback((candleData: CandlestickData[], force: boolean = false) => {
     if (!chartRef.current || !candleData.length || isResettingRef.current) return;
@@ -418,7 +564,7 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
     }
   }, [calculateOptimalVisibleRange, dynamicView]);
 
-  // RESET FIX: Enhanced chart update with better reset detection
+  // RESET FIX: Enhanced chart update with nuclear reset detection
   const updateChart = useCallback((candleData: CandlestickData[], volumeData: HistogramData[]) => {
     if (!isChartReady || !candlestickSeriesRef.current || !volumeSeriesRef.current || isUpdatingRef.current || isResettingRef.current) {
       return;
@@ -444,12 +590,12 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
     try {
       const incomingCandleCount = candleData.length;
 
-      // RESET FIX: Enhanced empty data handling
+      // RESET FIX: Enhanced empty data handling with series recreation
       if (incomingCandleCount === 0) {
-        console.log('📊 CHART RESET: Clearing chart due to empty data');
+        console.log('📊 CHART RESET: Clearing chart due to empty data (recreating series)');
         
-        candlestickSeriesRef.current.setData([]);
-        volumeSeriesRef.current.setData([]);
+        // Use aggressive clearing with series recreation
+        createChartSeries();
         
         setChartStatus('empty');
         setCandleCount(0);
@@ -467,49 +613,44 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
         return;
       }
 
-      // RESET FIX: Detect significant data reduction (likely a reset)
+      // RESET FIX: Detect significant data reduction and force nuclear reset
       if (incomingCandleCount > 0 && lastCandleCountRef.current > 0 && incomingCandleCount < lastCandleCountRef.current * 0.5) {
-        console.log('📊 CHART RESET: Detected significant data reduction', {
+        console.log('📊 CHART RESET: Detected significant data reduction - NUCLEAR RESET', {
           previous: lastCandleCountRef.current,
           incoming: incomingCandleCount,
           ratio: incomingCandleCount / lastCandleCountRef.current
         });
         
-        // Force complete reset
-        candlestickSeriesRef.current.setData([]);
-        volumeSeriesRef.current.setData([]);
+        // NUCLEAR OPTION: Complete chart recreation
+        isUpdatingRef.current = false;
+        recreateChart();
         
-        // Reset state
-        chartState.current.lastCandleCount = 0;
-        chartState.current.buildStarted = false;
-        chartState.current.hasEverHadData = false;
-        lastCandleCountRef.current = 0;
-        initialZoomSetRef.current = false;
-        shouldAutoFitRef.current = true;
-        
-        // Small delay then set new data
+        // Set new data after recreation delay
         setTimeout(() => {
           if (candlestickSeriesRef.current && volumeSeriesRef.current && !isResettingRef.current) {
-            candlestickSeriesRef.current.setData(candleData);
-            volumeSeriesRef.current.setData(volumeData);
-            
-            chartState.current.lastCandleCount = incomingCandleCount;
-            lastCandleCountRef.current = incomingCandleCount;
-            setCandleCount(incomingCandleCount);
-            
-            if (incomingCandleCount > 0) {
-              chartState.current.hasEverHadData = true;
-              chartState.current.buildStarted = true;
-              setIsLiveBuilding(true);
-              setBuildingStartTime(Date.now());
-              setChartStatus('building');
+            try {
+              candlestickSeriesRef.current.setData(candleData);
+              volumeSeriesRef.current.setData(volumeData);
+              
+              chartState.current.lastCandleCount = incomingCandleCount;
+              lastCandleCountRef.current = incomingCandleCount;
+              setCandleCount(incomingCandleCount);
+              
+              if (incomingCandleCount > 0) {
+                chartState.current.hasEverHadData = true;
+                chartState.current.buildStarted = true;
+                setIsLiveBuilding(true);
+                setBuildingStartTime(Date.now());
+                setChartStatus('building');
+              }
+              
+              setOptimalZoom(candleData);
+            } catch (error) {
+              console.error('Error setting data after nuclear reset:', error);
             }
-            
-            setOptimalZoom(candleData);
           }
-        }, 50);
+        }, 150);
         
-        isUpdatingRef.current = false;
         return;
       }
 
@@ -535,11 +676,13 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
       }
 
       if (!isOrdered) {
-        console.warn('⚠️ Chart data is not properly ordered, skipping update');
+        console.warn('⚠️ Chart data is not properly ordered, forcing recreation');
         isUpdatingRef.current = false;
+        recreateChart();
         return;
       }
 
+      // Set data on current series
       candlestickSeriesRef.current.setData(candleData);
       volumeSeriesRef.current.setData(volumeData);
 
@@ -556,12 +699,15 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
       }
 
     } catch (error) {
-      console.error('❌ Error updating chart:', error);
+      console.error('❌ Error updating chart, forcing recreation:', error);
       setChartStatus('error');
+      isUpdatingRef.current = false;
+      recreateChart();
+      return;
     } finally {
       isUpdatingRef.current = false;
     }
-  }, [isChartReady, setOptimalZoom]);
+  }, [isChartReady, setOptimalZoom, createChartSeries, recreateChart]);
 
   useEffect(() => {
     const { candleData, volumeData } = convertPriceHistory;
@@ -687,7 +833,7 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
           
           {/* RESET FIX: Show reset tracking info */}
           <div className="bg-purple-900 bg-opacity-75 px-3 py-1 rounded text-xs text-purple-300">
-            🔄 Reset: {resetCounter}
+            🔄 R{resetCounter} | C{chartCreationKeyRef.current}
           </div>
           
           {simulationId && (
@@ -739,10 +885,17 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
         >
           📏
         </button>
-        {/* RESET FIX: Manual reset button for testing */}
+        {/* RESET FIX: Nuclear reset button */}
+        <button
+          onClick={recreateChart}
+          className="px-3 py-1 bg-red-700 bg-opacity-80 text-red-300 text-xs rounded hover:bg-opacity-100 transition"
+          title="Nuclear reset - completely recreate chart"
+        >
+          💥 Nuclear
+        </button>
         <button
           onClick={forceReset}
-          className="px-3 py-1 bg-red-700 bg-opacity-80 text-red-300 text-xs rounded hover:bg-opacity-100 transition"
+          className="px-3 py-1 bg-orange-700 bg-opacity-80 text-orange-300 text-xs rounded hover:bg-opacity-100 transition"
           title="Force reset chart"
         >
           ⚡ Reset
@@ -766,7 +919,8 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
           <div>🎯 Status: {chartStatus}</div>
           <div>🏗️ Building: {isLiveBuilding ? 'YES' : 'NO'}</div>
           <div>⚡ Updates: {isUpdatingRef.current ? 'ACTIVE' : 'IDLE'}</div>
-          <div>🔄 Resetting: {isResettingRef.current ? 'YES' : 'NO'}</div>
+          <div>💥 Resetting: {isResettingRef.current ? 'YES' : 'NO'}</div>
+          <div>📈 Chart Key: {chartCreationKeyRef.current}</div>
           <div>🎯 Pro Zoom: {initialZoomSetRef.current ? 'SET' : 'PENDING'}</div>
           {buildingStats && (
             <>
@@ -783,7 +937,10 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
           <div className="bg-red-900 bg-opacity-90 px-6 py-3 rounded-lg border border-red-500">
             <div className="text-red-300 text-lg font-medium flex items-center space-x-3">
               <div className="w-6 h-6 border-4 border-red-300 border-t-transparent rounded-full animate-spin"></div>
-              <span>Resetting Chart...</span>
+              <span>💥 Nuclear Chart Reset...</span>
+            </div>
+            <div className="text-red-400 text-sm text-center mt-1">
+              Completely recreating chart instance
             </div>
           </div>
         </div>
@@ -794,12 +951,20 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
           <div className="bg-red-900 text-red-100 p-6 rounded-lg max-w-md text-center">
             <h3 className="font-bold text-lg mb-2">Chart Error</h3>
             <p className="text-sm">Failed to initialize TradingView chart. Check console for details.</p>
-            <button 
-              onClick={() => window.location.reload()} 
-              className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-sm transition"
-            >
-              Reload Page
-            </button>
+            <div className="mt-4 space-x-2">
+              <button 
+                onClick={recreateChart} 
+                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 rounded text-sm transition"
+              >
+                💥 Nuclear Reset
+              </button>
+              <button 
+                onClick={() => window.location.reload()} 
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-sm transition"
+              >
+                Reload Page
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -808,18 +973,19 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-center text-gray-400">
             <div className="text-6xl mb-6">📊</div>
-            <h3 className="text-xl font-bold mb-3">Professional Chart Ready</h3>
-            <p className="text-sm mb-4">Enhanced reset management with simulation tracking</p>
+            <h3 className="text-xl font-bold mb-3">Nuclear Chart Ready</h3>
+            <p className="text-sm mb-4">Complete TradingView reset solution implemented</p>
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
-                <span>Waiting for backend candle data...</span>
+                <span>Waiting for candle data...</span>
               </div>
-              <div>🔄 Advanced reset detection</div>
+              <div>💥 Nuclear reset capability</div>
+              <div>🔄 Series recreation on reset</div>
               <div>📡 Simulation tracking</div>
-              <div>⚡ 30fps update throttling</div>
-              <div>📈 Optimal candle proportions</div>
-              <div>🔧 TradingView-style display</div>
+              <div>⚡ Aggressive data clearing</div>
+              <div>📈 Complete state management</div>
+              <div>🛡️ Error recovery system</div>
             </div>
           </div>
         </div>
@@ -829,11 +995,11 @@ const PriceChart = forwardRef<PriceChartRef, PriceChartProps>(({
         <div className="absolute top-20 left-4 pointer-events-none">
           <div className="bg-green-900 bg-opacity-75 px-4 py-2 rounded-lg">
             <div className="text-green-300 text-sm font-medium">
-              🔴 PROFESSIONAL LIVE BUILDING: {candleCount} candles
+              🔴 NUCLEAR CHART BUILDING: {candleCount} candles
             </div>
             {buildingStats && (
               <div className="text-green-400 text-xs mt-1">
-                {buildingStats.elapsed}s elapsed • {buildingStats.candlesPerSecond} candles/sec • Enhanced reset management
+                {buildingStats.elapsed}s elapsed • {buildingStats.candlesPerSecond} candles/sec • Nuclear reset protection
               </div>
             )}
           </div>
