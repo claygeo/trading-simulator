@@ -1,4 +1,4 @@
-// backend/src/services/simulation/MarketEngine.ts - FIXED CONSTRUCTOR & AGGRESSIVE MARKET DYNAMICS
+// backend/src/services/simulation/MarketEngine.ts - ENHANCED: Dynamic Starting Price Generation
 import { 
   SimulationState, 
   PricePoint, 
@@ -498,21 +498,91 @@ export class MarketEngine implements IMarketEngine {
     return this.calculateAggressiveBaseVolatility(price);
   }
 
-  generateRandomTokenPrice(): number {
-    // Generate prices between $1 and $50 with a bias towards lower prices
-    const priceRanges = SIMULATION_CONSTANTS.PRICE_RANGES;
+  // ENHANCED: Dynamic price generation with realistic distributions
+  generateRandomTokenPrice(priceRange?: 'micro' | 'small' | 'mid' | 'large' | 'mega'): number {
+    // Enhanced price ranges with more realistic distributions
+    const priceCategories = {
+      micro: { min: 0.0001, max: 0.01, weight: 0.25, description: 'Micro-cap (< $0.01)' },
+      small: { min: 0.01, max: 1, weight: 0.30, description: 'Small-cap ($0.01 - $1)' },
+      mid: { min: 1, max: 10, weight: 0.25, description: 'Mid-cap ($1 - $10)' },
+      large: { min: 10, max: 100, weight: 0.15, description: 'Large-cap ($10 - $100)' },
+      mega: { min: 100, max: 1000, weight: 0.05, description: 'Mega-cap ($100 - $1000)' }
+    };
 
-    const random = Math.random();
-    let cumulative = 0;
+    let selectedCategory;
 
-    for (const range of priceRanges) {
-      cumulative += range.weight;
-      if (random <= cumulative) {
-        return range.min + Math.random() * (range.max - range.min);
+    if (priceRange && priceCategories[priceRange]) {
+      // Use specified range
+      selectedCategory = priceCategories[priceRange];
+      console.log(`🎯 DYNAMIC PRICE: Using specified range '${priceRange}' - ${selectedCategory.description}`);
+    } else {
+      // Weighted random selection for realistic distribution
+      const random = Math.random();
+      let cumulative = 0;
+
+      for (const [categoryName, category] of Object.entries(priceCategories)) {
+        cumulative += category.weight;
+        if (random <= cumulative) {
+          selectedCategory = category;
+          console.log(`🎲 DYNAMIC PRICE: Randomly selected '${categoryName}' - ${category.description}`);
+          break;
+        }
+      }
+
+      // Fallback to mid-cap if selection fails
+      if (!selectedCategory) {
+        selectedCategory = priceCategories.mid;
+        console.log(`🔄 DYNAMIC PRICE: Fallback to mid-cap range`);
       }
     }
 
-    return 10 + Math.random() * 10; // $10-$20 fallback
+    // Generate price within the selected range using log-normal distribution
+    // This creates more realistic price clustering at lower values
+    const logMin = Math.log(selectedCategory.min);
+    const logMax = Math.log(selectedCategory.max);
+    const logPrice = logMin + Math.random() * (logMax - logMin);
+    let price = Math.exp(logPrice);
+
+    // Add some additional randomness to avoid too much clustering
+    const variationFactor = 0.9 + Math.random() * 0.2; // ±10% variation
+    price *= variationFactor;
+
+    // Ensure price stays within bounds
+    price = Math.max(selectedCategory.min, Math.min(selectedCategory.max, price));
+
+    // Round to appropriate decimal places based on price range
+    if (price < 0.001) {
+      price = parseFloat(price.toFixed(6));
+    } else if (price < 0.01) {
+      price = parseFloat(price.toFixed(5));
+    } else if (price < 0.1) {
+      price = parseFloat(price.toFixed(4));
+    } else if (price < 1) {
+      price = parseFloat(price.toFixed(3));
+    } else if (price < 10) {
+      price = parseFloat(price.toFixed(2));
+    } else {
+      price = parseFloat(price.toFixed(1));
+    }
+
+    console.log(`💰 DYNAMIC PRICE GENERATED: $${price} (${selectedCategory.description})`);
+    
+    return price;
+  }
+
+  // NEW: Get price category for a given price
+  getPriceCategory(price: number): { category: string; description: string; range: string } {
+    if (price < 0.01) {
+      return { category: 'micro', description: 'Micro-cap', range: '< $0.01' };
+    } else if (price < 1) {
+      return { category: 'small', description: 'Small-cap', range: '$0.01 - $1' };
+    } else if (price < 10) {
+      return { category: 'mid', description: 'Mid-cap', range: '$1 - $10' };
+    } else if (price < 100) {
+      return { category: 'large', description: 'Large-cap', range: '$10 - $100' };
+    } else {
+      return { category: 'mega', description: 'Mega-cap', range: '$100+' };
+    }
   }
 
   // AGGRESSIVE: Enhanced market impact calculation
