@@ -1,4 +1,4 @@
-// frontend/src/services/api.ts - Production version with enhanced error handling
+// frontend/src/services/api.ts - FIXED: Dynamic Pricing Support
 import axios from 'axios';
 
 const getApiBaseUrl = (): string => {
@@ -53,6 +53,20 @@ export interface ApiResponse<T> {
   error?: string;
 }
 
+// FIXED: Enhanced simulation parameters interface with dynamic pricing
+export interface EnhancedSimulationParameters {
+  timeCompressionFactor?: number;
+  initialPrice?: number; // Optional - should not be used when using dynamic pricing
+  initialLiquidity?: number;
+  volatilityFactor?: number;
+  duration?: number;
+  scenarioType?: string;
+  // FIXED: Dynamic pricing parameters
+  priceRange?: 'micro' | 'small' | 'mid' | 'large' | 'mega' | 'random';
+  customPrice?: number;
+  useCustomPrice?: boolean;
+}
+
 export const TraderApi = {
   getTraders: async () => {
     try {
@@ -82,19 +96,52 @@ export const TraderApi = {
 };
 
 export const SimulationApi = {
-  createSimulation: async (parameters: any = {}): Promise<ApiResponse<any>> => {
+  // FIXED: Create simulation with dynamic pricing support
+  createSimulation: async (parameters: EnhancedSimulationParameters = {}): Promise<ApiResponse<any>> => {
     try {
-      const response = await api.post('/simulation', {
-        initialPrice: 100,
+      console.log('💰 FIXED: Creating simulation with dynamic pricing parameters:', parameters);
+      
+      // CRITICAL FIX: Build request body with dynamic pricing parameters
+      const requestBody: any = {
         duration: 3600,
         volatilityFactor: 1.0,
         scenarioType: 'standard',
+        timeCompressionFactor: 1,
         ...parameters
-      });
+        // CRITICAL: DO NOT include initialPrice: 100 here!
+      };
+      
+      // FIXED: Only include initialPrice if explicitly provided (not for dynamic pricing)
+      if (parameters.initialPrice && !parameters.useCustomPrice && !parameters.priceRange) {
+        requestBody.initialPrice = parameters.initialPrice;
+        console.log('💰 FIXED: Using explicit initialPrice:', parameters.initialPrice);
+      } else if (parameters.useCustomPrice && parameters.customPrice) {
+        requestBody.useCustomPrice = true;
+        requestBody.customPrice = parameters.customPrice;
+        console.log('💰 FIXED: Using custom price:', parameters.customPrice);
+      } else if (parameters.priceRange) {
+        requestBody.priceRange = parameters.priceRange;
+        console.log('💰 FIXED: Using price range:', parameters.priceRange);
+      } else {
+        // Let backend generate dynamic price
+        requestBody.priceRange = 'random';
+        console.log('💰 FIXED: Using random dynamic pricing (no hardcoded values)');
+      }
+      
+      console.log('📤 FIXED: Final request body (NO hardcoded $100):', requestBody);
+      
+      const response = await api.post('/simulation', requestBody);
+      
+      console.log('📥 FIXED: Simulation created with dynamic pricing:', response.data);
+      
+      // FIXED: Log dynamic pricing info if available
+      if (response.data?.dynamicPricing) {
+        console.log('💰 FIXED: Dynamic pricing info:', response.data.dynamicPricing);
+      }
       
       return { data: response.data };
     } catch (error: any) {
-      console.error('Error creating simulation:', error);
+      console.error('❌ FIXED: Error creating simulation with dynamic pricing:', error);
       
       let errorMessage = 'Failed to create simulation';
       if (error.response) {
@@ -128,6 +175,13 @@ export const SimulationApi = {
   getSimulation: async (id: string) => {
     try {
       const response = await api.get(`/simulation/${id}`);
+      
+      // FIXED: Log dynamic pricing info if available
+      if (response.data?.data?.dynamicPricing || response.data?.dynamicPricing) {
+        console.log('💰 FIXED: Retrieved simulation with dynamic pricing:', 
+          response.data?.data?.dynamicPricing || response.data?.dynamicPricing);
+      }
+      
       return { data: response.data };
     } catch (error: any) {
       console.error(`Error fetching simulation ${id}:`, error);
@@ -154,6 +208,12 @@ export const SimulationApi = {
   checkSimulationReady: async (id: string): Promise<ApiResponse<{ready: boolean, status: string, id: string}>> => {
     try {
       const response = await api.get(`/simulation/${id}/ready`);
+      
+      // FIXED: Log dynamic pricing readiness if available
+      if (response.data?.dynamicPricingFixed) {
+        console.log('💰 FIXED: Simulation ready with dynamic pricing support');
+      }
+      
       return { data: response.data };
     } catch (error: any) {
       // If /ready endpoint doesn't exist (404), try fallback approach
@@ -218,7 +278,7 @@ export const SimulationApi = {
         
         // Success case
         if (result.data?.ready) {
-          console.log(`Simulation ${id} ready after ${attempt} attempts`);
+          console.log(`💰 FIXED: Simulation ${id} ready after ${attempt} attempts (with dynamic pricing support)`);
           return { 
             data: { ready: true, attempts: attempt }
           };
@@ -271,6 +331,12 @@ export const SimulationApi = {
   startSimulation: async (id: string) => {
     try {
       const response = await api.post(`/simulation/${id}/start`);
+      
+      // FIXED: Log dynamic price info when starting
+      if (response.data?.data?.dynamicPrice) {
+        console.log('💰 FIXED: Started simulation with dynamic price:', response.data.data.dynamicPrice);
+      }
+      
       return { data: response.data };
     } catch (error: any) {
       console.error(`Error starting simulation ${id}:`, error);
@@ -294,13 +360,24 @@ export const SimulationApi = {
     }
   },
   
-  resetSimulation: async (id: string) => {
+  // FIXED: Reset simulation with dynamic pricing regeneration
+  resetSimulation: async (id: string, options: { generateNewPrice?: boolean } = {}) => {
     try {
-      const response = await api.post(`/simulation/${id}/reset`, {
+      const requestBody = {
         clearAllData: true,
-        resetPrice: 100,
-        resetState: 'complete'
-      });
+        resetState: 'complete',
+        generateNewPrice: options.generateNewPrice !== false // Default to true
+      };
+      
+      console.log('💰 FIXED: Resetting simulation with dynamic pricing regeneration');
+      
+      const response = await api.post(`/simulation/${id}/reset`, requestBody);
+      
+      // FIXED: Log new dynamic price info
+      if (response.data?.data?.dynamicPricing) {
+        console.log('💰 FIXED: Reset generated new dynamic price:', response.data.data.dynamicPricing);
+      }
+      
       return { data: response.data };
     } catch (error: any) {
       console.error(`Error resetting simulation ${id}:`, error);
@@ -381,6 +458,13 @@ export const SimulationApi = {
   getSimulationStats: async (id: string) => {
     try {
       const response = await api.get(`/simulation/${id}/stats`);
+      
+      // FIXED: Log dynamic pricing stats if available
+      if (response.data?.data?.dynamicPricing) {
+        console.log('💰 FIXED: Retrieved simulation stats with dynamic pricing info:', 
+          response.data.data.dynamicPricing);
+      }
+      
       return { data: response.data };
     } catch (error: any) {
       console.error(`Error fetching simulation stats for ${id}:`, error);
@@ -396,6 +480,12 @@ export const SimulationUtils = {
   testBackendConnection: async (): Promise<boolean> => {
     try {
       const testResponse = await api.get('/test');
+      
+      // FIXED: Check for dynamic pricing support in test response
+      if (testResponse.data?.dynamicPricingFixed) {
+        console.log('💰 FIXED: Backend supports dynamic pricing!');
+      }
+      
       return true;
       
     } catch (error: any) {
@@ -413,6 +503,7 @@ export const SimulationUtils = {
     }
   },
 
+  // FIXED: Test simulation system with dynamic pricing
   testSimulationSystem: async (): Promise<boolean> => {
     try {
       const backendOk = await SimulationUtils.testBackendConnection();
@@ -420,15 +511,21 @@ export const SimulationUtils = {
         return false;
       }
       
+      // FIXED: Test with dynamic pricing parameters (no hardcoded $100)
       const simResult = await SimulationApi.createSimulation({
-        initialPrice: 100,
         duration: 30,
-        volatilityFactor: 1.0
+        volatilityFactor: 1.0,
+        priceRange: 'random' // Use dynamic pricing
       });
       
       if (simResult.error) {
         console.log('Failed to create simulation:', simResult.error);
         return false;
+      }
+      
+      // FIXED: Verify dynamic pricing worked
+      if (simResult.data?.dynamicPricing) {
+        console.log('💰 FIXED: Dynamic pricing test successful:', simResult.data.dynamicPricing);
       }
       
       return true;
@@ -445,10 +542,11 @@ export const SimulationUtils = {
       let testSimId = simulationId;
       
       if (!testSimId) {
+        // FIXED: Create test simulation with dynamic pricing
         const simResult = await SimulationApi.createSimulation({
-          initialPrice: 100,
           duration: 30,
-          volatilityFactor: 1.0
+          volatilityFactor: 1.0,
+          priceRange: 'random'
         });
         
         if (simResult.error || !simResult.data) {
@@ -489,10 +587,11 @@ export const SimulationUtils = {
       let testSimId = simulationId;
       
       if (!testSimId) {
+        // FIXED: Create test simulation with dynamic pricing
         const simResult = await SimulationApi.createSimulation({
-          initialPrice: 100,
           duration: 30,
-          volatilityFactor: 1.0
+          volatilityFactor: 1.0,
+          priceRange: 'random'
         });
         
         if (simResult.error || !simResult.data) {
@@ -533,10 +632,11 @@ export const SimulationUtils = {
       let testSimId = simulationId;
       
       if (!testSimId) {
+        // FIXED: Create test simulation with dynamic pricing
         const simResult = await SimulationApi.createSimulation({
-          initialPrice: 100,
           duration: 30,
-          volatilityFactor: 1.0
+          volatilityFactor: 1.0,
+          priceRange: 'random'
         });
         
         if (simResult.error || !simResult.data) {
@@ -571,9 +671,9 @@ export const SimulationUtils = {
     }
   },
 
-  // ENHANCED: Better configuration debugging
+  // ENHANCED: Better configuration debugging with dynamic pricing info
   debugConfiguration: () => {
-    console.log('Frontend Configuration Debug:', {
+    console.log('💰 FIXED: Frontend Configuration Debug (Dynamic Pricing Support):', {
       apiBaseUrl: API_BASE_URL,
       environment: process.env.NODE_ENV,
       hostname: window.location.hostname,
@@ -589,17 +689,20 @@ export const SimulationUtils = {
         isDevelopment: process.env.NODE_ENV === 'development',
         isLocalhost: window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1',
         isProduction: process.env.NODE_ENV === 'production'
-      }
+      },
+      dynamicPricingSupport: true,
+      fixedHardcodedPricing: true
     });
   },
 
-  // NEW: Enhanced diagnostic function
+  // NEW: Enhanced diagnostic function with dynamic pricing tests
   runDiagnostics: async (): Promise<{
     backendConnection: boolean;
     simulationSystem: boolean;
     readyEndpoint: boolean;
     speedEndpoint: boolean;
     tpsEndpoint: boolean;
+    dynamicPricingSupport: boolean;
     errors: string[];
   }> => {
     const results = {
@@ -608,11 +711,12 @@ export const SimulationUtils = {
       readyEndpoint: false,
       speedEndpoint: false,
       tpsEndpoint: false,
+      dynamicPricingSupport: false,
       errors: [] as string[]
     };
 
     try {
-      console.log('🔍 Running comprehensive API diagnostics...');
+      console.log('🔍 💰 FIXED: Running comprehensive API diagnostics with dynamic pricing tests...');
 
       // Test backend connection
       results.backendConnection = await SimulationUtils.testBackendConnection();
@@ -620,11 +724,28 @@ export const SimulationUtils = {
         results.errors.push('Backend connection failed');
       }
 
-      // Test simulation system
+      // Test simulation system with dynamic pricing
       if (results.backendConnection) {
         results.simulationSystem = await SimulationUtils.testSimulationSystem();
         if (!results.simulationSystem) {
           results.errors.push('Simulation system test failed');
+        } else {
+          // FIXED: Test dynamic pricing specifically
+          try {
+            const dynamicPricingTest = await SimulationApi.createSimulation({
+              priceRange: 'small',
+              duration: 30
+            });
+            
+            if (dynamicPricingTest.data?.dynamicPricing) {
+              results.dynamicPricingSupport = true;
+              console.log('💰 FIXED: Dynamic pricing test PASSED!');
+            } else {
+              results.errors.push('Dynamic pricing not supported or not working');
+            }
+          } catch (error) {
+            results.errors.push('Dynamic pricing test failed');
+          }
         }
       }
 
@@ -652,7 +773,7 @@ export const SimulationUtils = {
         }
       }
 
-      console.log('📊 Diagnostic results:', results);
+      console.log('📊 💰 FIXED: Diagnostic results with dynamic pricing:', results);
       return results;
 
     } catch (error: any) {
@@ -663,16 +784,60 @@ export const SimulationUtils = {
   }
 };
 
-// Global window functions for debugging
+// Global window functions for debugging - FIXED with dynamic pricing support
 if (typeof window !== 'undefined') {
   (window as any).testBackend = SimulationUtils.testBackendConnection;
   (window as any).testSimulation = SimulationUtils.testSimulationSystem;
   (window as any).testReadyEndpoint = SimulationUtils.testReadyEndpoint;
   (window as any).testSpeedEndpoint = SimulationUtils.testSpeedEndpoint;
-  (window as any).testTPSEndpoint = SimulationUtils.testTPSEndpoint; // NEW
+  (window as any).testTPSEndpoint = SimulationUtils.testTPSEndpoint;
   (window as any).debugConfig = SimulationUtils.debugConfiguration;
-  (window as any).runDiagnostics = SimulationUtils.runDiagnostics; // NEW
+  (window as any).runDiagnostics = SimulationUtils.runDiagnostics;
   (window as any).SimulationApi = SimulationApi;
+  
+  // FIXED: Add dynamic pricing test functions
+  (window as any).testDynamicPricing = async () => {
+    console.log('💰 TESTING: Dynamic pricing with different ranges...');
+    
+    const ranges = ['micro', 'small', 'mid', 'large', 'mega', 'random'];
+    
+    for (const range of ranges) {
+      try {
+        const result = await SimulationApi.createSimulation({
+          priceRange: range as any,
+          duration: 30
+        });
+        
+        if (result.data?.dynamicPricing) {
+          console.log(`💰 ${range.toUpperCase()}: ${result.data.dynamicPricing.finalPrice} (${result.data.dynamicPricing.priceCategory})`);
+        } else {
+          console.log(`❌ ${range.toUpperCase()}: No dynamic pricing info`);
+        }
+      } catch (error) {
+        console.error(`❌ ${range.toUpperCase()}: Error -`, error);
+      }
+    }
+  };
+  
+  (window as any).testCustomPrice = async (price: number) => {
+    console.log(`💰 TESTING: Custom price ${price}...`);
+    
+    try {
+      const result = await SimulationApi.createSimulation({
+        useCustomPrice: true,
+        customPrice: price,
+        duration: 30
+      });
+      
+      if (result.data?.dynamicPricing) {
+        console.log(`💰 CUSTOM: ${result.data.dynamicPricing.finalPrice} (was custom: ${result.data.dynamicPricing.wasCustom})`);
+      } else {
+        console.log(`❌ CUSTOM: No dynamic pricing info`);
+      }
+    } catch (error) {
+      console.error(`❌ CUSTOM: Error -`, error);
+    }
+  };
 }
 
 export default {
