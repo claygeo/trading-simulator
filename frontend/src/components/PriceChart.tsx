@@ -1,4 +1,4 @@
-// frontend/src/components/PriceChart.tsx - SIMPLIFIED: Clean Chart Reset Solution
+// frontend/src/components/PriceChart.tsx - FIXED: Data Validation After Reset
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { 
   createChart, 
@@ -69,6 +69,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const initialZoomSetRef = useRef<boolean>(false);
   const shouldAutoFitRef = useRef<boolean>(true);
 
+  // Track when we've just reset to be more lenient with validation
+  const justResetRef = useRef<boolean>(false);
+
   const calculateOptimalVisibleRange = useCallback((candleCount: number): { from: number; to: number } => {
     const MIN_VISIBLE_CANDLES = 25;
     const MAX_VISIBLE_CANDLES = 80;
@@ -100,7 +103,14 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const candleData: CandlestickData[] = [];
     const volumeData: HistogramData[] = [];
     
-    priceHistory.forEach((candle) => {
+    // FIXED: Sort data by timestamp first to ensure proper ordering
+    const sortedHistory = [...priceHistory].sort((a, b) => {
+      const timeA = a.timestamp || a.time;
+      const timeB = b.timestamp || b.time;
+      return timeA - timeB;
+    });
+    
+    sortedHistory.forEach((candle) => {
       const timestamp = candle.timestamp || candle.time;
       const timeInSeconds = Math.floor(timestamp / 1000);
       
@@ -146,6 +156,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
       lastCandleCountRef.current = 0;
       initialZoomSetRef.current = false;
       shouldAutoFitRef.current = true;
+      
+      // Mark that we just reset - be more lenient with next data
+      justResetRef.current = true;
       
       console.log('✅ SIMPLE RESET: Chart cleared successfully');
       return;
@@ -241,6 +254,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       lastCandleCountRef.current = 0;
       lastUpdateRef.current = 0;
       isUpdatingRef.current = false;
+      justResetRef.current = false;
       
       setIsChartReady(true);
       setChartStatus('empty');
@@ -284,6 +298,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       setIsLiveBuilding(false);
       setBuildingStartTime(null);
       isUpdatingRef.current = false;
+      justResetRef.current = false;
     };
   }, []); // No dependencies - only initialize once
 
@@ -319,7 +334,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }
   }, [calculateOptimalVisibleRange, dynamicView]);
 
-  // Clean chart update function
+  // FIXED: Improved chart update function with better validation
   const updateChart = useCallback((candleData: CandlestickData[], volumeData: HistogramData[]) => {
     if (!isChartReady || !candlestickSeriesRef.current || !volumeSeriesRef.current || isUpdatingRef.current) {
       return;
@@ -353,21 +368,77 @@ const PriceChart: React.FC<PriceChartProps> = ({
         console.log('📈 Chart building started');
       }
 
-      // Data validation
+      // FIXED: Improved data validation - more lenient after reset
       let isOrdered = true;
+      let validationDetails = {
+        totalCandles: candleData.length,
+        justReset: justResetRef.current,
+        validationSkipped: false,
+        orderingIssues: 0
+      };
+
       if (candleData.length > 1) {
-        for (let i = 1; i < Math.min(candleData.length, 10); i++) {
+        // After reset, be more lenient with the first few candles
+        const checkLength = justResetRef.current ? Math.min(3, candleData.length) : Math.min(candleData.length, 10);
+        
+        for (let i = 1; i < checkLength; i++) {
           if (candleData[i].time <= candleData[i - 1].time) {
+            validationDetails.orderingIssues++;
+            
+            // If we just reset, allow some timestamp issues in first few candles
+            if (justResetRef.current && i <= 2) {
+              console.log(`⚠️ Post-reset timestamp issue at index ${i}, but allowing due to recent reset`);
+              continue;
+            }
+            
             isOrdered = false;
             break;
           }
         }
       }
 
+      // FIXED: More detailed logging for validation failures
       if (!isOrdered) {
-        console.warn('⚠️ Chart data is not properly ordered, skipping update');
+        console.warn('⚠️ Chart data validation failed:', {
+          ...validationDetails,
+          firstFewTimes: candleData.slice(0, 5).map(c => ({ time: c.time, date: new Date(c.time * 1000).toISOString() })),
+          recommendation: 'Check backend candle generation timestamps'
+        });
+        
+        // If we just reset and it's still failing, try to fix the data
+        if (justResetRef.current && candleData.length <= 5) {
+          console.log('🔧 Attempting to fix post-reset data by removing duplicates and sorting');
+          
+          // Remove duplicates and ensure proper ordering
+          const uniqueCandles = candleData.filter((candle, index, arr) => 
+            index === 0 || candle.time > arr[index - 1].time
+          );
+          
+          if (uniqueCandles.length > 0) {
+            console.log(`🔧 Fixed data: ${candleData.length} → ${uniqueCandles.length} candles`);
+            candlestickSeriesRef.current.setData(uniqueCandles);
+            volumeSeriesRef.current.setData(volumeData.slice(0, uniqueCandles.length));
+            
+            setOptimalZoom(uniqueCandles);
+            lastCandleCountRef.current = uniqueCandles.length;
+            setCandleCount(uniqueCandles.length);
+            
+            // Clear the just reset flag after successful fix
+            justResetRef.current = false;
+            
+            isUpdatingRef.current = false;
+            return;
+          }
+        }
+        
         isUpdatingRef.current = false;
         return;
+      }
+
+      // Data passed validation - clear the just reset flag
+      if (justResetRef.current) {
+        console.log('✅ Post-reset data validation passed, clearing reset flag');
+        justResetRef.current = false;
       }
 
       // Update chart data
@@ -513,8 +584,15 @@ const PriceChart: React.FC<PriceChartProps> = ({
           
           {/* Simple reset indicator */}
           <div className="bg-green-900 bg-opacity-75 px-3 py-1 rounded text-xs text-green-300">
-            ✅ Simple Reset
+            ✅ Fixed Validation
           </div>
+          
+          {/* Post-reset indicator */}
+          {justResetRef.current && (
+            <div className="bg-orange-900 bg-opacity-75 px-3 py-1 rounded text-xs text-orange-300">
+              🔧 Post-Reset
+            </div>
+          )}
           
           {isLiveBuilding && buildingStats && (
             <div className="bg-green-900 bg-opacity-75 px-3 py-1 rounded text-xs text-green-300">
@@ -578,7 +656,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
           <div>🎯 Status: {chartStatus}</div>
           <div>🏗️ Building: {isLiveBuilding ? 'YES' : 'NO'}</div>
           <div>⚡ Updates: {isUpdatingRef.current ? 'ACTIVE' : 'IDLE'}</div>
-          <div>✅ Reset: SIMPLE</div>
+          <div>✅ Reset: FIXED</div>
+          <div>🔧 Post-Reset: {justResetRef.current ? 'YES' : 'NO'}</div>
           <div>🎯 Pro Zoom: {initialZoomSetRef.current ? 'SET' : 'PENDING'}</div>
           {buildingStats && (
             <>
@@ -609,17 +688,17 @@ const PriceChart: React.FC<PriceChartProps> = ({
           <div className="text-center text-gray-400">
             <div className="text-6xl mb-6">📊</div>
             <h3 className="text-xl font-bold mb-3">Professional Chart Ready</h3>
-            <p className="text-sm mb-4">Simple reset system - clears on empty priceHistory</p>
+            <p className="text-sm mb-4">Fixed validation system - handles post-reset data</p>
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
                 <span>Waiting for backend candle data...</span>
               </div>
-              <div>✅ Simple reset detection</div>
+              <div>✅ Fixed data validation</div>
+              <div>🔧 Post-reset tolerance</div>
               <div>⚡ 30fps update throttling</div>
               <div>📈 Optimal candle proportions</div>
               <div>🔧 TradingView-style display</div>
-              <div>🧹 Nuclear complexity removed</div>
             </div>
           </div>
         </div>
@@ -633,7 +712,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
             </div>
             {buildingStats && (
               <div className="text-green-400 text-xs mt-1">
-                {buildingStats.elapsed}s elapsed • {buildingStats.candlesPerSecond} candles/sec • Simple reset system
+                {buildingStats.elapsed}s elapsed • {buildingStats.candlesPerSecond} candles/sec • Fixed validation system
               </div>
             )}
           </div>
