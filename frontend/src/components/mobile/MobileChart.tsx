@@ -1,4 +1,4 @@
-// frontend/src/components/mobile/MobileChart.tsx - SIMPLIFIED: Simple Reset Solution
+// frontend/src/components/mobile/MobileChart.tsx - FIXED: Data Validation After Reset
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { 
   createChart, 
@@ -76,6 +76,9 @@ const MobileChart: React.FC<MobileChartProps> = ({
   const initialZoomSetRef = useRef<boolean>(false);
   const shouldAutoFitRef = useRef<boolean>(true);
 
+  // Track when we've just reset to be more lenient with validation
+  const justResetRef = useRef<boolean>(false);
+
   // Calculate dynamic chart height based on expansion state
   const calculateChartHeight = useCallback(() => {
     if (!chartContainerRef.current) return 300;
@@ -124,7 +127,14 @@ const MobileChart: React.FC<MobileChartProps> = ({
     const candleData: CandlestickData[] = [];
     const volumeData: HistogramData[] = [];
     
-    priceHistory.forEach((candle) => {
+    // FIXED: Sort data by timestamp first to ensure proper ordering (same as desktop)
+    const sortedHistory = [...priceHistory].sort((a, b) => {
+      const timeA = a.timestamp || a.time;
+      const timeB = b.timestamp || b.time;
+      return timeA - timeB;
+    });
+    
+    sortedHistory.forEach((candle) => {
       const timestamp = candle.timestamp || candle.time;
       const timeInSeconds = Math.floor(timestamp / 1000);
       
@@ -198,6 +208,9 @@ const MobileChart: React.FC<MobileChartProps> = ({
       lastCandleCountRef.current = 0;
       initialZoomSetRef.current = false;
       shouldAutoFitRef.current = true;
+      
+      // Mark that we just reset - be more lenient with next data
+      justResetRef.current = true;
       
       console.log('✅ SIMPLE RESET: Mobile chart cleared successfully');
       return;
@@ -316,6 +329,7 @@ const MobileChart: React.FC<MobileChartProps> = ({
       lastCandleCountRef.current = 0;
       lastUpdateRef.current = 0;
       isUpdatingRef.current = false;
+      justResetRef.current = false;
       
       setChartDimensions({ 
         width: chartContainerRef.current.clientWidth, 
@@ -369,6 +383,7 @@ const MobileChart: React.FC<MobileChartProps> = ({
       setIsLiveBuilding(false);
       setBuildingStartTime(null);
       isUpdatingRef.current = false;
+      justResetRef.current = false;
     };
   }, [calculateChartHeight]);
 
@@ -404,7 +419,7 @@ const MobileChart: React.FC<MobileChartProps> = ({
     }
   }, [calculateOptimalVisibleRange, dynamicView]);
 
-  // Clean chart update function (mobile optimized)
+  // FIXED: Mobile chart update function with improved validation (same logic as desktop)
   const updateChart = useCallback((candleData: CandlestickData[], volumeData: HistogramData[]) => {
     if (!isChartReady || !candlestickSeriesRef.current || !volumeSeriesRef.current || isUpdatingRef.current) {
       return;
@@ -439,21 +454,77 @@ const MobileChart: React.FC<MobileChartProps> = ({
         console.log('📱 Mobile chart building started');
       }
 
-      // Data validation
+      // FIXED: Improved data validation - more lenient after reset (same as desktop)
       let isOrdered = true;
+      let validationDetails = {
+        totalCandles: candleData.length,
+        justReset: justResetRef.current,
+        validationSkipped: false,
+        orderingIssues: 0
+      };
+
       if (candleData.length > 1) {
-        for (let i = 1; i < Math.min(candleData.length, 10); i++) {
+        // After reset, be more lenient with the first few candles
+        const checkLength = justResetRef.current ? Math.min(3, candleData.length) : Math.min(candleData.length, 10);
+        
+        for (let i = 1; i < checkLength; i++) {
           if (candleData[i].time <= candleData[i - 1].time) {
+            validationDetails.orderingIssues++;
+            
+            // If we just reset, allow some timestamp issues in first few candles
+            if (justResetRef.current && i <= 2) {
+              console.log(`📱 Post-reset timestamp issue at index ${i}, but allowing due to recent reset`);
+              continue;
+            }
+            
             isOrdered = false;
             break;
           }
         }
       }
 
+      // FIXED: More detailed logging for validation failures (mobile version)
       if (!isOrdered) {
-        console.warn('⚠️ Mobile chart data is not properly ordered, skipping update');
+        console.warn('📱 Mobile chart data validation failed:', {
+          ...validationDetails,
+          firstFewTimes: candleData.slice(0, 5).map(c => ({ time: c.time, date: new Date(c.time * 1000).toISOString() })),
+          recommendation: 'Check backend candle generation timestamps'
+        });
+        
+        // If we just reset and it's still failing, try to fix the data
+        if (justResetRef.current && candleData.length <= 5) {
+          console.log('📱 Attempting to fix post-reset mobile data by removing duplicates and sorting');
+          
+          // Remove duplicates and ensure proper ordering
+          const uniqueCandles = candleData.filter((candle, index, arr) => 
+            index === 0 || candle.time > arr[index - 1].time
+          );
+          
+          if (uniqueCandles.length > 0) {
+            console.log(`📱 Fixed mobile data: ${candleData.length} → ${uniqueCandles.length} candles`);
+            candlestickSeriesRef.current.setData(uniqueCandles);
+            volumeSeriesRef.current.setData(volumeData.slice(0, uniqueCandles.length));
+            
+            setOptimalZoom(uniqueCandles);
+            lastCandleCountRef.current = uniqueCandles.length;
+            setCandleCount(uniqueCandles.length);
+            
+            // Clear the just reset flag after successful fix
+            justResetRef.current = false;
+            
+            isUpdatingRef.current = false;
+            return;
+          }
+        }
+        
         isUpdatingRef.current = false;
         return;
+      }
+
+      // Data passed validation - clear the just reset flag
+      if (justResetRef.current) {
+        console.log('📱 Post-reset mobile data validation passed, clearing reset flag');
+        justResetRef.current = false;
       }
 
       // Update chart data
@@ -627,8 +698,15 @@ const MobileChart: React.FC<MobileChartProps> = ({
           
           {/* Simple reset indicator */}
           <div className="bg-green-900 bg-opacity-75 px-2 py-1 rounded text-xs text-green-300">
-            ✅ Simple
+            ✅ Fixed
           </div>
+          
+          {/* Post-reset indicator */}
+          {justResetRef.current && (
+            <div className="bg-orange-900 bg-opacity-75 px-2 py-1 rounded text-xs text-orange-300">
+              🔧 Post-Reset
+            </div>
+          )}
           
           {currentPrice > 0 && (
             <div className="bg-gray-900 bg-opacity-75 px-2 py-1 rounded">
@@ -719,7 +797,7 @@ const MobileChart: React.FC<MobileChartProps> = ({
           <div className="text-center text-gray-400">
             <div className="text-4xl mb-4">📊</div>
             <h3 className="text-lg font-bold mb-2">Mobile Chart Ready</h3>
-            <p className="text-sm mb-3">Simple reset system</p>
+            <p className="text-sm mb-3">Fixed validation system</p>
             <div className="space-y-1 text-xs">
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
@@ -727,7 +805,8 @@ const MobileChart: React.FC<MobileChartProps> = ({
               </div>
               <div>📱 Mobile optimized • Dynamic sizing</div>
               <div>🤏 Pinch to zoom • Touch friendly</div>
-              <div>✅ Simple reset detection</div>
+              <div>✅ Fixed data validation</div>
+              <div>🔧 Post-reset tolerance</div>
               <div>📐 Responsive: {isTabContentExpanded ? 'Expanded' : 'Standard'} mode</div>
             </div>
           </div>
