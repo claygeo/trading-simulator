@@ -401,7 +401,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       if (!isOrdered) {
         console.warn('⚠️ Chart data validation failed:', {
           ...validationDetails,
-          firstFewTimes: candleData.slice(0, 5).map(c => ({ time: c.time, date: new Date(c.time * 1000).toISOString() })),
+          firstFewTimes: candleData.slice(0, 5).map(c => ({ time: c.time, date: new Date(Number(c.time) * 1000).toISOString() })),
           recommendation: 'Check backend candle generation timestamps'
         });
         
