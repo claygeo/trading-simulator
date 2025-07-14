@@ -1,4 +1,4 @@
-// backend/src/services/simulation/MarketEngine.ts - ENHANCED: Dynamic Starting Price Generation
+// backend/src/services/simulation/MarketEngine.ts - FIXED: Proper Timestamp Handling
 import { 
   SimulationState, 
   PricePoint, 
@@ -29,7 +29,7 @@ export class MarketEngine implements IMarketEngine {
     private getCurrentTimeframe: (simulationId: string) => Timeframe,
     private orderBookManager?: IOrderBookManager
   ) {
-    console.log('🚀 AGGRESSIVE MarketEngine initialized with ultra-fast dynamics');
+    console.log('🚀 MarketEngine initialized with FIXED timestamp handling');
   }
 
   async updatePrice(simulation: SimulationState): Promise<void> {
@@ -37,11 +37,10 @@ export class MarketEngine implements IMarketEngine {
     const { marketConditions, currentPrice } = extendedSim;
     const activeScenario = (extendedSim as any).activeScenario as ActiveScenario | undefined;
 
-    // AGGRESSIVE: Enhanced base volatility for visible movement
     let baseVolatility = this.calculateAggressiveBaseVolatility(currentPrice);
 
     // Calculate market momentum from recent trades with higher impact
-    const recentTrades = extendedSim.recentTrades.slice(0, 100); // Use more trades
+    const recentTrades = extendedSim.recentTrades.slice(0, 100);
     let buyVolume = 0;
     let sellVolume = 0;
     
@@ -56,83 +55,74 @@ export class MarketEngine implements IMarketEngine {
     const totalVolume = buyVolume + sellVolume;
     const volumeImbalance = totalVolume > 0 ? (buyVolume - sellVolume) / totalVolume : 0;
     
-    // AGGRESSIVE: Higher external market pressure effects
     if (extendedSim.externalMarketMetrics) {
       const { marketSentiment, currentTPS } = extendedSim.externalMarketMetrics;
       
-      // AGGRESSIVE: Higher TPS multiplier for more volatility
-      const tpsMultiplier = Math.log10(Math.max(1, currentTPS)) / 1.5; // Increased effect
+      const tpsMultiplier = Math.log10(Math.max(1, currentTPS)) / 1.5;
       baseVolatility *= (1 + tpsMultiplier);
       
-      // AGGRESSIVE: Stronger sentiment effects
       let sentimentBias = 0;
       if (marketSentiment === 'bullish') {
-        sentimentBias = 0.001 * (1 + volumeImbalance * 2); // Double the effect
+        sentimentBias = 0.001 * (1 + volumeImbalance * 2);
       } else if (marketSentiment === 'bearish') {
-        sentimentBias = -0.001 * (1 - volumeImbalance * 2); // Double the effect
+        sentimentBias = -0.001 * (1 - volumeImbalance * 2);
       } else {
-        sentimentBias = volumeImbalance * 0.0008; // Higher neutral sentiment effect
+        sentimentBias = volumeImbalance * 0.0008;
       }
       
-      // Apply stronger sentiment to price movement
       const sentimentImpact = currentPrice * sentimentBias;
       extendedSim.currentPrice += sentimentImpact;
     }
 
-    // Get timeframe config
     const timeframe = this.getCurrentTimeframe(extendedSim.id);
     const config = this.timeframeConfig(timeframe);
 
-    // AGGRESSIVE: Higher adjusted volatility with momentum amplification
-    let adjustedVolatility = baseVolatility * config.volatilityMultiplier * 0.5; // Higher base (was 0.3)
+    let adjustedVolatility = baseVolatility * config.volatilityMultiplier * 0.5;
     
-    // AGGRESSIVE: Add stronger momentum-based volatility
-    if (Math.abs(volumeImbalance) > 0.2) { // Lower threshold
-      adjustedVolatility *= 2.0; // Higher multiplier (was 1.5)
+    if (Math.abs(volumeImbalance) > 0.2) {
+      adjustedVolatility *= 2.0;
     }
 
-    // Random walk model with stronger trend bias
     let trendFactor = 0;
 
-    // AGGRESSIVE: Apply scenario-specific price movements with higher intensity
     if (activeScenario && activeScenario.phase) {
       const { priceAction } = activeScenario;
 
       switch (priceAction.type) {
         case 'crash':
-          trendFactor = -0.02 * priceAction.intensity; // Double the intensity
-          adjustedVolatility = baseVolatility * priceAction.volatility * 1.5; // Higher volatility
+          trendFactor = -0.02 * priceAction.intensity;
+          adjustedVolatility = baseVolatility * priceAction.volatility * 1.5;
           break;
 
         case 'pump':
-          trendFactor = 0.02 * priceAction.intensity; // Double the intensity
-          adjustedVolatility = baseVolatility * priceAction.volatility * 1.5; // Higher volatility
+          trendFactor = 0.02 * priceAction.intensity;
+          adjustedVolatility = baseVolatility * priceAction.volatility * 1.5;
           break;
 
         case 'breakout':
-          trendFactor = priceAction.direction === 'up' ? 0.01 * priceAction.intensity : -0.01 * priceAction.intensity; // Double
+          trendFactor = priceAction.direction === 'up' ? 0.01 * priceAction.intensity : -0.01 * priceAction.intensity;
           adjustedVolatility = baseVolatility * priceAction.volatility * 1.2;
           break;
 
         case 'trend':
-          if (priceAction.direction === 'up') trendFactor = 0.004 * priceAction.intensity; // Double
-          else if (priceAction.direction === 'down') trendFactor = -0.004 * priceAction.intensity; // Double
-          adjustedVolatility = baseVolatility * 0.6; // Slightly higher
+          if (priceAction.direction === 'up') trendFactor = 0.004 * priceAction.intensity;
+          else if (priceAction.direction === 'down') trendFactor = -0.004 * priceAction.intensity;
+          adjustedVolatility = baseVolatility * 0.6;
           break;
 
         case 'consolidation':
           trendFactor = 0;
-          adjustedVolatility = baseVolatility * 0.3; // Higher than before
+          adjustedVolatility = baseVolatility * 0.3;
           break;
 
         case 'accumulation':
-          trendFactor = 0.001 * priceAction.intensity; // Double
-          adjustedVolatility = baseVolatility * 0.4; // Higher
+          trendFactor = 0.001 * priceAction.intensity;
+          adjustedVolatility = baseVolatility * 0.4;
           break;
 
         case 'distribution':
-          trendFactor = -0.001 * priceAction.intensity; // Double
-          adjustedVolatility = baseVolatility * 0.4; // Higher
+          trendFactor = -0.001 * priceAction.intensity;
+          adjustedVolatility = baseVolatility * 0.4;
           break;
       }
 
@@ -140,66 +130,53 @@ export class MarketEngine implements IMarketEngine {
         trendFactor = 0;
       }
     } else {
-      // AGGRESSIVE: Enhanced default behavior with stronger market dynamics
-      
-      // Stronger volume-weighted trend calculation
       if (totalVolume > 0) {
-        trendFactor = volumeImbalance * 0.001; // Double the correlation (was 0.0005)
+        trendFactor = volumeImbalance * 0.001;
       }
       
-      // Stronger market condition adjustments
       if (marketConditions.trend === 'bullish') {
-        trendFactor += 0.0002; // Double the adjustment
+        trendFactor += 0.0002;
       } else if (marketConditions.trend === 'bearish') {
-        trendFactor -= 0.0002; // Double the adjustment
+        trendFactor -= 0.0002;
       }
       
-      // AGGRESSIVE: Enhanced mean reversion with higher thresholds
-      const priceHistory = extendedSim.priceHistory.slice(-15); // Use fewer candles for faster reaction
+      const priceHistory = extendedSim.priceHistory.slice(-15);
       if (priceHistory.length >= 15) {
         const avgPrice = priceHistory.reduce((sum, p) => sum + p.close, 0) / priceHistory.length;
         const deviation = (currentPrice - avgPrice) / avgPrice;
         
-        // Stronger mean reversion at lower deviation thresholds
-        if (Math.abs(deviation) > 0.03) { // Lower threshold (was 0.05)
-          trendFactor -= deviation * 0.002; // Stronger pull (was 0.001)
+        if (Math.abs(deviation) > 0.03) {
+          trendFactor -= deviation * 0.002;
         }
       }
     }
 
-    // AGGRESSIVE: Enhanced random component with more dramatic moves
     const randomBase = Math.random() - 0.5;
     
-    // AGGRESSIVE: More frequent and larger moves (fat tails)
     let randomFactor;
     const fatTailChance = Math.random();
-    if (fatTailChance < 0.05) { // 5% chance of large move (was 2%)
-      randomFactor = randomBase * adjustedVolatility * 4; // Higher multiplier (was 3)
-    } else if (fatTailChance < 0.2) { // 15% chance of medium move (was 8%)
-      randomFactor = randomBase * adjustedVolatility * 2; // Higher multiplier (was 1.5)
+    if (fatTailChance < 0.05) {
+      randomFactor = randomBase * adjustedVolatility * 4;
+    } else if (fatTailChance < 0.2) {
+      randomFactor = randomBase * adjustedVolatility * 2;
     } else {
       randomFactor = randomBase * adjustedVolatility;
     }
     
-    // AGGRESSIVE: Higher market microstructure noise
-    const microNoise = (Math.random() - 0.5) * 0.0001; // Double the noise (was 0.00005)
+    const microNoise = (Math.random() - 0.5) * 0.0001;
 
-    // Calculate price change with all factors
     const priceChange = currentPrice * (trendFactor + randomFactor + microNoise);
     const newPrice = currentPrice + priceChange;
 
-    // Update the current price with bounds
     extendedSim.currentPrice = Math.max(SIMULATION_CONSTANTS.MIN_PRICE, newPrice);
 
-    // AGGRESSIVE: Use enhanced async candle updates with detailed logging
-    await this.updateAggressivePriceCandles(extendedSim);
+    // CRITICAL FIX: Use synchronous candle updates with proper timestamp handling
+    this.updatePriceCandlesSync(extendedSim);
 
-    // Update market trend based on recent price movement
     this.updateAggressiveMarketTrend(extendedSim);
     
-    // AGGRESSIVE: Update volatility with higher sensitivity
     const changePercent = Math.abs(priceChange / currentPrice);
-    marketConditions.volatility = marketConditions.volatility * 0.9 + changePercent * 0.1; // Higher sensitivity (was 0.05)
+    marketConditions.volatility = marketConditions.volatility * 0.9 + changePercent * 0.1;
   }
 
   async updatePriceHighFrequency(simulation: SimulationState, volatilityFactor: number): Promise<void> {
@@ -207,111 +184,100 @@ export class MarketEngine implements IMarketEngine {
     const { marketConditions, currentPrice } = extendedSim;
     const activeScenario = (extendedSim as any).activeScenario as ActiveScenario | undefined;
 
-    // AGGRESSIVE: Much higher base volatility for HF mode
     let baseVolatility = this.calculateAggressiveBaseVolatility(currentPrice);
 
-    // AGGRESSIVE: Account for external market pressure in HF mode with higher multipliers
     if (extendedSim.externalMarketMetrics && extendedSim.currentTPSMode === TPSMode.HFT) {
-      baseVolatility *= 3; // Triple volatility in HFT mode (was double)
+      baseVolatility *= 3;
     }
 
     const timeframe = this.getCurrentTimeframe(extendedSim.id);
     const config = this.timeframeConfig(timeframe);
 
-    // AGGRESSIVE: Higher volatility for high-frequency updates
-    let adjustedVolatility = baseVolatility * config.volatilityMultiplier * 0.5 * volatilityFactor; // Higher (was 0.3)
+    let adjustedVolatility = baseVolatility * config.volatilityMultiplier * 0.5 * volatilityFactor;
 
     let trendFactor = 0;
 
-    // AGGRESSIVE: Apply stronger scenario effects if active
     if (activeScenario && activeScenario.phase) {
       const { priceAction } = activeScenario;
 
       switch (priceAction.type) {
         case 'crash':
-          trendFactor = -0.01 * priceAction.intensity * volatilityFactor; // Higher intensity (was 0.005)
-          adjustedVolatility = baseVolatility * priceAction.volatility * volatilityFactor * 1.5; // Higher multiplier
+          trendFactor = -0.01 * priceAction.intensity * volatilityFactor;
+          adjustedVolatility = baseVolatility * priceAction.volatility * volatilityFactor * 1.5;
           break;
 
         case 'pump':
-          trendFactor = 0.01 * priceAction.intensity * volatilityFactor; // Higher intensity (was 0.005)
-          adjustedVolatility = baseVolatility * priceAction.volatility * volatilityFactor * 1.5; // Higher multiplier
+          trendFactor = 0.01 * priceAction.intensity * volatilityFactor;
+          adjustedVolatility = baseVolatility * priceAction.volatility * volatilityFactor * 1.5;
           break;
 
         default:
-          trendFactor *= volatilityFactor * 1.5; // Higher multiplier
-          adjustedVolatility *= volatilityFactor * 1.2; // Higher multiplier
+          trendFactor *= volatilityFactor * 1.5;
+          adjustedVolatility *= volatilityFactor * 1.2;
       }
     } else {
-      // AGGRESSIVE: Stronger default trend factors
-      if (marketConditions.trend === 'bullish') trendFactor = 0.0001; // Double (was 0.00005)
-      else if (marketConditions.trend === 'bearish') trendFactor = -0.0001; // Double (was -0.00005)
+      if (marketConditions.trend === 'bullish') trendFactor = 0.0001;
+      else if (marketConditions.trend === 'bearish') trendFactor = -0.0001;
     }
 
-    // AGGRESSIVE: Larger random component for more dramatic moves
-    const randomFactor = (Math.random() - 0.5) * adjustedVolatility * 1.2; // Higher multiplier
+    const randomFactor = (Math.random() - 0.5) * adjustedVolatility * 1.2;
 
-    // Calculate price change
     const priceChange = currentPrice * (trendFactor + randomFactor);
     const newPrice = currentPrice + priceChange;
 
-    // Update the current price with bounds
     extendedSim.currentPrice = Math.max(SIMULATION_CONSTANTS.MIN_PRICE, newPrice);
 
-    // Update candles with aggressive async method
-    await this.updateAggressivePriceCandles(extendedSim);
+    // CRITICAL FIX: Use synchronous candle updates
+    this.updatePriceCandlesSync(extendedSim);
   }
 
-  // AGGRESSIVE: Enhanced candle update method with detailed logging
-  private async updateAggressivePriceCandles(simulation: ExtendedSimulationState): Promise<void> {
+  // CRITICAL FIX: Synchronous candle update method to prevent ordering issues
+  private updatePriceCandlesSync(simulation: ExtendedSimulationState): void {
     const timeframe = this.simulationTimeframes.get(simulation.id) || this.getCurrentTimeframe(simulation.id);
     const config = this.timeframeConfig(timeframe);
     const candleManager = this.candleManagers.get(simulation.id);
     
     if (!candleManager) {
-      console.error(`❌ AGGRESSIVE: No CandleManager found for simulation ${simulation.id}`);
-      // Try to recreate it with aggressive parameters
-      const newCandleManager = this.initializeAggressiveCandleManager(simulation.id, config.interval);
-      console.log(`🔄 AGGRESSIVE: Recreated CandleManager for simulation ${simulation.id}`);
+      console.error(`❌ No CandleManager found for simulation ${simulation.id}`);
+      const newCandleManager = this.initializeCandleManager(simulation.id, config.interval);
+      console.log(`🔄 Recreated CandleManager for simulation ${simulation.id}`);
       
       if (!this.candleManagers.get(simulation.id)) {
-        console.error(`💥 AGGRESSIVE: Failed to recreate CandleManager - using fallback`);
+        console.error(`💥 Failed to recreate CandleManager`);
         return;
       }
     }
     
     const manager = this.candleManagers.get(simulation.id)!;
     
-    // AGGRESSIVE: Use simulation time with precise rounding for ultra-fast intervals
-    const roundedTime = Math.floor(simulation.currentTime / 100) * 100; // Round to nearest 100ms for precision
-    const currentVolume = this.calculateAggressiveCurrentVolume(simulation);
+    // CRITICAL FIX: Use simulation time directly without rounding
+    // The CandleManager will handle proper alignment internally
+    const currentTime = simulation.currentTime;
+    const currentVolume = this.calculateCurrentVolume(simulation);
     
-    // Store previous state for aggressive comparison
     const previousCandleCount = simulation.priceHistory.length;
     
-    console.log(`📈 AGGRESSIVE UPDATE: time=${new Date(roundedTime).toISOString().substr(11, 8)}, price=$${simulation.currentPrice.toFixed(6)}, vol=${currentVolume.toFixed(0)}`);
+    console.log(`📈 PRICE UPDATE: time=${new Date(currentTime).toISOString().substr(11, 8)}, price=$${simulation.currentPrice.toFixed(6)}, vol=${currentVolume.toFixed(0)}`);
     
     try {
-      // AGGRESSIVE: Update candle with rounded simulation time and higher volume
-      await manager.updateCandle(roundedTime, simulation.currentPrice, currentVolume);
+      // CRITICAL FIX: Synchronous candle update
+      manager.updateCandle(currentTime, simulation.currentPrice, currentVolume);
       
       // Get updated candles from manager
-      simulation.priceHistory = manager.getCandles(500); // Keep more candles
+      simulation.priceHistory = manager.getCandles(500);
       const finalCandleCount = simulation.priceHistory.length;
       
-      // AGGRESSIVE: Enhanced success tracking with milestones
       if (finalCandleCount > previousCandleCount) {
-        console.log(`🚀 AGGRESSIVE CHART GROWTH: ${previousCandleCount} → ${finalCandleCount} candles (${finalCandleCount <= 20 ? 'BUILDING' : 'MATURE'})`);
+        console.log(`🚀 CHART GROWTH: ${previousCandleCount} → ${finalCandleCount} candles`);
       }
       
-      // AGGRESSIVE: Progress tracking for rapid chart building
       if (finalCandleCount <= 10 || finalCandleCount % 5 === 0) {
-        console.log(`📊 AGGRESSIVE CHART: ${finalCandleCount} candles | Interval: ${config.interval/1000}s`);
+        console.log(`📊 CHART STATUS: ${finalCandleCount} candles | Interval: ${config.interval/1000}s`);
         
         if (simulation.priceHistory.length > 1) {
           const first = simulation.priceHistory[0];
           const last = simulation.priceHistory[simulation.priceHistory.length - 1];
-          const duration = (last.timestamp - first.timestamp) / 60000; // minutes
+          const duration = (last.timestamp - first.timestamp) / 60000;
           const priceChange = ((last.close - first.open) / first.open * 100);
           
           console.log(`   ⏱️ Span: ${duration.toFixed(1)}min | Change: ${priceChange > 0 ? '+' : ''}${priceChange.toFixed(2)}%`);
@@ -320,76 +286,62 @@ export class MarketEngine implements IMarketEngine {
       }
       
     } catch (error) {
-      console.error(`❌ AGGRESSIVE ERROR: Candle update failed:`, error);
-      console.error(`   Simulation: ${simulation.id} | Time: ${roundedTime} | Price: ${simulation.currentPrice} | Volume: ${currentVolume}`);
-      
-      // AGGRESSIVE: Don't let candle errors stop the aggressive simulation
+      console.error(`❌ Candle update failed:`, error);
+      console.error(`   Simulation: ${simulation.id} | Time: ${currentTime} | Price: ${simulation.currentPrice} | Volume: ${currentVolume}`);
     }
   }
 
-  // AGGRESSIVE: Enhanced volume calculation with higher base volume
-  private calculateAggressiveCurrentVolume(simulation: ExtendedSimulationState): number {
+  private calculateCurrentVolume(simulation: ExtendedSimulationState): number {
     const timeframe = this.simulationTimeframes.get(simulation.id) || this.getCurrentTimeframe(simulation.id);
     const config = this.timeframeConfig(timeframe);
     const currentCandleStart = Math.floor(simulation.currentTime / config.interval) * config.interval;
     
-    // Get trades within the current candle period
     const volumeInCurrentCandle = simulation.recentTrades
       .filter(trade => trade.timestamp >= currentCandleStart && trade.timestamp <= simulation.currentTime)
       .reduce((sum, trade) => sum + trade.quantity, 0);
     
-    // AGGRESSIVE: Higher minimum volume for better visibility
-    const minVolume = 500; // Higher minimum (was 100)
+    const minVolume = 500;
     const baseVolume = Math.max(minVolume, volumeInCurrentCandle);
     
-    // AGGRESSIVE: Add artificial volume boost for empty periods
     const volumeBoost = simulation.recentTrades.length < 10 ? 1000 : 0;
     
     return baseVolume + volumeBoost;
   }
 
-  // AGGRESSIVE: Enhanced CandleManager initialization with ultra-fast intervals
-  private initializeAggressiveCandleManager(simulationId: string, candleInterval: number): CandleManager {
+  private initializeCandleManager(simulationId: string, candleInterval: number): CandleManager {
     try {
-      console.log(`🏭 AGGRESSIVE: Creating ultra-fast CandleManager for ${simulationId}...`);
+      console.log(`🏭 Creating CandleManager for ${simulationId}...`);
       
-      // AGGRESSIVE: Force even faster intervals
-      const aggressiveInterval = Math.min(candleInterval, 8000); // Cap at 8 seconds max
+      const aggressiveInterval = Math.min(candleInterval, 8000);
       
       const manager = new CandleManager(aggressiveInterval);
       this.candleManagers.set(simulationId, manager);
       
-      console.log(`🏭 AGGRESSIVE INIT: CandleManager for ${simulationId}:`);
-      console.log(`   ⚡ Interval: ${aggressiveInterval}ms (${(aggressiveInterval/1000).toFixed(1)}s) - ULTRA FAST`);
-      console.log(`   🎯 Starting fresh for rapid chart building`);
-      console.log(`   ✅ CONSTRUCTOR FIXED - Using proper ES6 import`);
+      console.log(`🏭 CREATED: CandleManager for ${simulationId}:`);
+      console.log(`   ⚡ Interval: ${aggressiveInterval}ms (${(aggressiveInterval/1000).toFixed(1)}s)`);
+      console.log(`   🎯 Starting fresh for chart building`);
       
       return manager;
     } catch (error) {
-      console.error(`❌ AGGRESSIVE CRITICAL: Failed to create CandleManager for ${simulationId}:`, error);
-      console.error(`   This error was crashing the server - applying emergency fix`);
-      
-      // AGGRESSIVE: Emergency fallback with mock manager
-      console.log(`🆘 AGGRESSIVE FALLBACK: Creating emergency mock CandleManager...`);
+      console.error(`❌ Failed to create CandleManager for ${simulationId}:`, error);
       
       try {
-        const fallbackManager = new CandleManager(5000); // 5-second fallback
+        const fallbackManager = new CandleManager(5000);
         this.candleManagers.set(simulationId, fallbackManager);
-        console.log(`✅ AGGRESSIVE FALLBACK: Emergency CandleManager created successfully`);
+        console.log(`✅ Emergency CandleManager created successfully`);
         return fallbackManager;
       } catch (fallbackError) {
-        console.error(`💥 AGGRESSIVE CRITICAL: Even fallback creation failed:`, fallbackError);
+        console.error(`💥 Even fallback creation failed:`, fallbackError);
         
-        // Last resort mock to prevent server crash
         const mockManager = {
-          updateCandle: async () => { console.log('Mock aggressive candle update'); },
+          updateCandle: () => { console.log('Mock candle update'); },
           getCandles: () => [],
-          clear: () => { console.log('Mock aggressive candle clear'); },
-          shutdown: () => { console.log('Mock aggressive candle shutdown'); }
+          clear: () => { console.log('Mock candle clear'); },
+          shutdown: () => { console.log('Mock candle shutdown'); }
         } as any;
         
         this.candleManagers.set(simulationId, mockManager);
-        console.log(`🆘 AGGRESSIVE LAST RESORT: Mock manager created to prevent crash`);
+        console.log(`🆘 Mock manager created to prevent crash`);
         return mockManager;
       }
     }
@@ -399,7 +351,6 @@ export class MarketEngine implements IMarketEngine {
     const extendedSim = simulation as ExtendedSimulationState;
     const { orderBook, currentPrice } = extendedSim;
     
-    // AGGRESSIVE: Implement more realistic order matching with higher impact
     const targetLevels = order.action === 'buy' ? orderBook.asks : orderBook.bids;
     
     if (targetLevels.length === 0) {
@@ -411,7 +362,6 @@ export class MarketEngine implements IMarketEngine {
     let executedQuantity = 0;
     let worstPrice = order.price;
     
-    // Walk through order book levels
     for (const level of targetLevels) {
       if (order.action === 'buy' && level.price > order.price) break;
       if (order.action === 'sell' && level.price < order.price) break;
@@ -433,7 +383,6 @@ export class MarketEngine implements IMarketEngine {
     
     const avgExecutionPrice = totalCost / executedQuantity;
     
-    // AGGRESSIVE: Apply stronger market impact
     const marketImpact = this.calculateAggressiveMarketImpact(
       order.action, 
       executedQuantity * avgExecutionPrice,
@@ -443,9 +392,8 @@ export class MarketEngine implements IMarketEngine {
     const priceImpact = order.action === 'buy' ? marketImpact : -marketImpact;
     extendedSim.currentPrice = currentPrice * (1 + priceImpact);
     
-    // Create trade record with unique ID
     this.tradeCounter++;
-    const tradeId = `aggressive_ext_${order.traderType}_${extendedSim.currentTime}_${this.tradeCounter}_${Math.random().toString(36).substr(2, 6)}`;
+    const tradeId = `ext_${order.traderType}_${extendedSim.currentTime}_${this.tradeCounter}_${Math.random().toString(36).substr(2, 6)}`;
     
     const trade: ExtendedTrade = {
       id: tradeId,
@@ -457,7 +405,7 @@ export class MarketEngine implements IMarketEngine {
         buyVolume: order.action === 'buy' ? executedQuantity * avgExecutionPrice : 0,
         sellVolume: order.action === 'sell' ? executedQuantity * avgExecutionPrice : 0,
         tradeCount: 1,
-        feesUsd: executedQuantity * avgExecutionPrice * 0.0015, // Higher fee (was 0.001)
+        feesUsd: executedQuantity * avgExecutionPrice * 0.0015,
         winRate: 0.5,
         riskProfile: 'aggressive' as const,
         portfolioEfficiency: 0
@@ -471,10 +419,8 @@ export class MarketEngine implements IMarketEngine {
       externalTraderType: order.traderType
     };
     
-    // AGGRESSIVE: Update market conditions based on external activity
     this.updateAggressiveMarketConditionsFromExternal(extendedSim, trade);
     
-    // Update volume on current candle
     const currentCandle = extendedSim.priceHistory[extendedSim.priceHistory.length - 1];
     if (currentCandle) {
       currentCandle.volume += executedQuantity;
@@ -483,24 +429,19 @@ export class MarketEngine implements IMarketEngine {
     return trade as Trade;
   }
 
-  // AGGRESSIVE: Enhanced base volatility calculation
   calculateAggressiveBaseVolatility(price: number): number {
-    // AGGRESSIVE: Higher base volatility across all price ranges
-    if (price < 5) return 0.025;        // 2.5% base volatility (was 1.5%)
-    if (price < 10) return 0.020;       // 2.0% (was 1.2%)
-    if (price < 20) return 0.018;       // 1.8% (was 1.0%)
-    if (price < 35) return 0.015;       // 1.5% (was 0.8%)
-    return 0.012;                       // 1.2% (was 0.6%)
+    if (price < 5) return 0.025;
+    if (price < 10) return 0.020;
+    if (price < 20) return 0.018;
+    if (price < 35) return 0.015;
+    return 0.012;
   }
 
-  // Keep the existing method name for compatibility
   calculateBaseVolatility(price: number): number {
     return this.calculateAggressiveBaseVolatility(price);
   }
 
-  // ENHANCED: Dynamic price generation with realistic distributions
   generateRandomTokenPrice(priceRange?: 'micro' | 'small' | 'mid' | 'large' | 'mega'): number {
-    // Enhanced price ranges with more realistic distributions
     const priceCategories = {
       micro: { min: 0.0001, max: 0.01, weight: 0.25, description: 'Micro-cap (< $0.01)' },
       small: { min: 0.01, max: 1, weight: 0.30, description: 'Small-cap ($0.01 - $1)' },
@@ -512,11 +453,9 @@ export class MarketEngine implements IMarketEngine {
     let selectedCategory;
 
     if (priceRange && priceCategories[priceRange]) {
-      // Use specified range
       selectedCategory = priceCategories[priceRange];
-      console.log(`🎯 DYNAMIC PRICE: Using specified range '${priceRange}' - ${selectedCategory.description}`);
+      console.log(`🎯 PRICE: Using specified range '${priceRange}' - ${selectedCategory.description}`);
     } else {
-      // Weighted random selection for realistic distribution
       const random = Math.random();
       let cumulative = 0;
 
@@ -524,33 +463,27 @@ export class MarketEngine implements IMarketEngine {
         cumulative += category.weight;
         if (random <= cumulative) {
           selectedCategory = category;
-          console.log(`🎲 DYNAMIC PRICE: Randomly selected '${categoryName}' - ${category.description}`);
+          console.log(`🎲 PRICE: Randomly selected '${categoryName}' - ${category.description}`);
           break;
         }
       }
 
-      // Fallback to mid-cap if selection fails
       if (!selectedCategory) {
         selectedCategory = priceCategories.mid;
-        console.log(`🔄 DYNAMIC PRICE: Fallback to mid-cap range`);
+        console.log(`🔄 PRICE: Fallback to mid-cap range`);
       }
     }
 
-    // Generate price within the selected range using log-normal distribution
-    // This creates more realistic price clustering at lower values
     const logMin = Math.log(selectedCategory.min);
     const logMax = Math.log(selectedCategory.max);
     const logPrice = logMin + Math.random() * (logMax - logMin);
     let price = Math.exp(logPrice);
 
-    // Add some additional randomness to avoid too much clustering
-    const variationFactor = 0.9 + Math.random() * 0.2; // ±10% variation
+    const variationFactor = 0.9 + Math.random() * 0.2;
     price *= variationFactor;
 
-    // Ensure price stays within bounds
     price = Math.max(selectedCategory.min, Math.min(selectedCategory.max, price));
 
-    // Round to appropriate decimal places based on price range
     if (price < 0.001) {
       price = parseFloat(price.toFixed(6));
     } else if (price < 0.01) {
@@ -565,12 +498,11 @@ export class MarketEngine implements IMarketEngine {
       price = parseFloat(price.toFixed(1));
     }
 
-    console.log(`💰 DYNAMIC PRICE GENERATED: $${price} (${selectedCategory.description})`);
+    console.log(`💰 PRICE GENERATED: $${price} (${selectedCategory.description})`);
     
     return price;
   }
 
-  // NEW: Get price category for a given price
   getPriceCategory(price: number): { category: string; description: string; range: string } {
     if (price < 0.01) {
       return { category: 'micro', description: 'Micro-cap', range: '< $0.01' };
@@ -585,7 +517,6 @@ export class MarketEngine implements IMarketEngine {
     }
   }
 
-  // AGGRESSIVE: Enhanced market impact calculation
   private calculateAggressiveMarketImpact(
     action: 'buy' | 'sell',
     orderValue: number,
@@ -593,71 +524,61 @@ export class MarketEngine implements IMarketEngine {
   ): number {
     const { marketConditions } = simulation;
     
-    let liquidityDepth = 1000000; // Default liquidity
+    let liquidityDepth = 1000000;
     if (this.orderBookManager) {
       const depth = this.orderBookManager.getMarketDepth(simulation, 1);
       liquidityDepth = action === 'buy' ? depth.askDepth : depth.bidDepth;
     }
     
-    // AGGRESSIVE: Higher base impact calculation
-    let impact = orderValue / (liquidityDepth + orderValue) * 0.02; // Double max impact (was 0.01)
+    let impact = orderValue / (liquidityDepth + orderValue) * 0.02;
     
-    // AGGRESSIVE: Stronger market condition adjustments
-    impact *= (1 + marketConditions.volatility * 2); // Higher volatility multiplier
+    impact *= (1 + marketConditions.volatility * 2);
     
-    // AGGRESSIVE: Higher TPS mode adjustments
     if (simulation.currentTPSMode === TPSMode.HFT) {
-      impact *= 4; // Quadruple impact (was triple)
+      impact *= 4;
     } else if (simulation.currentTPSMode === TPSMode.STRESS) {
-      impact *= 3; // Triple impact (was double)
+      impact *= 3;
     }
     
-    // AGGRESSIVE: Higher maximum impact cap
-    return Math.min(impact, 0.08); // Max 8% price impact (was 5%)
+    return Math.min(impact, 0.08);
   }
 
-  // AGGRESSIVE: Enhanced market conditions update from external trades
   private updateAggressiveMarketConditionsFromExternal(
     simulation: ExtendedSimulationState,
     trade: ExtendedTrade
   ): void {
     const { marketConditions } = simulation;
     
-    // AGGRESSIVE: Higher volume increase from external activity
-    marketConditions.volume += trade.value * 1.5; // Higher multiplier
+    marketConditions.volume += trade.value * 1.5;
     
-    // AGGRESSIVE: Stronger volatility adjustments based on trader type
     switch (trade.externalTraderType) {
       case ExternalTraderType.WHALE:
-        marketConditions.volatility *= 1.4; // Higher impact (was 1.2)
+        marketConditions.volatility *= 1.4;
         break;
       case ExternalTraderType.PANIC_SELLER:
-        marketConditions.volatility *= 1.3; // Higher impact (was 1.1)
+        marketConditions.volatility *= 1.3;
         if (marketConditions.trend !== 'bearish') {
           marketConditions.trend = 'bearish';
         }
         break;
       case ExternalTraderType.MEV_BOT:
-        marketConditions.volatility *= 1.1; // Higher impact (was 1.05)
+        marketConditions.volatility *= 1.1;
         break;
     }
     
-    // AGGRESSIVE: Higher volatility cap
-    marketConditions.volatility = Math.min(marketConditions.volatility, 0.15); // Higher cap (was 0.1)
+    marketConditions.volatility = Math.min(marketConditions.volatility, 0.15);
   }
 
-  // AGGRESSIVE: Enhanced market trend update
   private updateAggressiveMarketTrend(simulation: SimulationState): void {
-    if (simulation.priceHistory.length >= 5) { // Use fewer candles for faster reaction
-      const recentPrices = simulation.priceHistory.slice(-5); // Fewer candles (was 10)
+    if (simulation.priceHistory.length >= 5) {
+      const recentPrices = simulation.priceHistory.slice(-5);
       const firstPrice = recentPrices[0].close;
       const lastPrice = simulation.currentPrice;
       const percentChange = ((lastPrice - firstPrice) / firstPrice) * 100;
 
-      // AGGRESSIVE: Lower thresholds for more sensitive trend detection
       const currentPrice = simulation.currentPrice;
-      const bullishThreshold = currentPrice < 1 ? 2 : 1; // Lower thresholds
-      const bearishThreshold = currentPrice < 1 ? -1.5 : -0.75; // Lower thresholds
+      const bullishThreshold = currentPrice < 1 ? 2 : 1;
+      const bearishThreshold = currentPrice < 1 ? -1.5 : -0.75;
 
       if (percentChange > bullishThreshold) {
         simulation.marketConditions.trend = 'bullish';
@@ -667,9 +588,8 @@ export class MarketEngine implements IMarketEngine {
         simulation.marketConditions.trend = 'sideways';
       }
 
-      // AGGRESSIVE: Update volatility with higher sensitivity
       const volatility = TechnicalIndicators.calculateVolatility(recentPrices);
-      simulation.marketConditions.volatility = volatility * 1.2; // Higher base volatility
+      simulation.marketConditions.volatility = volatility * 1.2;
     }
   }
 }
