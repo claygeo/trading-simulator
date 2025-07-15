@@ -158,7 +158,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
         if (fixedData[i].time <= lastTime) {
           fixedData[i].time = (lastTime + 60) as UTCTimestamp;
         }
-        lastTime = fixedData[i].time;
+        // FIXED: Convert Time to number to fix TypeScript error
+        lastTime = Number(fixedData[i].time);
       }
       
       return {
