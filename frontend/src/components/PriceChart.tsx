@@ -1,4 +1,4 @@
-// frontend/src/components/PriceChart.tsx - FIXED: Data Validation After Reset
+// frontend/src/components/PriceChart.tsx - ENHANCED: Reset Coordination & Timestamp Validation
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { 
   createChart, 
@@ -42,6 +42,22 @@ interface PriceChartProps {
   dynamicView?: boolean;
 }
 
+// ENHANCED: Chart state management with reset coordination
+interface ChartState {
+  status: 'initializing' | 'empty' | 'building' | 'ready' | 'error' | 'resetting';
+  isReady: boolean;
+  candleCount: number;
+  isLiveBuilding: boolean;
+  buildingStartTime: number | null;
+  lastResetTime: number | null;
+  resetCoordination: {
+    isInResetPhase: boolean;
+    resetId: string | null;
+    postResetValidationPasses: number;
+    allowedValidationFailures: number;
+  };
+}
+
 const PriceChart: React.FC<PriceChartProps> = ({
   priceHistory = [],
   currentPrice = 0,
@@ -55,11 +71,21 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   
-  const [isChartReady, setIsChartReady] = useState(false);
-  const [chartStatus, setChartStatus] = useState<'initializing' | 'empty' | 'building' | 'ready' | 'error'>('initializing');
-  const [candleCount, setCandleCount] = useState(0);
-  const [isLiveBuilding, setIsLiveBuilding] = useState(false);
-  const [buildingStartTime, setBuildingStartTime] = useState<number | null>(null);
+  // ENHANCED: Comprehensive chart state
+  const [chartState, setChartState] = useState<ChartState>({
+    status: 'initializing',
+    isReady: false,
+    candleCount: 0,
+    isLiveBuilding: false,
+    buildingStartTime: null,
+    lastResetTime: null,
+    resetCoordination: {
+      isInResetPhase: false,
+      resetId: null,
+      postResetValidationPasses: 0,
+      allowedValidationFailures: 3
+    }
+  });
 
   const lastUpdateRef = useRef<number>(0);
   const lastCandleCountRef = useRef<number>(0);
@@ -68,9 +94,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
   
   const initialZoomSetRef = useRef<boolean>(false);
   const shouldAutoFitRef = useRef<boolean>(true);
-
-  // Track when we've just reset to be more lenient with validation
-  const justResetRef = useRef<boolean>(false);
+  
+  // ENHANCED: Reset coordination refs
+  const resetCoordinationRef = useRef({
+    lastResetDetection: 0,
+    consecutiveEmptyUpdates: 0,
+    resetConfirmationTimer: null as NodeJS.Timeout | null
+  });
 
   const calculateOptimalVisibleRange = useCallback((candleCount: number): { from: number; to: number } => {
     const MIN_VISIBLE_CANDLES = 25;
@@ -95,6 +125,57 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return { from, to };
   }, []);
 
+  // ENHANCED: Timestamp validation with reset awareness
+  const validateTimestampOrdering = useCallback((candleData: CandlestickData[]): {
+    isValid: boolean;
+    issues: number;
+    shouldFixAutomatically: boolean;
+    validatedData?: CandlestickData[];
+  } => {
+    if (candleData.length <= 1) {
+      return { isValid: true, issues: 0, shouldFixAutomatically: false };
+    }
+    
+    let issues = 0;
+    const isInResetPhase = chartState.resetCoordination.isInResetPhase;
+    
+    // Check timestamp ordering
+    for (let i = 1; i < candleData.length; i++) {
+      if (candleData[i].time <= candleData[i - 1].time) {
+        issues++;
+      }
+    }
+    
+    // During reset phase, be more lenient
+    if (isInResetPhase && issues <= chartState.resetCoordination.allowedValidationFailures) {
+      console.log(`🔧 RESET COORDINATION: Allowing ${issues} validation issues during reset phase`);
+      
+      // Auto-fix timestamp issues during reset
+      const fixedData = [...candleData];
+      let lastTime = 0;
+      
+      for (let i = 0; i < fixedData.length; i++) {
+        if (fixedData[i].time <= lastTime) {
+          fixedData[i].time = (lastTime + 60) as UTCTimestamp;
+        }
+        lastTime = fixedData[i].time;
+      }
+      
+      return {
+        isValid: false,
+        issues,
+        shouldFixAutomatically: true,
+        validatedData: fixedData
+      };
+    }
+    
+    return {
+      isValid: issues === 0,
+      issues,
+      shouldFixAutomatically: false
+    };
+  }, [chartState.resetCoordination]);
+
   const convertPriceHistory = useMemo((): { candleData: CandlestickData[]; volumeData: HistogramData[] } => {
     if (!priceHistory || priceHistory.length === 0) {
       return { candleData: [], volumeData: [] };
@@ -103,7 +184,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const candleData: CandlestickData[] = [];
     const volumeData: HistogramData[] = [];
     
-    // FIXED: Sort data by timestamp first to ensure proper ordering
+    // Sort data by timestamp first
     const sortedHistory = [...priceHistory].sort((a, b) => {
       const timeA = a.timestamp || a.time;
       const timeB = b.timestamp || b.time;
@@ -132,47 +213,193 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return { candleData, volumeData };
   }, [priceHistory]);
 
-  // SIMPLE RESET: Clear chart when priceHistory becomes empty
-  useEffect(() => {
-    if (!isChartReady || !candlestickSeriesRef.current || !volumeSeriesRef.current) {
-      return;
-    }
-
-    const { candleData, volumeData } = convertPriceHistory;
-
-    // SIMPLE RESET LOGIC: If priceHistory is empty, clear the chart
-    if (candleData.length === 0) {
-      console.log('📊 SIMPLE RESET: Clearing chart - priceHistory is empty');
+  // ENHANCED: Reset detection and coordination
+  const detectAndHandleReset = useCallback((candleData: CandlestickData[]) => {
+    const now = Date.now();
+    const isEmpty = candleData.length === 0;
+    const wasNotEmpty = lastCandleCountRef.current > 0;
+    
+    if (isEmpty && wasNotEmpty) {
+      // Reset detected
+      console.log('🔄 RESET DETECTED: Chart data went from populated to empty');
       
-      // Clear TradingView chart series data
-      candlestickSeriesRef.current.setData([]);
-      volumeSeriesRef.current.setData([]);
+      const resetId = `reset-${now}`;
       
-      // Reset internal state
-      setChartStatus('empty');
-      setCandleCount(0);
-      setIsLiveBuilding(false);
-      setBuildingStartTime(null);
+      setChartState(prev => ({
+        ...prev,
+        status: 'resetting',
+        candleCount: 0,
+        isLiveBuilding: false,
+        buildingStartTime: null,
+        lastResetTime: now,
+        resetCoordination: {
+          isInResetPhase: true,
+          resetId,
+          postResetValidationPasses: 0,
+          allowedValidationFailures: 3
+        }
+      }));
+      
+      // Clear TradingView chart
+      if (candlestickSeriesRef.current && volumeSeriesRef.current) {
+        candlestickSeriesRef.current.setData([]);
+        volumeSeriesRef.current.setData([]);
+      }
+      
+      // Reset state
       lastCandleCountRef.current = 0;
       initialZoomSetRef.current = false;
       shouldAutoFitRef.current = true;
       
-      // Mark that we just reset - be more lenient with next data
-      justResetRef.current = true;
+      // Set timer to exit reset phase
+      if (resetCoordinationRef.current.resetConfirmationTimer) {
+        clearTimeout(resetCoordinationRef.current.resetConfirmationTimer);
+      }
       
-      console.log('✅ SIMPLE RESET: Chart cleared successfully');
+      resetCoordinationRef.current.resetConfirmationTimer = setTimeout(() => {
+        console.log('🔄 RESET COORDINATION: Exiting reset phase');
+        setChartState(prev => ({
+          ...prev,
+          status: 'empty',
+          resetCoordination: {
+            ...prev.resetCoordination,
+            isInResetPhase: false,
+            resetId: null
+          }
+        }));
+      }, 2000);
+      
+      console.log('✅ RESET COORDINATION: Reset handled, waiting for new data');
+      return true;
+    }
+    
+    return false;
+  }, []);
+
+  // ENHANCED: Chart update with reset coordination
+  const updateChart = useCallback((candleData: CandlestickData[], volumeData: HistogramData[]) => {
+    if (!chartState.isReady || !candlestickSeriesRef.current || !volumeSeriesRef.current || isUpdatingRef.current) {
       return;
     }
 
-    // Normal chart update for non-empty data
-    updateChart(candleData, volumeData);
-  }, [convertPriceHistory, isChartReady]);
+    const now = Date.now();
+    const timeSinceLastUpdate = now - lastUpdateRef.current;
+    
+    if (timeSinceLastUpdate < 33) {
+      if (updateThrottleRef.current) {
+        clearTimeout(updateThrottleRef.current);
+      }
+      
+      updateThrottleRef.current = setTimeout(() => {
+        updateChart(candleData, volumeData);
+      }, 33 - timeSinceLastUpdate);
+      return;
+    }
 
-  // Chart initialization - clean and simple
+    isUpdatingRef.current = true;
+    lastUpdateRef.current = now;
+
+    try {
+      // Check for reset
+      if (detectAndHandleReset(candleData)) {
+        isUpdatingRef.current = false;
+        return;
+      }
+      
+      const incomingCandleCount = candleData.length;
+
+      // Track when chart starts building after reset
+      if (incomingCandleCount > 0 && lastCandleCountRef.current === 0 && chartState.status !== 'building') {
+        console.log('📈 RESET COORDINATION: Chart building started after reset');
+        setChartState(prev => ({
+          ...prev,
+          status: 'building',
+          isLiveBuilding: true,
+          buildingStartTime: Date.now()
+        }));
+      }
+
+      // ENHANCED: Validation with reset coordination
+      const validation = validateTimestampOrdering(candleData);
+      
+      if (!validation.isValid && !validation.shouldFixAutomatically) {
+        console.warn('⚠️ RESET COORDINATION: Chart data validation failed:', {
+          issues: validation.issues,
+          isInResetPhase: chartState.resetCoordination.isInResetPhase,
+          candleCount: incomingCandleCount,
+          firstFewTimes: candleData.slice(0, 3).map(c => ({ time: c.time, date: new Date(Number(c.time) * 1000).toISOString() }))
+        });
+        
+        isUpdatingRef.current = false;
+        return;
+      }
+      
+      // Use fixed data if auto-fix was applied
+      const dataToUse = validation.validatedData || candleData;
+      const volumeToUse = validation.validatedData ? volumeData.slice(0, validation.validatedData.length) : volumeData;
+      
+      if (validation.shouldFixAutomatically) {
+        console.log('🔧 RESET COORDINATION: Applied automatic timestamp fixes');
+      }
+
+      // Update chart data
+      candlestickSeriesRef.current.setData(dataToUse);
+      volumeSeriesRef.current.setData(volumeToUse);
+
+      setOptimalZoom(dataToUse);
+
+      lastCandleCountRef.current = incomingCandleCount;
+      
+      // Update chart state
+      setChartState(prev => ({
+        ...prev,
+        candleCount: incomingCandleCount,
+        status: incomingCandleCount >= 50 ? 'ready' : incomingCandleCount > 0 ? 'building' : 'empty',
+        resetCoordination: {
+          ...prev.resetCoordination,
+          postResetValidationPasses: prev.resetCoordination.isInResetPhase ? 
+            prev.resetCoordination.postResetValidationPasses + 1 : 0
+        }
+      }));
+      
+      // Exit reset phase after successful validations
+      if (chartState.resetCoordination.isInResetPhase && 
+          chartState.resetCoordination.postResetValidationPasses >= 2 &&
+          incomingCandleCount > 0) {
+        console.log('✅ RESET COORDINATION: Successful post-reset validation, exiting reset phase');
+        setChartState(prev => ({
+          ...prev,
+          resetCoordination: {
+            ...prev.resetCoordination,
+            isInResetPhase: false,
+            resetId: null
+          }
+        }));
+      }
+
+    } catch (error) {
+      console.error('❌ RESET COORDINATION: Error updating chart:', error);
+      setChartState(prev => ({ ...prev, status: 'error' }));
+    } finally {
+      isUpdatingRef.current = false;
+    }
+  }, [chartState, validateTimestampOrdering, detectAndHandleReset]);
+
+  // ENHANCED: Monitor price history changes with reset coordination
+  useEffect(() => {
+    if (!chartState.isReady || !candlestickSeriesRef.current || !volumeSeriesRef.current) {
+      return;
+    }
+
+    const { candleData, volumeData } = convertPriceHistory;
+    updateChart(candleData, volumeData);
+  }, [convertPriceHistory, chartState.isReady, updateChart]);
+
+  // Chart initialization
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    setChartStatus('initializing');
+    setChartState(prev => ({ ...prev, status: 'initializing' }));
 
     try {
       const chart = createChart(chartContainerRef.current, {
@@ -254,19 +481,27 @@ const PriceChart: React.FC<PriceChartProps> = ({
       lastCandleCountRef.current = 0;
       lastUpdateRef.current = 0;
       isUpdatingRef.current = false;
-      justResetRef.current = false;
       
-      setIsChartReady(true);
-      setChartStatus('empty');
-      setCandleCount(0);
-      setIsLiveBuilding(false);
-      setBuildingStartTime(null);
+      setChartState(prev => ({
+        ...prev,
+        status: 'empty',
+        isReady: true,
+        candleCount: 0,
+        isLiveBuilding: false,
+        buildingStartTime: null,
+        resetCoordination: {
+          isInResetPhase: false,
+          resetId: null,
+          postResetValidationPasses: 0,
+          allowedValidationFailures: 3
+        }
+      }));
 
-      console.log('✅ Chart initialized successfully with simple reset logic');
+      console.log('✅ RESET COORDINATION: Chart initialized with enhanced reset coordination');
 
     } catch (error) {
       console.error('❌ Failed to create chart:', error);
-      setChartStatus('error');
+      setChartState(prev => ({ ...prev, status: 'error' }));
     }
 
     return () => {
@@ -277,6 +512,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
         updateThrottleRef.current = null;
       }
       
+      if (resetCoordinationRef.current.resetConfirmationTimer) {
+        clearTimeout(resetCoordinationRef.current.resetConfirmationTimer);
+        resetCoordinationRef.current.resetConfirmationTimer = null;
+      }
+      
       if (chartRef.current) {
         try {
           chartRef.current.remove();
@@ -285,22 +525,30 @@ const PriceChart: React.FC<PriceChartProps> = ({
         }
       }
       
-      // Clean state reset
       chartRef.current = null;
       candlestickSeriesRef.current = null;
       volumeSeriesRef.current = null;
-      setIsChartReady(false);
-      setChartStatus('initializing');
+      
+      setChartState({
+        status: 'initializing',
+        isReady: false,
+        candleCount: 0,
+        isLiveBuilding: false,
+        buildingStartTime: null,
+        lastResetTime: null,
+        resetCoordination: {
+          isInResetPhase: false,
+          resetId: null,
+          postResetValidationPasses: 0,
+          allowedValidationFailures: 3
+        }
+      });
       
       initialZoomSetRef.current = false;
       shouldAutoFitRef.current = true;
-      setCandleCount(0);
-      setIsLiveBuilding(false);
-      setBuildingStartTime(null);
       isUpdatingRef.current = false;
-      justResetRef.current = false;
     };
-  }, []); // No dependencies - only initialize once
+  }, []);
 
   const setOptimalZoom = useCallback((candleData: CandlestickData[], force: boolean = false) => {
     if (!chartRef.current || !candleData.length) return;
@@ -334,136 +582,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }
   }, [calculateOptimalVisibleRange, dynamicView]);
 
-  // FIXED: Improved chart update function with better validation
-  const updateChart = useCallback((candleData: CandlestickData[], volumeData: HistogramData[]) => {
-    if (!isChartReady || !candlestickSeriesRef.current || !volumeSeriesRef.current || isUpdatingRef.current) {
-      return;
-    }
-
-    const now = Date.now();
-    const timeSinceLastUpdate = now - lastUpdateRef.current;
-    
-    if (timeSinceLastUpdate < 33) {
-      if (updateThrottleRef.current) {
-        clearTimeout(updateThrottleRef.current);
-      }
-      
-      updateThrottleRef.current = setTimeout(() => {
-        updateChart(candleData, volumeData);
-      }, 33 - timeSinceLastUpdate);
-      return;
-    }
-
-    isUpdatingRef.current = true;
-    lastUpdateRef.current = now;
-
-    try {
-      const incomingCandleCount = candleData.length;
-
-      // Track when chart starts building
-      if (incomingCandleCount > 0 && lastCandleCountRef.current === 0) {
-        setIsLiveBuilding(true);
-        setBuildingStartTime(Date.now());
-        setChartStatus('building');
-        console.log('📈 Chart building started');
-      }
-
-      // FIXED: Improved data validation - more lenient after reset
-      let isOrdered = true;
-      let validationDetails = {
-        totalCandles: candleData.length,
-        justReset: justResetRef.current,
-        validationSkipped: false,
-        orderingIssues: 0
-      };
-
-      if (candleData.length > 1) {
-        // After reset, be more lenient with the first few candles
-        const checkLength = justResetRef.current ? Math.min(3, candleData.length) : Math.min(candleData.length, 10);
-        
-        for (let i = 1; i < checkLength; i++) {
-          if (candleData[i].time <= candleData[i - 1].time) {
-            validationDetails.orderingIssues++;
-            
-            // If we just reset, allow some timestamp issues in first few candles
-            if (justResetRef.current && i <= 2) {
-              console.log(`⚠️ Post-reset timestamp issue at index ${i}, but allowing due to recent reset`);
-              continue;
-            }
-            
-            isOrdered = false;
-            break;
-          }
-        }
-      }
-
-      // FIXED: More detailed logging for validation failures
-      if (!isOrdered) {
-        console.warn('⚠️ Chart data validation failed:', {
-          ...validationDetails,
-          firstFewTimes: candleData.slice(0, 5).map(c => ({ time: c.time, date: new Date(Number(c.time) * 1000).toISOString() })),
-          recommendation: 'Check backend candle generation timestamps'
-        });
-        
-        // If we just reset and it's still failing, try to fix the data
-        if (justResetRef.current && candleData.length <= 5) {
-          console.log('🔧 Attempting to fix post-reset data by removing duplicates and sorting');
-          
-          // Remove duplicates and ensure proper ordering
-          const uniqueCandles = candleData.filter((candle, index, arr) => 
-            index === 0 || candle.time > arr[index - 1].time
-          );
-          
-          if (uniqueCandles.length > 0) {
-            console.log(`🔧 Fixed data: ${candleData.length} → ${uniqueCandles.length} candles`);
-            candlestickSeriesRef.current.setData(uniqueCandles);
-            volumeSeriesRef.current.setData(volumeData.slice(0, uniqueCandles.length));
-            
-            setOptimalZoom(uniqueCandles);
-            lastCandleCountRef.current = uniqueCandles.length;
-            setCandleCount(uniqueCandles.length);
-            
-            // Clear the just reset flag after successful fix
-            justResetRef.current = false;
-            
-            isUpdatingRef.current = false;
-            return;
-          }
-        }
-        
-        isUpdatingRef.current = false;
-        return;
-      }
-
-      // Data passed validation - clear the just reset flag
-      if (justResetRef.current) {
-        console.log('✅ Post-reset data validation passed, clearing reset flag');
-        justResetRef.current = false;
-      }
-
-      // Update chart data
-      candlestickSeriesRef.current.setData(candleData);
-      volumeSeriesRef.current.setData(volumeData);
-
-      setOptimalZoom(candleData);
-
-      lastCandleCountRef.current = incomingCandleCount;
-      setCandleCount(incomingCandleCount);
-
-      if (incomingCandleCount >= 50) {
-        setChartStatus('ready');
-      } else if (incomingCandleCount > 0) {
-        setChartStatus('building');
-      }
-
-    } catch (error) {
-      console.error('❌ Error updating chart:', error);
-      setChartStatus('error');
-    } finally {
-      isUpdatingRef.current = false;
-    }
-  }, [isChartReady, setOptimalZoom]);
-
   // Handle window resize
   useEffect(() => {
     const handleResize = () => {
@@ -483,6 +601,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Control functions
   const resetView = useCallback(() => {
     try {
       if (chartRef.current) {
@@ -519,41 +638,46 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }
   }, [convertPriceHistory, setOptimalZoom]);
 
+  // ENHANCED: Building stats with reset coordination info
   const buildingStats = useMemo(() => {
-    if (!isLiveBuilding || !buildingStartTime) {
+    if (!chartState.isLiveBuilding || !chartState.buildingStartTime) {
       return null;
     }
 
-    const elapsedMs = Date.now() - buildingStartTime;
+    const elapsedMs = Date.now() - chartState.buildingStartTime;
     const elapsedSeconds = Math.floor(elapsedMs / 1000);
-    const candlesPerSecond = candleCount > 0 && elapsedSeconds > 0 
-      ? (candleCount / elapsedSeconds).toFixed(2) 
+    const candlesPerSecond = chartState.candleCount > 0 && elapsedSeconds > 0 
+      ? (chartState.candleCount / elapsedSeconds).toFixed(2) 
       : '0.00';
 
     return {
       elapsed: elapsedSeconds,
       candlesPerSecond: candlesPerSecond,
-      totalCandles: candleCount
+      totalCandles: chartState.candleCount,
+      isPostReset: !!chartState.lastResetTime && 
+                   chartState.buildingStartTime > chartState.lastResetTime
     };
-  }, [isLiveBuilding, buildingStartTime, candleCount]);
+  }, [chartState]);
 
   const getStatusInfo = () => {
-    switch (chartStatus) {
+    switch (chartState.status) {
       case 'initializing':
         return { color: 'bg-yellow-900 text-yellow-300', icon: '⚡', text: 'Initializing...' };
       case 'empty':
         return { color: 'bg-blue-900 text-blue-300', icon: '⏳', text: 'Ready for data' };
+      case 'resetting':
+        return { color: 'bg-purple-900 text-purple-300', icon: '🔄', text: 'Resetting...' };
       case 'building':
         return { 
           color: 'bg-green-900 text-green-300', 
           icon: '📈', 
-          text: `Building: ${candleCount} candles`
+          text: `Building: ${chartState.candleCount} candles`
         };
       case 'ready':
         return { 
           color: 'bg-green-900 text-green-300', 
           icon: '✅', 
-          text: `Live: ${candleCount} candles`
+          text: `Live: ${chartState.candleCount} candles`
         };
       case 'error':
         return { color: 'bg-red-900 text-red-300', icon: '❌', text: 'Error' };
@@ -574,29 +698,31 @@ const PriceChart: React.FC<PriceChartProps> = ({
           
           <div className={`flex items-center space-x-2 px-3 py-1 rounded-full text-xs font-medium ${statusInfo.color}`}>
             <div className={`w-2 h-2 rounded-full ${
-              chartStatus === 'building' || chartStatus === 'ready' ? 'bg-green-400 animate-pulse' :
-              chartStatus === 'empty' ? 'bg-blue-400 animate-pulse' :
-              chartStatus === 'error' ? 'bg-red-400' :
+              chartState.status === 'building' || chartState.status === 'ready' ? 'bg-green-400 animate-pulse' :
+              chartState.status === 'empty' ? 'bg-blue-400 animate-pulse' :
+              chartState.status === 'resetting' ? 'bg-purple-400 animate-pulse' :
+              chartState.status === 'error' ? 'bg-red-400' :
               'bg-yellow-400 animate-pulse'
             }`}></div>
             <span>{statusInfo.icon} {statusInfo.text}</span>
           </div>
           
-          {/* Simple reset indicator */}
+          {/* ENHANCED: Reset coordination indicator */}
           <div className="bg-green-900 bg-opacity-75 px-3 py-1 rounded text-xs text-green-300">
-            ✅ Fixed Validation
+            ✅ Enhanced Reset
           </div>
           
-          {/* Post-reset indicator */}
-          {justResetRef.current && (
-            <div className="bg-orange-900 bg-opacity-75 px-3 py-1 rounded text-xs text-orange-300">
-              🔧 Post-Reset
+          {/* Reset phase indicator */}
+          {chartState.resetCoordination.isInResetPhase && (
+            <div className="bg-purple-900 bg-opacity-75 px-3 py-1 rounded text-xs text-purple-300">
+              🔄 Reset Phase
             </div>
           )}
           
-          {isLiveBuilding && buildingStats && (
+          {buildingStats && (
             <div className="bg-green-900 bg-opacity-75 px-3 py-1 rounded text-xs text-green-300">
               🔴 LIVE: {buildingStats.candlesPerSecond}/sec
+              {buildingStats.isPostReset && ' (Post-Reset)'}
             </div>
           )}
           
@@ -608,10 +734,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
               </span>
             </div>
           )}
-          
-          <div className="bg-gray-900 bg-opacity-75 px-2 py-1 rounded text-xs text-gray-400">
-            FPS: {Math.round(1000 / Math.max(Date.now() - lastUpdateRef.current, 16))}
-          </div>
         </div>
       </div>
       
@@ -637,27 +759,21 @@ const PriceChart: React.FC<PriceChartProps> = ({
         >
           📏
         </button>
-        <button
-          className={`px-3 py-1 text-xs rounded transition ${
-            dynamicView 
-              ? 'bg-green-700 bg-opacity-80 text-green-300 hover:bg-opacity-100' 
-              : 'bg-gray-700 bg-opacity-80 text-gray-300 hover:bg-opacity-100'
-          }`}
-          title="Dynamic view enabled"
-        >
-          {dynamicView ? '📍 Live' : '📌 Static'}
-        </button>
       </div>
       
       <div className="absolute bottom-4 left-4 pointer-events-none">
         <div className="text-gray-400 text-xs space-y-1">
-          <div>📊 Candles: {candleCount}</div>
+          <div>📊 Candles: {chartState.candleCount}</div>
           <div>🔄 Trades: {trades.length}</div>
-          <div>🎯 Status: {chartStatus}</div>
-          <div>🏗️ Building: {isLiveBuilding ? 'YES' : 'NO'}</div>
+          <div>🎯 Status: {chartState.status}</div>
+          <div>🏗️ Building: {chartState.isLiveBuilding ? 'YES' : 'NO'}</div>
           <div>⚡ Updates: {isUpdatingRef.current ? 'ACTIVE' : 'IDLE'}</div>
-          <div>✅ Reset: FIXED</div>
-          <div>🔧 Post-Reset: {justResetRef.current ? 'YES' : 'NO'}</div>
+          <div>✅ Reset: ENHANCED</div>
+          <div>🔧 Reset Phase: {chartState.resetCoordination.isInResetPhase ? 'YES' : 'NO'}</div>
+          <div>📊 Validation Passes: {chartState.resetCoordination.postResetValidationPasses}</div>
+          {chartState.lastResetTime && (
+            <div>🕐 Last Reset: {Math.floor((Date.now() - chartState.lastResetTime) / 1000)}s ago</div>
+          )}
           <div>🎯 Pro Zoom: {initialZoomSetRef.current ? 'SET' : 'PENDING'}</div>
           {buildingStats && (
             <>
@@ -668,7 +784,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         </div>
       </div>
       
-      {chartStatus === 'error' && (
+      {chartState.status === 'error' && (
         <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75">
           <div className="bg-red-900 text-red-100 p-6 rounded-lg max-w-md text-center">
             <h3 className="font-bold text-lg mb-2">Chart Error</h3>
@@ -683,20 +799,20 @@ const PriceChart: React.FC<PriceChartProps> = ({
         </div>
       )}
       
-      {chartStatus === 'empty' && (
+      {chartState.status === 'empty' && (
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-center text-gray-400">
             <div className="text-6xl mb-6">📊</div>
-            <h3 className="text-xl font-bold mb-3">Professional Chart Ready</h3>
-            <p className="text-sm mb-4">Fixed validation system - handles post-reset data</p>
+            <h3 className="text-xl font-bold mb-3">Enhanced Chart Ready</h3>
+            <p className="text-sm mb-4">Advanced reset coordination system active</p>
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
                 <span>Waiting for backend candle data...</span>
               </div>
-              <div>✅ Fixed data validation</div>
-              <div>🔧 Post-reset tolerance</div>
-              <div>⚡ 30fps update throttling</div>
+              <div>✅ Enhanced reset coordination</div>
+              <div>🔧 Timestamp validation with auto-fix</div>
+              <div>⚡ Smart update throttling</div>
               <div>📈 Optimal candle proportions</div>
               <div>🔧 TradingView-style display</div>
             </div>
@@ -704,15 +820,31 @@ const PriceChart: React.FC<PriceChartProps> = ({
         </div>
       )}
 
-      {chartStatus === 'building' && candleCount > 0 && (
+      {chartState.status === 'resetting' && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50">
+          <div className="text-center text-purple-400">
+            <div className="text-6xl mb-6 animate-spin">🔄</div>
+            <h3 className="text-xl font-bold mb-3">Coordinated Reset in Progress</h3>
+            <p className="text-sm mb-4">Clearing chart and preparing for new data</p>
+            <div className="space-y-2 text-xs">
+              <div>🔄 Reset coordination active</div>
+              <div>📊 Chart data clearing</div>
+              <div>⏳ Preparing for fresh data</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {chartState.status === 'building' && chartState.candleCount > 0 && (
         <div className="absolute top-20 left-4 pointer-events-none">
           <div className="bg-green-900 bg-opacity-75 px-4 py-2 rounded-lg">
             <div className="text-green-300 text-sm font-medium">
-              🔴 PROFESSIONAL LIVE BUILDING: {candleCount} candles
+              🔴 ENHANCED LIVE BUILDING: {chartState.candleCount} candles
             </div>
             {buildingStats && (
               <div className="text-green-400 text-xs mt-1">
-                {buildingStats.elapsed}s elapsed • {buildingStats.candlesPerSecond} candles/sec • Fixed validation system
+                {buildingStats.elapsed}s elapsed • {buildingStats.candlesPerSecond} candles/sec • Enhanced reset coordination
+                {buildingStats.isPostReset && ' • Post-Reset Build'}
               </div>
             )}
           </div>
