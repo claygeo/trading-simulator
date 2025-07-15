@@ -1,4 +1,4 @@
-// backend/src/services/simulation/types.ts - ENHANCED: Dynamic Price Range Support
+// backend/src/services/simulation/types.ts - ENHANCED: Your System + Candle Coordination Support
 import { TraderProfile } from '../../types/traders';
 
 // Export TraderProfile from main types
@@ -152,7 +152,7 @@ export interface TraderPosition {
   currentPnlPercentage: number; // unrealized P&L as percentage
 }
 
-// ULTRA FAST: Enhanced PricePoint interface for rapid candle generation
+// ENHANCED: PricePoint interface for OHLCV candle data with validation
 export interface PricePoint {
   timestamp: number; // when the candle started
   open: number; // opening price
@@ -160,6 +160,52 @@ export interface PricePoint {
   low: number; // lowest price in period
   close: number; // closing price
   volume: number; // total volume traded
+}
+
+// NEW: CandleData interface for enhanced candle management
+export interface CandleData extends PricePoint {
+  // Additional metadata for candle coordination
+  interval?: number; // candle interval in milliseconds
+  priceCategory?: PriceRangeCategory; // price category for this candle
+  isComplete?: boolean; // whether candle is finalized
+  tradeCount?: number; // number of trades in this candle
+  vwap?: number; // volume-weighted average price
+}
+
+// NEW: CandleUpdateCallback interface for coordination
+export interface CandleUpdateCallback {
+  queueUpdate(simulationId: string, timestamp: number, price: number, volume: number): void;
+  setSimulationSpeed(simulationId: string, speedMultiplier: number): void;
+  clearCandles(simulationId: string): void;
+  ensureCleanStart(simulationId: string): void;
+}
+
+// NEW: CandleManagerStats interface
+export interface CandleManagerStats {
+  candleCount: number;
+  lastCandleTime: number;
+  currentCandle: boolean;
+  isResetting: boolean;
+  priceCategory: PriceRangeCategory;
+  candleInterval: number;
+  lastPrice: number;
+  totalVolume: number;
+  coordinatorStats: any;
+}
+
+// NEW: CandleProgress interface
+export interface CandleProgress {
+  exists: boolean;
+  timestamp?: number;
+  duration?: number;
+  progress?: number;
+  priceRange?: { 
+    high: number; 
+    low: number; 
+    open: number; 
+    close: number; 
+  };
+  volume?: number;
 }
 
 // Enhanced MarketConditions interface
@@ -342,6 +388,18 @@ export const SIMULATION_CONSTANTS = {
     MAX_CUSTOM_PRICE: 10000, // maximum custom price
     DEFAULT_RANGE: 'random' as const, // default to random selection
     RANGE_TRANSITION_SMOOTHING: 0.05 // 5% smoothing between ranges
+  },
+
+  // NEW: Candle coordination constants
+  CANDLE_COORDINATION: {
+    DEFAULT_INTERVAL: 10000, // 10 second default
+    MIN_INTERVAL: 3000, // 3 second minimum
+    MAX_INTERVAL: 15000, // 15 second maximum
+    COORDINATOR_FLUSH_INTERVAL: 25, // 25ms coordinator update interval
+    MAX_CANDLE_HISTORY: 2000, // maximum candles to keep
+    TIMESTAMP_TOLERANCE: 5000, // 5 second tolerance for timestamps
+    VALIDATION_ENABLED: true, // enable OHLC validation
+    AUTO_FIX_TIMESTAMPS: true // automatically fix timestamp issues
   }
 };
 
@@ -385,6 +443,20 @@ export interface IOrderBookManager {
   generateInitialOrderBook(side: 'bids' | 'asks', currentPrice: number, liquidity: number): OrderBookLevel[];
   adjustOrderBookForPriceChange(orderBook: OrderBook, oldPrice: number, newPrice: number): void;
   getMarketDepth(simulation: SimulationState, levels: number): { bidDepth: number; askDepth: number };
+}
+
+// NEW: CandleManager interface for coordination
+export interface ICandleManager {
+  initialize(simulationStartTime: number, initialPrice?: number): void;
+  updateCandle(timestamp: number, price: number, volume: number): void;
+  getCandles(limit?: number): PricePoint[];
+  setCandles(candles: PricePoint[]): void;
+  clear(): void;
+  reset(): Promise<void>;
+  shutdown(): void;
+  getStats(): CandleManagerStats;
+  getCurrentCandleProgress(): CandleProgress;
+  forceFinalizeCurrent(): boolean;
 }
 
 // Enhanced SimulationEvent interface
@@ -431,16 +503,27 @@ export interface DynamicPricingConfig {
   defaultPriceRange: PriceRangeCategory | 'random';
 }
 
+// NEW: Candle coordination configuration
+export interface CandleCoordinationConfig {
+  enableTimestampCoordination: boolean; // enable timestamp coordination
+  enableOHLCValidation: boolean; // validate OHLC relationships
+  enableAutoFix: boolean; // automatically fix issues
+  flushInterval: number; // coordinator update frequency
+  maxCandleHistory: number; // maximum candles to keep
+  timestampTolerance: number; // tolerance for timestamp drift
+}
+
 // ULTRA FAST: Comprehensive configuration for maximum activity mode
 export interface MaximumActivityConfig {
   candleConfig: UltraFastCandleConfig;
   tradingConfig: RapidTradingConfig;
   marketConfig: AggressiveMarketConfig;
   performanceConfig: PerformanceConfig;
-  pricingConfig: DynamicPricingConfig; // NEW: Dynamic pricing config
+  pricingConfig: DynamicPricingConfig;
+  coordinationConfig: CandleCoordinationConfig; // NEW: Coordination config
 }
 
-// Export enhanced ultra-fast configuration with dynamic pricing
+// Export enhanced ultra-fast configuration with candle coordination
 export const ULTRA_FAST_CONFIG: MaximumActivityConfig = {
   candleConfig: {
     minInterval: 3000, // 3 seconds
@@ -481,10 +564,18 @@ export const ULTRA_FAST_CONFIG: MaximumActivityConfig = {
       max: 10000
     },
     defaultPriceRange: 'random'
+  },
+  coordinationConfig: {
+    enableTimestampCoordination: true,
+    enableOHLCValidation: true,
+    enableAutoFix: true,
+    flushInterval: 25, // 25ms
+    maxCandleHistory: 2000,
+    timestampTolerance: 5000 // 5 seconds
   }
 };
 
-// NEW: Helper functions for dynamic pricing
+// NEW: Enhanced helper functions for dynamic pricing with candle coordination
 export const PricingHelpers = {
   // Get price range definition by category
   getPriceRangeDefinition(category: PriceRangeCategory): PriceRangeDefinition {
@@ -532,5 +623,146 @@ export const PricingHelpers = {
     const category = this.categorizePriceValue(price);
     const multiplier = SIMULATION_CONSTANTS.PRICE_RANGES[category].volatilityMultiplier;
     return baseVolatility * multiplier;
+  },
+
+  // NEW: Calculate optimal candle interval for price category
+  calculateOptimalCandleInterval(price: number): number {
+    const category = this.categorizePriceValue(price);
+    const baseInterval = 8000; // 8 second base
+    const multiplier = SIMULATION_CONSTANTS.PRICE_RANGES[category].volatilityMultiplier;
+    
+    // Higher volatility = shorter intervals for better capture
+    const interval = baseInterval / Math.sqrt(multiplier);
+    
+    // Clamp to reasonable range
+    return Math.max(
+      SIMULATION_CONSTANTS.CANDLE_COORDINATION.MIN_INTERVAL,
+      Math.min(
+        SIMULATION_CONSTANTS.CANDLE_COORDINATION.MAX_INTERVAL,
+        interval
+      )
+    );
+  },
+
+  // NEW: Get candle interval by category
+  getCandleIntervalForCategory(category: PriceRangeCategory): number {
+    const intervals = {
+      micro: 6000,   // 6 seconds for high volatility
+      small: 8000,   // 8 seconds
+      mid: 10000,    // 10 seconds
+      large: 12000,  // 12 seconds
+      mega: 15000    // 15 seconds for stable prices
+    };
+    return intervals[category];
   }
 };
+
+// NEW: WebSocket message types for candle coordination
+export interface WebSocketMessage {
+  type: 'price_update' | 'trade' | 'candle_update' | 'simulation_status' | 'tps_metrics' | 'connection_test';
+  timestamp: number;
+  data?: any;
+  simulationId?: string;
+}
+
+export interface CandleUpdateMessage extends WebSocketMessage {
+  type: 'candle_update';
+  data: {
+    priceHistory: PricePoint[];
+    speed: number;
+    candleCount: number;
+    isLive: boolean;
+    timestampCoordinated: boolean;
+    connectedCoordination?: boolean;
+    priceCategory?: PriceRangeCategory;
+  };
+}
+
+export interface PriceUpdateMessage extends WebSocketMessage {
+  type: 'price_update';
+  data: {
+    price: number;
+    orderBook: OrderBook;
+    priceHistory: PricePoint[];
+    activePositions: TraderPosition[];
+    recentTrades: Trade[];
+    traderRankings: Trader[];
+    timeframe?: Timeframe;
+    externalMarketMetrics?: ExternalMarketMetrics;
+    totalTradesProcessed: number;
+    currentTPSMode?: TPSMode;
+    priceCategory?: PriceRangeCategory;
+  };
+}
+
+export interface TradeMessage extends WebSocketMessage {
+  type: 'trade';
+  data: Trade;
+}
+
+export interface SimulationStatusMessage extends WebSocketMessage {
+  type: 'simulation_status';
+  data: {
+    isRunning: boolean;
+    isPaused: boolean;
+    speed: number;
+    currentPrice: number;
+    candleCount: number;
+    tradeCount: number;
+    currentTPSMode?: TPSMode;
+    priceCategory?: PriceRangeCategory;
+  };
+}
+
+// NEW: Validation and error types for candle coordination
+export interface CandleValidationResult {
+  isValid: boolean;
+  errors: string[];
+  warnings: string[];
+  fixedCandles?: PricePoint[];
+  originalCount: number;
+  validCount: number;
+}
+
+export interface SimulationError {
+  code: string;
+  message: string;
+  details?: any;
+  timestamp: number;
+  simulationId?: string;
+  recoverable: boolean;
+}
+
+// NEW: Performance monitoring for candle coordination
+export interface PerformanceMetrics {
+  candleGenerationRate: number; // candles per second
+  updateLatency: number; // milliseconds
+  memoryUsage: number; // bytes
+  cpuUsage: number; // percentage
+  activeSimulations: number;
+  totalCandles: number;
+  errorRate: number; // errors per minute
+  coordinationEfficiency: number; // coordination success rate
+  timestamp: number;
+}
+
+// NEW: Market data aggregation with candle coordination
+export interface MarketDataSummary {
+  simulationId: string;
+  currentPrice: number;
+  priceCategory: PriceRangeCategory;
+  priceChange24h: number;
+  priceChangePercent24h: number;
+  volume24h: number;
+  high24h: number;
+  low24h: number;
+  candleCount: number;
+  candleInterval: number;
+  lastUpdated: number;
+  marketConditions: MarketConditions;
+  isActive: boolean;
+  coordinationStatus: 'active' | 'inactive' | 'error';
+}
+
+// Export all enhanced types
+export * from './types';

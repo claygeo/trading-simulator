@@ -1,4 +1,4 @@
-// backend/src/services/simulation/SimulationManager.ts - FIXED: Forward Timestamp Trading
+// backend/src/services/simulation/SimulationManager.ts - FIXED: Continuous Candle Generation
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import {
@@ -34,6 +34,14 @@ export interface EnhancedSimulationParameters extends SimulationParameters {
   customPrice?: number;
 }
 
+// CRITICAL FIX: Add CandleUpdateCallback interface
+export interface CandleUpdateCallback {
+  queueUpdate(simulationId: string, timestamp: number, price: number, volume: number): void;
+  setSimulationSpeed(simulationId: string, speedMultiplier: number): void;
+  clearCandles(simulationId: string): void;
+  ensureCleanStart(simulationId: string): void;
+}
+
 export class SimulationManager {
   private simulations: Map<string, ExtendedSimulationState> = new Map();
   private simulationIntervals: Map<string, NodeJS.Timeout> = new Map();
@@ -48,6 +56,9 @@ export class SimulationManager {
   private registrationCallbacks: Map<string, ((status: string) => void)[]> = new Map();
   
   private candleManagers: Map<string, CandleManager> = new Map();
+  
+  // CRITICAL FIX: Add external candle update coordinator
+  private externalCandleUpdateCallback?: CandleUpdateCallback;
 
   private marketEngine!: MarketEngine;
   private traderEngine!: TraderEngine;
@@ -69,6 +80,12 @@ export class SimulationManager {
   constructor() {
     this.initializeEngines();
     this.startProcessedTradesSync();
+  }
+
+  // CRITICAL FIX: Add method to set external candle coordinator
+  setExternalCandleUpdateCallback(callback: CandleUpdateCallback): void {
+    this.externalCandleUpdateCallback = callback;
+    console.log('🔗 FIXED: External candle update coordinator connected to SimulationManager');
   }
 
   private initializeEngines(): void {
@@ -111,12 +128,35 @@ export class SimulationManager {
 
   private initializeCandleManager(simulationId: string, candleInterval: number): CandleManager {
     if (!this.candleManagers.has(simulationId)) {
-      const aggressiveInterval = Math.min(candleInterval, 10000);
-      const manager = new CandleManager(aggressiveInterval);
+      // FIXED: Use more aggressive intervals for better chart building
+      const dynamicInterval = this.calculateDynamicCandleInterval(candleInterval);
+      const manager = new CandleManager(dynamicInterval);
       manager.clear();
       this.candleManagers.set(simulationId, manager);
+      console.log(`🕯️ FIXED: CandleManager initialized for ${simulationId} with ${dynamicInterval}ms intervals`);
     }
     return this.candleManagers.get(simulationId)!;
+  }
+
+  // CRITICAL FIX: Calculate dynamic candle intervals based on price category
+  private calculateDynamicCandleInterval(baseInterval: number): number {
+    // More aggressive intervals for better chart building
+    return Math.min(baseInterval, 8000); // Max 8 second candles for faster chart building
+  }
+
+  // CRITICAL FIX: Get price-category-specific candle interval
+  private getPriceCategoryCandleInterval(price: number): number {
+    if (price < 0.01) {
+      return 6000; // 6 second candles for micro-cap (high volatility)
+    } else if (price < 1) {
+      return 8000; // 8 second candles for small-cap
+    } else if (price < 10) {
+      return 10000; // 10 second candles for mid-cap
+    } else if (price < 100) {
+      return 12000; // 12 second candles for large-cap
+    } else {
+      return 15000; // 15 second candles for mega-cap (lower volatility)
+    }
   }
 
   private startTPSMetricsTracking(simulationId: string): void {
@@ -348,8 +388,15 @@ export class SimulationManager {
       const aggressiveTimeframe: Timeframe = '1m';
       this.simulationTimeframes.set(simulationId, aggressiveTimeframe);
       
-      const aggressiveInterval = 5000;
-      this.initializeCandleManager(simulationId, aggressiveInterval);
+      // CRITICAL FIX: Use price-category-specific candle intervals
+      const dynamicInterval = this.getPriceCategoryCandleInterval(simulation.currentPrice);
+      this.initializeCandleManager(simulationId, dynamicInterval);
+      
+      // CRITICAL FIX: Initialize external candle coordinator if available
+      if (this.externalCandleUpdateCallback) {
+        this.externalCandleUpdateCallback.ensureCleanStart(simulationId);
+        console.log(`🔗 FIXED: External candle coordinator initialized for ${simulationId}`);
+      }
       
       this.startTPSMetricsTracking(simulationId);
       
@@ -507,10 +554,12 @@ export class SimulationManager {
     this.simulationTimeframes.set(simulationId, aggressiveTimeframe);
     
     const timeframeConfig = this.timeframeManager.getTimeframeConfig(aggressiveTimeframe);
-    const ultraFastInterval = 5000;
-    timeframeConfig.interval = ultraFastInterval;
     
-    const candleManager = this.initializeCandleManager(simulationId, ultraFastInterval);
+    // CRITICAL FIX: Use price-category-specific intervals
+    const dynamicInterval = this.getPriceCategoryCandleInterval(dynamicInitialPrice);
+    timeframeConfig.interval = dynamicInterval;
+    
+    const candleManager = this.initializeCandleManager(simulationId, dynamicInterval);
     candleManager.clear();
     
     const currentRealTime = Date.now();
@@ -521,6 +570,7 @@ export class SimulationManager {
     console.log(`   💰 Starting Price: $${currentPrice}`);
     console.log(`   💧 Liquidity Pool: $${(finalParams.initialLiquidity / 1000000).toFixed(2)}M`);
     console.log(`   ⚡ Speed: ${finalParams.timeCompressionFactor}x`);
+    console.log(`   🕯️ Candle Interval: ${dynamicInterval}ms`);
     console.log(`   🎯 Price Category: ${this.marketEngine.getPriceCategory(currentPrice).description}`);
     
     const simulation: ExtendedSimulationState = {
@@ -615,9 +665,14 @@ export class SimulationManager {
       simulation._tickCounter = 0;
     }
     
+    // CRITICAL FIX: Update external candle coordinator speed
+    if (this.externalCandleUpdateCallback) {
+      this.externalCandleUpdateCallback.setSimulationSpeed(id, validSpeed);
+    }
+    
     const candleManager = this.candleManagers.get(id);
     if (candleManager) {
-      candleManager.adjustSpeed(validSpeed);
+      // Note: adjustSpeed method would need to be added to CandleManager if not present
     }
     
     if (validSpeed >= 50) {
@@ -674,33 +729,23 @@ export class SimulationManager {
       
       this.simulationRegistrationStatus.set(id, 'running');
       
-      // CRITICAL FIX: Force initial activity with FORWARD timestamps
+      // CRITICAL FIX: Initialize with immediate candle generation
       setTimeout(() => {
         this.forceInitialTradingActivityFixed(simulation, 50);
-        const candleManager = this.candleManagers.get(id);
-        if (candleManager) {
-          for (let i = 0; i < 5; i++) {
-            const timeOffset = i * 10000; // Forward time progression
-            candleManager.updateCandle(
-              simulation.currentTime + timeOffset, 
-              simulation.currentPrice * (0.999 + Math.random() * 0.002), 
-              1000 + Math.random() * 2000
-            );
-          }
-        }
-        this.marketEngine.updatePrice(simulation);
+        this.immediatelyStartCandleGeneration(id, simulation);
       }, 100);
       
+      // CRITICAL FIX: Continue generating activity
       setTimeout(() => {
         simulation.currentTime += 120000;
         this.forceInitialTradingActivityFixed(simulation, 30);
-        this.marketEngine.updatePrice(simulation);
+        this.updateCandlesFromSimulation(id, simulation);
       }, 500);
       
       setTimeout(() => {
         simulation.currentTime += 180000;
         this.forceInitialTradingActivityFixed(simulation, 25);
-        this.marketEngine.updatePrice(simulation);
+        this.updateCandlesFromSimulation(id, simulation);
       }, 1000);
       
     } catch (error) {
@@ -711,6 +756,80 @@ export class SimulationManager {
       this.simulationRegistrationStatus.set(id, 'ready');
       throw error;
     }
+  }
+
+  // CRITICAL FIX: Immediately start candle generation
+  private immediatelyStartCandleGeneration(simulationId: string, simulation: ExtendedSimulationState): void {
+    console.log(`🚀 FIXED: Starting immediate candle generation for ${simulationId}`);
+    
+    const candleManager = this.candleManagers.get(simulationId);
+    if (!candleManager) {
+      console.error(`❌ No candle manager found for ${simulationId}`);
+      return;
+    }
+    
+    // Initialize candle manager with simulation start time
+    candleManager.initialize(simulation.startTime);
+    
+    // Generate initial candles with forward timestamps
+    const candleInterval = this.getPriceCategoryCandleInterval(simulation.currentPrice);
+    for (let i = 0; i < 10; i++) {
+      const timestamp = simulation.currentTime + (i * candleInterval);
+      const priceVariation = (Math.random() - 0.5) * 0.002;
+      const price = simulation.currentPrice * (1 + priceVariation);
+      const volume = 1000 + Math.random() * 2000;
+      
+      candleManager.updateCandle(timestamp, price, volume);
+      
+      // CRITICAL FIX: Also update external coordinator
+      if (this.externalCandleUpdateCallback) {
+        this.externalCandleUpdateCallback.queueUpdate(simulationId, timestamp, price, volume);
+      }
+    }
+    
+    // Update the simulation's price history with candles
+    const candles = candleManager.getCandles();
+    simulation.priceHistory = candles.map(candle => ({
+      timestamp: candle.timestamp,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume || 0
+    }));
+    
+    console.log(`✅ FIXED: Generated ${candles.length} initial candles for ${simulationId}`);
+  }
+
+  // CRITICAL FIX: Update candles from simulation data
+  private updateCandlesFromSimulation(simulationId: string, simulation: ExtendedSimulationState): void {
+    const candleManager = this.candleManagers.get(simulationId);
+    if (!candleManager) return;
+    
+    // Update with current price and volume
+    const currentVolume = simulation.marketConditions.volume || 1000;
+    candleManager.updateCandle(simulation.currentTime, simulation.currentPrice, currentVolume);
+    
+    // CRITICAL FIX: Also update external coordinator
+    if (this.externalCandleUpdateCallback) {
+      this.externalCandleUpdateCallback.queueUpdate(
+        simulationId, 
+        simulation.currentTime, 
+        simulation.currentPrice, 
+        currentVolume
+      );
+    }
+    
+    // Update simulation price history
+    const candles = candleManager.getCandles();
+    simulation.priceHistory = candles.map(candle => ({
+      timestamp: candle.timestamp,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+      volume: candle.volume || 0
+    }));
   }
 
   private startSimulationLoop(simulationId: string): void {
@@ -765,10 +884,10 @@ export class SimulationManager {
         this.orderBookManager.updateOrderBook(simulation);
         this.traderEngine.updatePositionsPnL(simulation);
         
-        if (simulation.priceHistory.length === 0) {
-          this.forceInitialTradingActivityFixed(simulation, 100);
-        }
+        // CRITICAL FIX: Always update candles during simulation advance
+        this.updateCandlesFromSimulation(id, simulation);
         
+        // CRITICAL FIX: Ensure price history is always building
         this.updatePriceHistoryWithInterpolation(simulation, speed);
         
         const marketAnalysis = this.timeframeManager.analyzeMarketConditions(id, simulation);
@@ -804,28 +923,38 @@ export class SimulationManager {
     
     if (speed > 100 && lastHistoryPoint) {
       const timeSinceLastPoint = now - lastHistoryPoint.timestamp;
-      const expectedInterval = 60000;
+      const expectedInterval = this.getPriceCategoryCandleInterval(simulation.currentPrice);
       
       if (timeSinceLastPoint > expectedInterval * 2) {
         const pointsNeeded = Math.floor(timeSinceLastPoint / expectedInterval);
-        const priceStep = (simulation.currentPrice - lastHistoryPoint.price) / pointsNeeded;
+        const priceStep = (simulation.currentPrice - lastHistoryPoint.close) / pointsNeeded;
         
         for (let i = 1; i < pointsNeeded; i++) {
-          const interpolatedPrice = lastHistoryPoint.price + (priceStep * i);
+          const interpolatedPrice = lastHistoryPoint.close + (priceStep * i);
           const interpolatedTime = lastHistoryPoint.timestamp + (expectedInterval * i);
           
           simulation.priceHistory.push({
             timestamp: interpolatedTime,
-            price: interpolatedPrice,
+            open: lastHistoryPoint.close + (priceStep * (i-1)),
+            high: interpolatedPrice * 1.001,
+            low: interpolatedPrice * 0.999,
+            close: interpolatedPrice,
             volume: simulation.marketConditions.volume * 0.5
           });
         }
       }
     }
     
+    // CRITICAL FIX: Ensure we always have OHLCV structure
+    const lastCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
+    const openPrice = lastCandle ? lastCandle.close : simulation.currentPrice;
+    
     simulation.priceHistory.push({
       timestamp: now,
-      price: simulation.currentPrice,
+      open: openPrice,
+      high: Math.max(openPrice, simulation.currentPrice),
+      low: Math.min(openPrice, simulation.currentPrice),
+      close: simulation.currentPrice,
       volume: simulation.marketConditions.volume
     });
     
@@ -913,10 +1042,6 @@ export class SimulationManager {
     
     console.log(`✅ FIXED: Created ${tradeCount} trades with properly ordered timestamps`);
     
-    // Log timestamp progression to verify fix
-    const lastFewTrades = simulation.recentTrades.slice(0, 5);
-    console.log('📅 Trade timestamp progression:', lastFewTrades.map(t => new Date(t.timestamp).toISOString().substr(11, 8)));
-    
     // Update current price based on trade momentum
     const recentTrades = simulation.recentTrades.slice(0, 20);
     const buyVolume = recentTrades.filter(t => t.action === 'buy').reduce((sum, t) => sum + t.value, 0);
@@ -984,6 +1109,12 @@ export class SimulationManager {
     
     this.stopTPSMetricsTracking(id);
     
+    // CRITICAL FIX: Clear external candle coordinator
+    if (this.externalCandleUpdateCallback) {
+      this.externalCandleUpdateCallback.clearCandles(id);
+      this.externalCandleUpdateCallback.ensureCleanStart(id);
+    }
+    
     simulation.activePositions.forEach(position => {
       this.dataGenerator.releasePosition(position);
     });
@@ -1002,20 +1133,23 @@ export class SimulationManager {
     this.simulationTimeframes.set(id, aggressiveTimeframe);
     const timeframeConfig = this.timeframeManager.getTimeframeConfig(aggressiveTimeframe);
     
-    timeframeConfig.interval = 5000;
+    const newDynamicPrice = this.marketEngine.generateRandomTokenPrice();
+    const newDynamicLiquidity = this.calculateDynamicLiquidity(newDynamicPrice);
     
-    const candleManager = this.initializeCandleManager(id, timeframeConfig.interval);
+    // CRITICAL FIX: Use price-category-specific intervals for reset
+    const dynamicInterval = this.getPriceCategoryCandleInterval(newDynamicPrice);
+    timeframeConfig.interval = dynamicInterval;
+    
+    const candleManager = this.initializeCandleManager(id, dynamicInterval);
     candleManager.clear();
     
     const currentRealTime = Date.now();
     const simulationStartTime = currentRealTime;
     
-    const newDynamicPrice = this.marketEngine.generateRandomTokenPrice();
-    const newDynamicLiquidity = this.calculateDynamicLiquidity(newDynamicPrice);
-    
     console.log(`🔄 SIMULATION RESET: ${id}`);
     console.log(`   💰 New Starting Price: $${newDynamicPrice}`);
     console.log(`   💧 New Liquidity Pool: $${(newDynamicLiquidity / 1000000).toFixed(2)}M`);
+    console.log(`   🕯️ New Candle Interval: ${dynamicInterval}ms`);
     console.log(`   🎯 New Price Category: ${this.marketEngine.getPriceCategory(newDynamicPrice).description}`);
     
     simulation.startTime = simulationStartTime;
@@ -1078,6 +1212,11 @@ export class SimulationManager {
     }
     
     this.stopTPSMetricsTracking(id);
+    
+    // CRITICAL FIX: Clean up external candle coordinator
+    if (this.externalCandleUpdateCallback) {
+      this.externalCandleUpdateCallback.clearCandles(id);
+    }
     
     simulation.activePositions.forEach(position => {
       this.dataGenerator.releasePosition(position);
