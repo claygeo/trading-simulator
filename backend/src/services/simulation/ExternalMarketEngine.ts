@@ -1,4 +1,4 @@
-// backend/src/services/simulation/ExternalMarketEngine.ts - COMPLETE: Enhanced TPS Processing & Metrics
+// backend/src/services/simulation/ExternalMarketEngine.ts - FIXED: TPS Broadcasting Spam Eliminated
 import { v4 as uuidv4 } from 'uuid';
 import { 
   SimulationState, 
@@ -25,6 +25,12 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
   private rejectedOrdersCount: number = 0;
   private lastTPSCalculation: number = 0;
   private tpsHistory: number[] = [];
+  
+  // 🔧 FIXED: Add broadcast throttling to prevent TPS spam
+  private lastBroadcastTime: number = 0;
+  private lastBroadcastData: string = '';
+  private readonly BROADCAST_THROTTLE_MS = 3000; // Only broadcast every 3 seconds
+  private readonly MIN_ACTIVITY_THRESHOLD = 5; // Minimum activity to trigger broadcast
   
   constructor(
     private processOrder: (order: ExternalOrder, simulation: SimulationState) => Trade | null,
@@ -169,6 +175,10 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
     this.rejectedOrdersCount = 0;
     this.tpsHistory = [];
     
+    // 🔧 FIXED: Reset broadcast throttling on mode change
+    this.lastBroadcastTime = 0;
+    this.lastBroadcastData = '';
+    
     // Clear any backlogged orders when switching modes
     this.externalOrderQueue = [];
     
@@ -274,9 +284,9 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
       this.lastTPSCalculation = now;
     }
 
-    // Enhanced market pressure broadcasting
-    if (trades.length > 0 || this.externalOrderQueue.length > 10) {
-      this.broadcastMarketPressure(simulation.id, trades.length, this.externalOrderQueue.length);
+    // 🔧 FIXED: Enhanced market pressure broadcasting with throttling to prevent spam
+    if (this.shouldBroadcastMarketPressure(trades.length, this.externalOrderQueue.length)) {
+      this.throttledBroadcastMarketPressure(simulation.id, trades.length, this.externalOrderQueue.length);
     }
 
     // Debug logging for high activity
@@ -406,6 +416,72 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
 
     console.log(`✅ [LIQUIDATION] Liquidation cascade queued: ${cascadeSize} orders`);
     return orders;
+  }
+
+  // 🔧 FIXED: Enhanced broadcast decision logic to prevent spam
+  private shouldBroadcastMarketPressure(tradesProcessed: number, queueDepth: number): boolean {
+    const now = Date.now();
+    
+    // Throttle broadcasts to prevent spam
+    if (now - this.lastBroadcastTime < this.BROADCAST_THROTTLE_MS) {
+      return false;
+    }
+    
+    // Only broadcast if there's meaningful activity
+    if (tradesProcessed === 0 && queueDepth < this.MIN_ACTIVITY_THRESHOLD) {
+      return false;
+    }
+    
+    // 🔧 FIXED: Don't broadcast if nothing significant has changed
+    const currentMetrics = this.getMarketPressureMetrics();
+    const currentDataSnapshot = JSON.stringify({
+      actualTPS: currentMetrics.actualTPS,
+      queueDepth: currentMetrics.queueDepth,
+      marketSentiment: currentMetrics.marketSentiment,
+      dominantTraderType: currentMetrics.dominantTraderType
+    });
+    
+    // Only broadcast if data has meaningfully changed
+    if (this.lastBroadcastData === currentDataSnapshot) {
+      return false;
+    }
+    
+    return true;
+  }
+
+  // 🔧 FIXED: Throttled broadcast method to prevent TPS spam
+  private throttledBroadcastMarketPressure(
+    simulationId: string, 
+    processedOrders: number, 
+    queueDepth: number
+  ): void {
+    const now = Date.now();
+    
+    // Update last broadcast time
+    this.lastBroadcastTime = now;
+    
+    const metrics = this.getMarketPressureMetrics();
+    
+    // Store current data snapshot to detect changes
+    this.lastBroadcastData = JSON.stringify({
+      actualTPS: metrics.actualTPS,
+      queueDepth: metrics.queueDepth,
+      marketSentiment: metrics.marketSentiment,
+      dominantTraderType: metrics.dominantTraderType
+    });
+    
+    console.log(`📊 [THROTTLED BROADCAST] Broadcasting market pressure for ${simulationId}: actualTPS=${metrics.actualTPS}, queueDepth=${queueDepth}, processed=${processedOrders}`);
+    
+    this.broadcastEvent(simulationId, {
+      type: 'external_market_pressure',
+      timestamp: now,
+      data: {
+        tpsMode: TPSMode[this.currentTPSMode],
+        processedOrders,
+        queueDepth,
+        metrics: metrics
+      }
+    });
   }
 
   private selectTraderType(traderMix: Record<ExternalTraderType, number>): ExternalTraderType {
@@ -546,26 +622,6 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
     console.log(`Worker pool scaling disabled - would scale to ${size} workers`);
   }
 
-  // Enhanced market pressure broadcasting
-  private broadcastMarketPressure(
-    simulationId: string, 
-    processedOrders: number, 
-    queueDepth: number
-  ): void {
-    const metrics = this.getMarketPressureMetrics();
-    
-    this.broadcastEvent(simulationId, {
-      type: 'external_market_pressure',
-      timestamp: Date.now(),
-      data: {
-        tpsMode: TPSMode[this.currentTPSMode],
-        processedOrders,
-        queueDepth,
-        metrics: metrics
-      }
-    });
-  }
-
   cleanup(): void {
     this.externalOrderQueue = [];
     this.orderCounter = 0;
@@ -574,6 +630,11 @@ export class ExternalMarketEngine implements IExternalMarketEngine {
     this.rejectedOrdersCount = 0;
     this.tpsHistory = [];
     this.lastTPSCalculation = 0;
+    
+    // 🔧 FIXED: Clean up broadcast throttling
+    this.lastBroadcastTime = 0;
+    this.lastBroadcastData = '';
+    
     console.log('ExternalMarketEngine cleanup complete');
   }
 }
