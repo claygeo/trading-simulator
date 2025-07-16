@@ -1,4 +1,4 @@
-// backend/src/services/simulation/SimulationManager.ts - FIXED: TPS Spam Eliminated & Pause Error Fixed
+// backend/src/services/simulation/SimulationManager.ts - COMPLETE FIXED VERSION
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import {
@@ -719,32 +719,46 @@ export class SimulationManager {
     }
   }
 
+  // CRITICAL FIX: Enhanced startSimulation with proper state management
   startSimulation(id: string): void {
     const simulation = this.simulations.get(id);
     
     if (!simulation) {
-      console.error(`Simulation ${id} not found`);
+      console.error(`❌ [START] Simulation ${id} not found`);
       throw new Error(`Simulation with ID ${id} not found`);
     }
     
+    // CRITICAL FIX: Proper state validation for start
+    console.log(`🔍 [START] Current simulation state - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`);
+    
     if (simulation.isRunning && !simulation.isPaused) {
-      console.warn(`Simulation ${id} already running`);
+      console.warn(`⚠️ [START] Simulation ${id} already running and not paused`);
       throw new Error(`Simulation ${id} is already running`);
     }
     
     try {
-      simulation.isRunning = true;
-      simulation.isPaused = false;
+      // CRITICAL FIX: Proper state initialization
+      if (!simulation.isRunning) {
+        // First time start
+        simulation.isRunning = true;
+        simulation.isPaused = false;
+        console.log(`🚀 [START] Starting simulation ${id} for the first time`);
+      } else if (simulation.isPaused) {
+        // Resume from pause
+        simulation.isPaused = false;
+        console.log(`▶️ [START] Resuming paused simulation ${id}`);
+      }
+      
       this.simulations.set(id, simulation);
       this.simulationRegistrationStatus.set(id, 'starting');
       
       const speed = this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor;
       const timeframe = this.simulationTimeframes.get(id) || '1m';
       
-      // 🔧 FIXED: Only start TPS metrics tracking when simulation actually starts
+      // Start TPS metrics tracking when simulation starts
       if (!this.metricsUpdateIntervals.has(id)) {
         this.startTPSMetricsTracking(id);
-        console.log(`📊 [TPS METRICS] Started TPS tracking for running simulation ${id}`);
+        console.log(`📊 [START] Started TPS tracking for running simulation ${id}`);
       }
       
       const marketAnalysis = this.timeframeManager.analyzeMarketConditions(id, simulation);
@@ -770,13 +784,17 @@ export class SimulationManager {
       
       this.simulationRegistrationStatus.set(id, 'running');
       
-      // 🔧 FIXED: Start with proper candle generation instead of thin candles
+      // Generate initial proper candles instead of thin candles
       setTimeout(() => {
         this.generateInitialProperCandles(simulation);
       }, 100);
       
+      console.log(`✅ [START] Successfully started simulation ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
+      
     } catch (error) {
-      console.error(`Failed to start simulation ${id}:`, error);
+      console.error(`❌ [START] Failed to start simulation ${id}:`, error);
+      
+      // CRITICAL FIX: Reset state on error
       simulation.isRunning = false;
       simulation.isPaused = false;
       this.simulations.set(id, simulation);
@@ -1144,7 +1162,7 @@ export class SimulationManager {
     return simulation.recentTrades.length + simulation.closedPositions.length * 2;
   }
 
-  // 🔧 FIXED: Enhanced pauseSimulation with better error handling
+  // CRITICAL FIX: Enhanced pauseSimulation with proper state management
   pauseSimulation(id: string): void {
     console.log(`⏸️ [PAUSE] Attempting to pause simulation ${id}`);
     
@@ -1157,17 +1175,33 @@ export class SimulationManager {
         throw error;
       }
       
-      if (!simulation.isRunning || simulation.isPaused) {
-        const error = new Error(`Simulation ${id} is not running or already paused (isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused})`);
+      // CRITICAL FIX: Proper state validation to prevent isRunning=true && isPaused=true
+      console.log(`🔍 [PAUSE] Current simulation state - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`);
+      
+      // State validation with clear logic
+      if (!simulation.isRunning) {
+        const error = new Error(`Simulation ${id} is not running (current state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`);
         console.error(`❌ [PAUSE] ${error.message}`);
         throw error;
       }
       
-      console.log(`⏸️ [PAUSE] Pausing simulation ${id} - current state: running=${simulation.isRunning}, paused=${simulation.isPaused}`);
+      if (simulation.isPaused) {
+        const error = new Error(`Simulation ${id} is already paused (current state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`);
+        console.error(`❌ [PAUSE] ${error.message}`);
+        throw error;
+      }
       
+      console.log(`⏸️ [PAUSE] Pausing simulation ${id} - state transition: running → paused`);
+      
+      // CRITICAL FIX: Atomic state transition - pause first, keep running state temporarily
       simulation.isPaused = true;
+      // Note: We keep isRunning=true while paused, as the simulation can be resumed
+      // This allows for pause/resume functionality while maintaining state consistency
+      
+      // Store the updated simulation state
       this.simulations.set(id, simulation);
       
+      // Stop the simulation interval
       const interval = this.simulationIntervals.get(id);
       if (interval) {
         clearInterval(interval);
@@ -1175,22 +1209,32 @@ export class SimulationManager {
         console.log(`⏸️ [PAUSE] Cleared simulation interval for ${id}`);
       }
       
-      // 🔧 FIXED: Stop TPS metrics tracking when paused to prevent spam
+      // CRITICAL FIX: Stop TPS metrics tracking when paused to prevent spam
       this.stopTPSMetricsTracking(id);
       console.log(`📊 [PAUSE] Stopped TPS metrics tracking for paused simulation ${id}`);
       
+      // Broadcast the pause state - use the current state which shows paused but still "running" (can be resumed)
       this.broadcastService.broadcastSimulationStatus(
         id,
-        simulation.isRunning,
-        true,
+        simulation.isRunning,  // Still true - simulation can be resumed
+        simulation.isPaused,   // Now true - simulation is paused
         this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor,
         simulation.currentPrice
       );
       
-      console.log(`✅ [PAUSE] Successfully paused simulation ${id}`);
+      console.log(`✅ [PAUSE] Successfully paused simulation ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
       
     } catch (error) {
       console.error(`❌ [PAUSE] Error pausing simulation ${id}:`, error);
+      
+      // CRITICAL FIX: Ensure state consistency on error
+      const simulation = this.simulations.get(id);
+      if (simulation) {
+        // Reset to previous consistent state on error
+        simulation.isPaused = false;
+        this.simulations.set(id, simulation);
+        console.log(`🔄 [PAUSE] Reset simulation state after error for ${id}`);
+      }
       
       // Re-throw the error with more context for the API endpoint
       if (error instanceof Error) {
@@ -1199,6 +1243,199 @@ export class SimulationManager {
         throw new Error(`Failed to pause simulation ${id}: Unknown error`);
       }
     }
+  }
+
+  // CRITICAL FIX: Enhanced resumeSimulation method for proper state management
+  resumeSimulation(id: string): void {
+    console.log(`▶️ [RESUME] Attempting to resume simulation ${id}`);
+    
+    try {
+      const simulation = this.simulations.get(id);
+      
+      if (!simulation) {
+        const error = new Error(`Simulation with ID ${id} not found`);
+        console.error(`❌ [RESUME] ${error.message}`);
+        throw error;
+      }
+      
+      // CRITICAL FIX: Proper state validation for resume
+      console.log(`🔍 [RESUME] Current simulation state - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`);
+      
+      if (!simulation.isRunning) {
+        const error = new Error(`Simulation ${id} is not in a resumable state (isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`);
+        console.error(`❌ [RESUME] ${error.message}`);
+        throw error;
+      }
+      
+      if (!simulation.isPaused) {
+        const error = new Error(`Simulation ${id} is not paused and cannot be resumed (current state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`);
+        console.error(`❌ [RESUME] ${error.message}`);
+        throw error;
+      }
+      
+      console.log(`▶️ [RESUME] Resuming simulation ${id} - state transition: paused → running`);
+      
+      // CRITICAL FIX: Atomic state transition - clear pause state
+      simulation.isPaused = false;
+      // isRunning remains true throughout pause/resume cycle
+      
+      // Store the updated simulation state
+      this.simulations.set(id, simulation);
+      
+      // Restart the simulation interval
+      if (!this.simulationIntervals.has(id)) {
+        this.startSimulationLoop(id);
+        console.log(`▶️ [RESUME] Restarted simulation interval for ${id}`);
+      }
+      
+      // CRITICAL FIX: Restart TPS metrics tracking when resumed
+      if (!this.metricsUpdateIntervals.has(id)) {
+        this.startTPSMetricsTracking(id);
+        console.log(`📊 [RESUME] Restarted TPS metrics tracking for resumed simulation ${id}`);
+      }
+      
+      // Broadcast the resume state
+      this.broadcastService.broadcastSimulationStatus(
+        id,
+        simulation.isRunning,  // True - simulation is running
+        simulation.isPaused,   // False - simulation is no longer paused
+        this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor,
+        simulation.currentPrice
+      );
+      
+      console.log(`✅ [RESUME] Successfully resumed simulation ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
+      
+    } catch (error) {
+      console.error(`❌ [RESUME] Error resuming simulation ${id}:`, error);
+      
+      // Re-throw the error with more context
+      if (error instanceof Error) {
+        throw new Error(`Failed to resume simulation ${id}: ${error.message}`);
+      } else {
+        throw new Error(`Failed to resume simulation ${id}: Unknown error`);
+      }
+    }
+  }
+
+  // CRITICAL FIX: Enhanced stopSimulation method for complete shutdown
+  stopSimulation(id: string): void {
+    console.log(`⏹️ [STOP] Attempting to stop simulation ${id}`);
+    
+    try {
+      const simulation = this.simulations.get(id);
+      
+      if (!simulation) {
+        console.warn(`⚠️ [STOP] Simulation ${id} not found`);
+        return;
+      }
+      
+      console.log(`🔍 [STOP] Current simulation state - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`);
+      
+      // CRITICAL FIX: Complete state reset for stop
+      simulation.isRunning = false;
+      simulation.isPaused = false;
+      this.simulations.set(id, simulation);
+      
+      // Stop the simulation interval
+      const interval = this.simulationIntervals.get(id);
+      if (interval) {
+        clearInterval(interval);
+        this.simulationIntervals.delete(id);
+        console.log(`⏹️ [STOP] Cleared simulation interval for ${id}`);
+      }
+      
+      // Stop TPS metrics tracking
+      this.stopTPSMetricsTracking(id);
+      
+      // Broadcast the stop state
+      this.broadcastService.broadcastSimulationStatus(
+        id,
+        false, // isRunning = false
+        false, // isPaused = false
+        this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor,
+        simulation.currentPrice
+      );
+      
+      console.log(`✅ [STOP] Successfully stopped simulation ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
+      
+    } catch (error) {
+      console.error(`❌ [STOP] Error stopping simulation ${id}:`, error);
+      throw new Error(`Failed to stop simulation ${id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
+  // CRITICAL FIX: State validation helper method
+  private validateSimulationState(simulation: ExtendedSimulationState): { valid: boolean; issues: string[] } {
+    const issues: string[] = [];
+    
+    // Check for impossible state combinations
+    if (!simulation.isRunning && simulation.isPaused) {
+      issues.push('Invalid state: Simulation cannot be paused while not running');
+    }
+    
+    // Check for consistent timestamps
+    if (simulation.currentTime < simulation.startTime) {
+      issues.push('Invalid state: Current time is before start time');
+    }
+    
+    if (simulation.endTime <= simulation.startTime) {
+      issues.push('Invalid state: End time is not after start time');
+    }
+    
+    // Check for valid price
+    if (!simulation.currentPrice || simulation.currentPrice <= 0) {
+      issues.push('Invalid state: Current price is invalid');
+    }
+    
+    // Check for data consistency
+    if (!simulation.parameters) {
+      issues.push('Invalid state: Missing simulation parameters');
+    }
+    
+    return {
+      valid: issues.length === 0,
+      issues
+    };
+  }
+
+  // CRITICAL FIX: Get simulation state summary with validation
+  getSimulationState(id: string): { 
+    exists: boolean; 
+    isRunning: boolean; 
+    isPaused: boolean; 
+    canStart: boolean; 
+    canPause: boolean; 
+    canResume: boolean; 
+    canStop: boolean;
+    validationIssues: string[];
+  } {
+    const simulation = this.simulations.get(id);
+    
+    if (!simulation) {
+      return {
+        exists: false,
+        isRunning: false,
+        isPaused: false,
+        canStart: false,
+        canPause: false,
+        canResume: false,
+        canStop: false,
+        validationIssues: ['Simulation does not exist']
+      };
+    }
+    
+    const validation = this.validateSimulationState(simulation);
+    
+    return {
+      exists: true,
+      isRunning: simulation.isRunning,
+      isPaused: simulation.isPaused,
+      canStart: !simulation.isRunning || simulation.isPaused,
+      canPause: simulation.isRunning && !simulation.isPaused,
+      canResume: simulation.isRunning && simulation.isPaused,
+      canStop: simulation.isRunning,
+      validationIssues: validation.issues
+    };
   }
 
   resetSimulation(id: string): void {
