@@ -1,4 +1,4 @@
-// frontend/src/components/PriceChart.tsx - PERFECT: Backend Integration
+// frontend/src/components/PriceChart.tsx - BULLETPROOF: TradingView Null Error Prevention
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { 
   createChart, 
@@ -49,6 +49,8 @@ interface ChartState {
   isLiveBuilding: boolean;
   buildingStartTime: number | null;
   lastResetTime: number | null;
+  validationErrors: number;
+  lastErrorTime: number | null;
 }
 
 const PriceChart: React.FC<PriceChartProps> = ({
@@ -70,7 +72,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
     candleCount: 0,
     isLiveBuilding: false,
     buildingStartTime: null,
-    lastResetTime: null
+    lastResetTime: null,
+    validationErrors: 0,
+    lastErrorTime: null
   });
 
   const lastUpdateRef = useRef<number>(0);
@@ -80,60 +84,134 @@ const PriceChart: React.FC<PriceChartProps> = ({
   
   const initialZoomSetRef = useRef<boolean>(false);
   const shouldAutoFitRef = useRef<boolean>(true);
+  const lastValidDataRef = useRef<CandlestickData[]>([]);
 
-  // PERFECT: Data sanitization that matches your backend exactly
+  // BULLETPROOF: Ultra-strict data sanitization for TradingView Charts
   const sanitizeChartData = useCallback((backendPriceHistory: any[]): CandlestickData[] => {
     if (!Array.isArray(backendPriceHistory) || backendPriceHistory.length === 0) {
       return [];
     }
     
     const validCandles: CandlestickData[] = [];
+    let lastValidTime = 0;
+    let skippedCount = 0;
     
-    for (const candle of backendPriceHistory) {
-      // Skip null/undefined candles
-      if (!candle) continue;
+    for (let i = 0; i < backendPriceHistory.length; i++) {
+      const candle = backendPriceHistory[i];
       
-      // Your backend sends 'timestamp' field - extract it
+      // CRITICAL: Skip null/undefined candles
+      if (!candle || typeof candle !== 'object') {
+        skippedCount++;
+        continue;
+      }
+      
+      // CRITICAL: Extract and validate timestamp
       const timestamp = candle.timestamp;
-      if (typeof timestamp !== 'number' || isNaN(timestamp)) continue;
+      if (typeof timestamp !== 'number' || !Number.isFinite(timestamp) || timestamp <= 0) {
+        skippedCount++;
+        continue;
+      }
       
-      // Convert to seconds for TradingView (your backend sends milliseconds)
+      // CRITICAL: Convert to seconds with proper rounding for TradingView
       const timeInSeconds = Math.floor(timestamp / 1000);
       
-      // Validate OHLC values (your backend generates these correctly)
+      // CRITICAL: Ensure chronological order (TradingView requirement)
+      if (timeInSeconds <= lastValidTime) {
+        skippedCount++;
+        continue;
+      }
+      
+      // CRITICAL: Validate OHLC values with extreme precision
       const open = Number(candle.open);
       const high = Number(candle.high);
       const low = Number(candle.low);
       const close = Number(candle.close);
       
-      // Skip if any OHLC value is invalid
+      // CRITICAL: Check for any invalid numbers
       if (!Number.isFinite(open) || !Number.isFinite(high) || 
-          !Number.isFinite(low) || !Number.isFinite(close) ||
-          open <= 0 || high <= 0 || low <= 0 || close <= 0) {
+          !Number.isFinite(low) || !Number.isFinite(close)) {
+        skippedCount++;
         continue;
       }
       
-      // Your CandleManager already validates OHLC relationships, but double-check
+      // CRITICAL: Check for negative or zero values
+      if (open <= 0 || high <= 0 || low <= 0 || close <= 0) {
+        skippedCount++;
+        continue;
+      }
+      
+      // CRITICAL: Check for NaN values explicitly
+      if (isNaN(open) || isNaN(high) || isNaN(low) || isNaN(close)) {
+        skippedCount++;
+        continue;
+      }
+      
+      // CRITICAL: Validate OHLC relationships
       if (high < low || high < open || high < close || low > open || low > close) {
+        skippedCount++;
         continue;
       }
       
-      // Create TradingView-compatible candle
-      validCandles.push({
+      // CRITICAL: Round values to prevent floating point issues (especially for micro-cap)
+      const roundedOpen = Number(open.toFixed(8));
+      const roundedHigh = Number(high.toFixed(8));
+      const roundedLow = Number(low.toFixed(8));
+      const roundedClose = Number(close.toFixed(8));
+      
+      // CRITICAL: Final validation after rounding
+      if (!Number.isFinite(roundedOpen) || !Number.isFinite(roundedHigh) || 
+          !Number.isFinite(roundedLow) || !Number.isFinite(roundedClose)) {
+        skippedCount++;
+        continue;
+      }
+      
+      // CRITICAL: Create TradingView-compatible candle with explicit type casting
+      const tradingViewCandle: CandlestickData = {
         time: timeInSeconds as UTCTimestamp,
-        open: open,
-        high: high,
-        low: low,
-        close: close
-      });
+        open: roundedOpen,
+        high: roundedHigh,
+        low: roundedLow,
+        close: roundedClose
+      };
+      
+      // CRITICAL: Final object validation
+      if (typeof tradingViewCandle.time !== 'number' || 
+          typeof tradingViewCandle.open !== 'number' ||
+          typeof tradingViewCandle.high !== 'number' ||
+          typeof tradingViewCandle.low !== 'number' ||
+          typeof tradingViewCandle.close !== 'number') {
+        skippedCount++;
+        continue;
+      }
+      
+      validCandles.push(tradingViewCandle);
+      lastValidTime = timeInSeconds;
     }
     
-    // Your TimeframeManager already handles chronological order, but ensure it
+    // CRITICAL: Sort by time to ensure perfect chronological order
     validCandles.sort((a, b) => Number(a.time) - Number(b.time));
     
-    console.log(`📊 BACKEND SYNC: ${backendPriceHistory.length} → ${validCandles.length} TradingView candles`);
+    // CRITICAL: Remove any duplicates by timestamp
+    const uniqueCandles: CandlestickData[] = [];
+    let lastTime = 0;
+    for (const candle of validCandles) {
+      if (Number(candle.time) !== lastTime) {
+        uniqueCandles.push(candle);
+        lastTime = Number(candle.time);
+      }
+    }
     
-    return validCandles;
+    // Update validation error count
+    if (skippedCount > 0) {
+      setChartState(prev => ({
+        ...prev,
+        validationErrors: prev.validationErrors + skippedCount
+      }));
+    }
+    
+    console.log(`📊 BULLETPROOF: ${backendPriceHistory.length} → ${uniqueCandles.length} ultra-validated TradingView candles (skipped ${skippedCount})`);
+    
+    return uniqueCandles;
   }, []);
 
   const calculateOptimalVisibleRange = useCallback((candleCount: number): { from: number; to: number } => {
@@ -189,10 +267,12 @@ const PriceChart: React.FC<PriceChartProps> = ({
         candleCount: 0,
         isLiveBuilding: false,
         buildingStartTime: null,
-        lastResetTime: Date.now()
+        lastResetTime: Date.now(),
+        validationErrors: 0
       }));
       
       lastCandleCountRef.current = 0;
+      lastValidDataRef.current = [];
       initialZoomSetRef.current = false;
       shouldAutoFitRef.current = true;
       
@@ -203,7 +283,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return false;
   }, []);
 
-  // Chart update function optimized for your ultra-fast backend
+  // BULLETPROOF: Chart update function with comprehensive error prevention
   const updateChart = useCallback((candleData: CandlestickData[], volumeData: HistogramData[]) => {
     if (!chartState.isReady || !candlestickSeriesRef.current || !volumeSeriesRef.current || isUpdatingRef.current) {
       return;
@@ -249,32 +329,105 @@ const PriceChart: React.FC<PriceChartProps> = ({
         }));
       }
 
-      // Update TradingView Charts
+      // BULLETPROOF: Update TradingView Charts with comprehensive error handling
       try {
-        candlestickSeriesRef.current.setData(candleData);
-        volumeSeriesRef.current.setData(volumeData);
+        // CRITICAL: Validate data one more time before TradingView
+        if (!Array.isArray(candleData) || candleData.length === 0) {
+          console.warn('📊 ABORT: Invalid candleData array');
+          isUpdatingRef.current = false;
+          return;
+        }
         
-        setOptimalZoom(candleData);
+        // CRITICAL: Check each candle before sending to TradingView
+        for (let i = 0; i < candleData.length; i++) {
+          const candle = candleData[i];
+          if (!candle || 
+              typeof candle.time !== 'number' || 
+              typeof candle.open !== 'number' ||
+              typeof candle.high !== 'number' ||
+              typeof candle.low !== 'number' ||
+              typeof candle.close !== 'number' ||
+              !Number.isFinite(candle.open) ||
+              !Number.isFinite(candle.high) ||
+              !Number.isFinite(candle.low) ||
+              !Number.isFinite(candle.close)) {
+            
+            console.error(`❌ CRITICAL: Invalid candle at index ${i}:`, candle);
+            setChartState(prev => ({ 
+              ...prev, 
+              status: 'error',
+              lastErrorTime: now
+            }));
+            isUpdatingRef.current = false;
+            return;
+          }
+        }
         
-        console.log(`📊 UPDATE: ${candleData.length} candles from backend`);
+        // CRITICAL: Use defensive copy to prevent reference issues
+        const safeCandleData = candleData.map(candle => ({
+          time: candle.time,
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close
+        }));
         
-      } catch (chartError) {
-        console.error('❌ TradingView error:', chartError);
+        const safeVolumeData = volumeData.map(vol => ({
+          time: vol.time,
+          value: Number.isFinite(vol.value) ? vol.value : 0,
+          color: vol.color
+        }));
         
-        // Simple recovery - clear and retry once
+        // CRITICAL: Update TradingView with validated data
+        candlestickSeriesRef.current.setData(safeCandleData);
+        volumeSeriesRef.current.setData(safeVolumeData);
+        
+        // Store successful data for recovery
+        lastValidDataRef.current = safeCandleData;
+        
+        setOptimalZoom(safeCandleData);
+        
+        console.log(`📊 BULLETPROOF UPDATE: ${safeCandleData.length} validated candles`);
+        
+      } catch (chartError: any) {
+        console.error('❌ BULLETPROOF ERROR: TradingView chart error:', chartError);
+        
+        setChartState(prev => ({ 
+          ...prev, 
+          lastErrorTime: now
+        }));
+        
+        // BULLETPROOF: Recovery strategy
         try {
+          console.log('🔧 BULLETPROOF RECOVERY: Attempting chart recovery...');
+          
+          // Strategy 1: Clear and use last known good data
           candlestickSeriesRef.current.setData([]);
           volumeSeriesRef.current.setData([]);
           
           setTimeout(() => {
-            if (candlestickSeriesRef.current && volumeSeriesRef.current) {
-              candlestickSeriesRef.current.setData(candleData);
-              volumeSeriesRef.current.setData(volumeData);
+            if (candlestickSeriesRef.current && volumeSeriesRef.current && lastValidDataRef.current.length > 0) {
+              try {
+                // Use last known good data
+                candlestickSeriesRef.current.setData([...lastValidDataRef.current]);
+                
+                const safeVolumeData = lastValidDataRef.current.map(candle => ({
+                  time: candle.time,
+                  value: 0,
+                  color: candle.close >= candle.open ? '#22C55E44' : '#EF444444'
+                }));
+                volumeSeriesRef.current.setData(safeVolumeData);
+                
+                console.log('✅ BULLETPROOF RECOVERY: Success with last known data');
+              } catch (recoveryError) {
+                console.error('❌ BULLETPROOF RECOVERY: Failed:', recoveryError);
+                setChartState(prev => ({ ...prev, status: 'error' }));
+              }
             }
-          }, 100);
+          }, 200);
           
         } catch (recoveryError) {
-          console.error('❌ Recovery failed:', recoveryError);
+          console.error('❌ BULLETPROOF RECOVERY: Initial attempt failed:', recoveryError);
           setChartState(prev => ({ ...prev, status: 'error' }));
         }
         
@@ -291,9 +444,13 @@ const PriceChart: React.FC<PriceChartProps> = ({
         status: incomingCandleCount >= 50 ? 'ready' : incomingCandleCount > 0 ? 'building' : 'empty'
       }));
 
-    } catch (error) {
-      console.error('❌ Chart update error:', error);
-      setChartState(prev => ({ ...prev, status: 'error' }));
+    } catch (error: any) {
+      console.error('❌ BULLETPROOF: Outer chart update error:', error);
+      setChartState(prev => ({ 
+        ...prev, 
+        status: 'error',
+        lastErrorTime: now
+      }));
     } finally {
       isUpdatingRef.current = false;
     }
@@ -419,6 +576,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       lastCandleCountRef.current = 0;
       lastUpdateRef.current = 0;
       isUpdatingRef.current = false;
+      lastValidDataRef.current = [];
       
       setChartState(prev => ({
         ...prev,
@@ -426,10 +584,12 @@ const PriceChart: React.FC<PriceChartProps> = ({
         isReady: true,
         candleCount: 0,
         isLiveBuilding: false,
-        buildingStartTime: null
+        buildingStartTime: null,
+        validationErrors: 0,
+        lastErrorTime: null
       }));
 
-      console.log('✅ BACKEND SYNC: Chart ready for ultra-fast backend data');
+      console.log('✅ BULLETPROOF: Chart ready with ultra-strict validation');
 
     } catch (error) {
       console.error('❌ Failed to create chart:', error);
@@ -437,7 +597,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }
 
     return () => {
-      console.log('🧹 Cleaning up chart');
+      console.log('🧹 Cleaning up bulletproof chart');
       
       if (updateThrottleRef.current) {
         clearTimeout(updateThrottleRef.current);
@@ -455,6 +615,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       chartRef.current = null;
       candlestickSeriesRef.current = null;
       volumeSeriesRef.current = null;
+      lastValidDataRef.current = [];
       
       setChartState({
         status: 'initializing',
@@ -462,7 +623,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
         candleCount: 0,
         isLiveBuilding: false,
         buildingStartTime: null,
-        lastResetTime: null
+        lastResetTime: null,
+        validationErrors: 0,
+        lastErrorTime: null
       });
       
       initialZoomSetRef.current = false;
@@ -577,7 +740,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
       candlesPerSecond: candlesPerSecond,
       totalCandles: chartState.candleCount,
       isPostReset: !!chartState.lastResetTime && 
-                   chartState.buildingStartTime > chartState.lastResetTime
+                   chartState.buildingStartTime > chartState.lastResetTime,
+      validationErrors: chartState.validationErrors,
+      hasRecentErrors: chartState.lastErrorTime && (Date.now() - chartState.lastErrorTime) < 10000
     };
   }, [chartState]);
 
@@ -627,11 +792,19 @@ const PriceChart: React.FC<PriceChartProps> = ({
           </div>
           
           <div className="bg-green-900 bg-opacity-75 px-3 py-1 rounded text-xs text-green-300">
-            ✅ BACKEND SYNC
+            ✅ BULLETPROOF
           </div>
           
+          {chartState.validationErrors > 0 && (
+            <div className="bg-yellow-900 bg-opacity-75 px-3 py-1 rounded text-xs text-yellow-300">
+              ⚠️ Filtered: {chartState.validationErrors}
+            </div>
+          )}
+          
           {buildingStats && (
-            <div className="bg-green-900 bg-opacity-75 px-3 py-1 rounded text-xs text-green-300">
+            <div className={`bg-opacity-75 px-3 py-1 rounded text-xs ${
+              buildingStats.hasRecentErrors ? 'bg-yellow-900 text-yellow-300' : 'bg-green-900 text-green-300'
+            }`}>
               🔴 LIVE: {buildingStats.candlesPerSecond}/sec
               {buildingStats.isPostReset && ' (Post-Reset)'}
             </div>
@@ -679,9 +852,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
           <div>🎯 Status: {chartState.status}</div>
           <div>🏗️ Building: {chartState.isLiveBuilding ? 'YES' : 'NO'}</div>
           <div>⚡ Updates: {isUpdatingRef.current ? 'ACTIVE' : 'IDLE'}</div>
-          <div>✅ BACKEND: Ultra-fast sync</div>
-          <div>📡 INTERVALS: 3-15 second candles</div>
-          <div>🔧 FORMAT: Backend → TradingView</div>
+          <div>✅ BULLETPROOF: Ultra-validation</div>
+          <div>🛡️ ERRORS: {chartState.validationErrors} filtered</div>
+          <div>📡 MICRO-CAP: ${currentPrice.toFixed(6)} support</div>
           {chartState.lastResetTime && (
             <div>🕐 Last Reset: {Math.floor((Date.now() - chartState.lastResetTime) / 1000)}s ago</div>
           )}
@@ -690,6 +863,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
             <>
               <div>⏱️ Time: {buildingStats.elapsed}s</div>
               <div>📈 Rate: {buildingStats.candlesPerSecond}/s</div>
+              <div>⚠️ Validation: {buildingStats.validationErrors} errors</div>
             </>
           )}
         </div>
@@ -699,7 +873,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
         <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75">
           <div className="bg-red-900 text-red-100 p-6 rounded-lg max-w-md text-center">
             <h3 className="font-bold text-lg mb-2">Chart Error</h3>
-            <p className="text-sm">TradingView chart error. Your backend data may be valid but chart can't display it.</p>
+            <p className="text-sm">
+              TradingView chart encountered an error. 
+              {chartState.lastErrorTime && ` Last error: ${new Date(chartState.lastErrorTime).toLocaleTimeString()}`}
+            </p>
             <button 
               onClick={() => window.location.reload()} 
               className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-sm transition"
@@ -714,19 +891,20 @@ const PriceChart: React.FC<PriceChartProps> = ({
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-center text-gray-400">
             <div className="text-6xl mb-6">📊</div>
-            <h3 className="text-xl font-bold mb-3">Backend Sync Ready</h3>
-            <p className="text-sm mb-4">Optimized for your ultra-fast timeframes</p>
+            <h3 className="text-xl font-bold mb-3">Bulletproof Chart Ready</h3>
+            <p className="text-sm mb-4">Ultra-strict validation for micro-cap tokens</p>
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
                 <span>Waiting for CandleManager data...</span>
               </div>
+              <div>🛡️ Bulletproof validation: Null-safe</div>
+              <div>📊 Micro-cap support: $0.000001+ precision</div>
               <div>⚡ Ultra-fast intervals: 3-15 seconds</div>
-              <div>📡 Backend format: timestamp→time conversion</div>
-              <div>🔧 OHLCV validation: Backend + Frontend</div>
-              <div>📈 TimeframeManager integration</div>
+              <div>🔧 OHLC validation: 8-decimal precision</div>
+              <div>📈 Recovery system: Last-known-good data</div>
               <div>🔄 Reset: Triggered by Dashboard</div>
-              <div>✅ WebSocket: Real-time sync</div>
+              <div>✅ TradingView: Zero null errors</div>
             </div>
           </div>
         </div>
@@ -736,12 +914,14 @@ const PriceChart: React.FC<PriceChartProps> = ({
         <div className="absolute top-20 left-4 pointer-events-none">
           <div className="bg-green-900 bg-opacity-75 px-4 py-2 rounded-lg">
             <div className="text-green-300 text-sm font-medium">
-              🔴 BACKEND SYNC: {chartState.candleCount} ultra-fast candles
+              🔴 BULLETPROOF LIVE: {chartState.candleCount} ultra-validated candles
+              {chartState.validationErrors > 0 && ` (${chartState.validationErrors} filtered)`}
             </div>
             {buildingStats && (
               <div className="text-green-400 text-xs mt-1">
-                {buildingStats.elapsed}s elapsed • {buildingStats.candlesPerSecond} candles/sec • CandleManager sync active
+                {buildingStats.elapsed}s elapsed • {buildingStats.candlesPerSecond} candles/sec • Ultra-strict validation
                 {buildingStats.isPostReset && ' • Post-Reset Build'}
+                {buildingStats.hasRecentErrors && ' • ⚠️ Recent errors detected'}
               </div>
             )}
           </div>
