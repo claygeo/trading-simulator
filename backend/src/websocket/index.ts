@@ -1,4 +1,4 @@
-// backend/src/websocket/index.ts - FIXED: Initial Candle Jump Eliminated & Enhanced TPS Support
+// backend/src/websocket/index.ts - FIXED: Pause State Handling & Enhanced TPS Support
 import { WebSocket, WebSocketServer } from 'ws';
 import { BroadcastManager } from '../services/broadcastManager';
 import { PerformanceMonitor } from '../monitoring/performanceMonitor';
@@ -8,6 +8,7 @@ interface WebSocketMessage {
   type: string;
   simulationId?: string;
   mode?: string; // For TPS mode changes
+  isPaused?: boolean; // For pause state changes
   [key: string]: any;
 }
 
@@ -36,7 +37,7 @@ export function setupWebSocketServer(
   broadcastManager?: BroadcastManager,
   performanceMonitor?: PerformanceMonitor
 ) {
-  console.log('🔧 Setting up WebSocket server with SHARED SimulationManager instance and TPS support...');
+  console.log('🔧 Setting up WebSocket server with SHARED SimulationManager instance and enhanced pause handling...');
   
   // Log server status
   setInterval(() => {
@@ -100,9 +101,10 @@ export function setupWebSocketServer(
           raceConditionPrevention: true,
           tpsModeSupport: true,      // TPS mode support
           stressTestSupport: true,   // Stress test support
-          initialCandleJumpPrevention: true // NEW: Fixed initial candle jump
+          initialCandleJumpPrevention: true, // Fixed initial candle jump
+          pauseResumeSupport: true   // CRITICAL FIX: Enhanced pause/resume support
         },
-        version: '2.3.1' // Version bump for candle jump fix
+        version: '2.4.0' // Version bump for pause handling fix
       }), { binary: false, compress: false, fin: true });
     } catch (error) {
       console.error('Error sending welcome message:', error);
@@ -111,7 +113,7 @@ export function setupWebSocketServer(
     ws.on('message', (data: Buffer) => {
       try {
         const message: WebSocketMessage = JSON.parse(data.toString());
-        console.log(`${clientId} message:`, message.type, message.simulationId || '', message.mode || '');
+        console.log(`${clientId} message:`, message.type, message.simulationId || '', message.mode || '', message.isPaused !== undefined ? `paused=${message.isPaused}` : '');
         
         switch (message.type) {
           case 'subscribe':
@@ -126,8 +128,9 @@ export function setupWebSocketServer(
             handleMarketAnalysisRequest(ws, message, simulationManager);
             break;
             
+          // CRITICAL FIX: Enhanced pause state handling
           case 'setPauseState':
-            console.log(`${clientId} set pause state for ${message.simulationId}: ${message.isPaused}`);
+            handlePauseStateChange(ws, message, clientId, simulationManager);
             break;
             
           case 'setPreferences':
@@ -215,7 +218,169 @@ export function setupWebSocketServer(
     console.error('WebSocket server error:', error);
   });
   
-  console.log('✅ WebSocket server setup complete with SHARED SimulationManager instance and TPS support');
+  console.log('✅ WebSocket server setup complete with SHARED SimulationManager instance and enhanced pause handling');
+}
+
+// CRITICAL FIX: New pause state change handler
+async function handlePauseStateChange(
+  ws: WebSocket,
+  message: WebSocketMessage,
+  clientId: string,
+  simulationManager: any
+) {
+  const { simulationId, isPaused } = message;
+  
+  if (!simulationId) {
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: 'simulationId required for pause state change',
+      timestamp: Date.now()
+    }), { binary: false, compress: false, fin: true });
+    return;
+  }
+  
+  if (isPaused === undefined) {
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: 'isPaused boolean value required for pause state change',
+      timestamp: Date.now()
+    }), { binary: false, compress: false, fin: true });
+    return;
+  }
+  
+  console.log(`⏸️▶️ [PAUSE STATE] ${clientId} requesting pause state change for ${simulationId}: isPaused=${isPaused}`);
+  
+  try {
+    // Get the simulation to check current state
+    const simulation = simulationManager.getSimulation(simulationId);
+    
+    if (!simulation) {
+      console.error(`❌ [PAUSE STATE] Simulation ${simulationId} not found for pause state change`);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: `Simulation ${simulationId} not found`,
+        timestamp: Date.now()
+      }), { binary: false, compress: false, fin: true });
+      return;
+    }
+    
+    console.log(`🔍 [PAUSE STATE] Current simulation state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
+    
+    let result: { success: boolean; error?: string; action?: string };
+    
+    // CRITICAL FIX: Proper pause/resume logic based on desired state
+    if (isPaused) {
+      // Client wants to pause the simulation
+      if (!simulation.isRunning) {
+        result = {
+          success: false,
+          error: `Cannot pause simulation ${simulationId} because it is not running (isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`
+        };
+      } else if (simulation.isPaused) {
+        result = {
+          success: false,
+          error: `Simulation ${simulationId} is already paused (isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`
+        };
+      } else {
+        // Simulation is running and not paused - can pause it
+        try {
+          simulationManager.pauseSimulation(simulationId);
+          result = {
+            success: true,
+            action: 'paused'
+          };
+          console.log(`✅ [PAUSE STATE] Successfully paused simulation ${simulationId}`);
+        } catch (error) {
+          result = {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error pausing simulation'
+          };
+          console.error(`❌ [PAUSE STATE] Error pausing simulation ${simulationId}:`, error);
+        }
+      }
+    } else {
+      // Client wants to resume/start the simulation
+      if (!simulation.isRunning) {
+        // Simulation is not running - start it
+        try {
+          simulationManager.startSimulation(simulationId);
+          result = {
+            success: true,
+            action: 'started'
+          };
+          console.log(`✅ [PAUSE STATE] Successfully started simulation ${simulationId}`);
+        } catch (error) {
+          result = {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error starting simulation'
+          };
+          console.error(`❌ [PAUSE STATE] Error starting simulation ${simulationId}:`, error);
+        }
+      } else if (simulation.isPaused) {
+        // Simulation is running but paused - resume it
+        try {
+          simulationManager.resumeSimulation(simulationId);
+          result = {
+            success: true,
+            action: 'resumed'
+          };
+          console.log(`✅ [PAUSE STATE] Successfully resumed simulation ${simulationId}`);
+        } catch (error) {
+          result = {
+            success: false,
+            error: error instanceof Error ? error.message : 'Unknown error resuming simulation'
+          };
+          console.error(`❌ [PAUSE STATE] Error resuming simulation ${simulationId}:`, error);
+        }
+      } else {
+        // Simulation is already running and not paused
+        result = {
+          success: false,
+          error: `Simulation ${simulationId} is already running and not paused (isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`
+        };
+      }
+    }
+    
+    // Send response back to client
+    if (result.success) {
+      // Get updated simulation state
+      const updatedSimulation = simulationManager.getSimulation(simulationId);
+      
+      ws.send(JSON.stringify({
+        type: 'pause_state_changed',
+        simulationId: simulationId,
+        timestamp: Date.now(),
+        success: true,
+        action: result.action,
+        newState: {
+          isRunning: updatedSimulation?.isRunning || false,
+          isPaused: updatedSimulation?.isPaused || false
+        },
+        message: `Simulation ${result.action} successfully`
+      }), { binary: false, compress: false, fin: true });
+      
+      console.log(`📡 [PAUSE STATE] Sent success response to ${clientId}: action=${result.action}, newState={isRunning=${updatedSimulation?.isRunning}, isPaused=${updatedSimulation?.isPaused}}`);
+      
+    } else {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: result.error || 'Unknown error changing pause state',
+        timestamp: Date.now(),
+        context: 'pause_state_change'
+      }), { binary: false, compress: false, fin: true });
+      
+      console.error(`❌ [PAUSE STATE] Sent error response to ${clientId}: ${result.error}`);
+    }
+    
+  } catch (error) {
+    console.error(`❌ [PAUSE STATE] Unexpected error handling pause state change:`, error);
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: 'Internal error handling pause state change',
+      timestamp: Date.now(),
+      context: 'pause_state_change'
+    }), { binary: false, compress: false, fin: true });
+  }
 }
 
 // FIXED: Handle TPS mode changes with proper error handling
@@ -741,7 +906,12 @@ async function handleSubscriptionWithRetry(
     },
     // 🔧 CRITICAL FIX: Add flag to indicate if this is a fresh connection
     initialCandleJumpPrevented: true,
-    actuallyRunning: isSimulationActuallyRunning
+    actuallyRunning: isSimulationActuallyRunning,
+    // CRITICAL FIX: Enhanced pause state information
+    canStart: !simulation.isRunning || simulation.isPaused,
+    canPause: simulation.isRunning && !simulation.isPaused,
+    canResume: simulation.isRunning && simulation.isPaused,
+    canStop: simulation.isRunning
   };
   
   ws.send(JSON.stringify({
@@ -766,10 +936,11 @@ async function handleSubscriptionWithRetry(
     initialCandleJumpPrevented: true,
     actuallyRunning: isSimulationActuallyRunning,
     candleDataIncluded: isSimulationActuallyRunning,
-    message: `Successfully subscribed to simulation ${simulationId} using SHARED SimulationManager with TPS support and candle jump prevention`
+    pauseResumeSupport: true, // CRITICAL FIX: Indicate pause/resume support
+    message: `Successfully subscribed to simulation ${simulationId} using SHARED SimulationManager with enhanced pause/resume support`
   }), { binary: false, compress: false, fin: true });
   
-  console.log(`🎉 [WS SUB] SUBSCRIPTION SUCCESS! ${clientId} subscribed to ${simulationId} using SHARED manager, trades: ${enhancedState.recentTrades.length}, candles: ${enhancedState.candleCount}, TPS mode: ${enhancedState.currentTPSMode}, actuallyRunning: ${isSimulationActuallyRunning}, candleJumpPrevented: true`);
+  console.log(`🎉 [WS SUB] SUBSCRIPTION SUCCESS! ${clientId} subscribed to ${simulationId} using SHARED manager, trades: ${enhancedState.recentTrades.length}, candles: ${enhancedState.candleCount}, TPS mode: ${enhancedState.currentTPSMode}, actuallyRunning: ${isSimulationActuallyRunning}, pauseResumeEnabled: true`);
 }
 
 // Handle subscription with preferences (original function, modified to be race-condition aware)
@@ -913,7 +1084,8 @@ function handleDebugRequest(ws: WebSocket, clientId: string, broadcastManager?: 
       sharedSimulationManager: true,
       tpsSupport: true,
       stressTestSupport: true,
-      initialCandleJumpPrevention: true // NEW
+      initialCandleJumpPrevention: true,
+      pauseResumeSupport: true // CRITICAL FIX: Include pause/resume support in debug info
     }
   };
   
