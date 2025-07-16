@@ -1,4 +1,4 @@
-// backend/src/services/simulation/TraderEngine.ts - MAXIMUM 118 PARTICIPANT ACTIVITY MODE
+// backend/src/services/simulation/TraderEngine.ts - COMPLETE FILE WITH CRITICAL POOL LEAK FIXES
 import { v4 as uuidv4 } from 'uuid';
 import { 
   SimulationState, 
@@ -19,6 +19,18 @@ export class TraderEngine implements ITraderEngine {
   private positionPool: ObjectPool<TraderPosition>;
   private transactionQueue?: TransactionQueue;
   private processedTradesCache: Map<string, Set<string>> = new Map();
+  
+  // CRITICAL FIX: Add pool monitoring and cleanup tracking
+  private poolMonitoringInterval: NodeJS.Timeout;
+  private lastPoolCleanup: number = Date.now();
+  private poolUsageMetrics = {
+    tradesAcquired: 0,
+    tradesReleased: 0,
+    positionsAcquired: 0,
+    positionsReleased: 0,
+    forceCleanups: 0,
+    errors: 0
+  };
 
   constructor(
     private getCurrentTimeframe: (simulationId: string) => Timeframe,
@@ -26,7 +38,7 @@ export class TraderEngine implements ITraderEngine {
     private broadcastEvent: (simulationId: string, event: any) => void,
     private updateTradesBuffer?: (simulationId: string, trades: Trade[]) => void
   ) {
-    // Initialize object pools with larger sizes for high activity
+    // CRITICAL FIX: Initialize object pools with proper monitoring
     this.tradePool = new ObjectPool<Trade>(
       () => ({
         id: '',
@@ -39,16 +51,23 @@ export class TraderEngine implements ITraderEngine {
         impact: 0
       }),
       (trade) => {
-        trade.id = '';
-        trade.timestamp = 0;
-        trade.trader = {} as any;
-        trade.action = 'buy';
-        trade.price = 0;
-        trade.quantity = 0;
-        trade.value = 0;
-        trade.impact = 0;
+        // CRITICAL FIX: Enhanced reset function with validation
+        try {
+          trade.id = '';
+          trade.timestamp = 0;
+          trade.trader = {} as any;
+          trade.action = 'buy';
+          trade.price = 0;
+          trade.quantity = 0;
+          trade.value = 0;
+          trade.impact = 0;
+        } catch (resetError) {
+          console.error('❌ POOL: Error resetting trade object:', resetError);
+          throw resetError; // Let pool handle the error
+        }
       },
-      10000 // Increased pool size
+      5000, // Reduced from 10000 to prevent memory issues
+      500   // Reduced pre-fill
     );
 
     this.positionPool = new ObjectPool<TraderPosition>(
@@ -61,87 +80,231 @@ export class TraderEngine implements ITraderEngine {
         currentPnlPercentage: 0
       }),
       (position) => {
-        position.trader = {} as any;
-        position.entryPrice = 0;
-        position.quantity = 0;
-        position.entryTime = 0;
-        position.currentPnl = 0;
-        position.currentPnlPercentage = 0;
+        // CRITICAL FIX: Enhanced reset function with validation
+        try {
+          position.trader = {} as any;
+          position.entryPrice = 0;
+          position.quantity = 0;
+          position.entryTime = 0;
+          position.currentPnl = 0;
+          position.currentPnlPercentage = 0;
+        } catch (resetError) {
+          console.error('❌ POOL: Error resetting position object:', resetError);
+          throw resetError; // Let pool handle the error
+        }
       },
-      5000 // Increased pool size
+      2500, // Reduced from 5000
+      250   // Reduced pre-fill
     );
+    
+    // CRITICAL FIX: Start pool monitoring to prevent leaks
+    this.startPoolMonitoring();
+    
+    console.log('✅ POOL: TraderEngine initialized with leak prevention monitoring');
+  }
+  
+  // CRITICAL FIX: Pool monitoring to detect and prevent leaks
+  private startPoolMonitoring(): void {
+    this.poolMonitoringInterval = setInterval(() => {
+      this.monitorPoolHealth();
+    }, 30000); // Check every 30 seconds
+  }
+  
+  // CRITICAL FIX: Pool health monitoring
+  private monitorPoolHealth(): void {
+    const tradeStats = this.tradePool.getStats();
+    const positionStats = this.positionPool.getStats();
+    
+    // Check for concerning usage patterns
+    if (tradeStats.inUse > tradeStats.maxSize * 0.8) {
+      console.warn(`⚠️ POOL: Trade pool usage high: ${tradeStats.inUse}/${tradeStats.maxSize}`);
+      this.forcePoolCleanup('trade');
+    }
+    
+    if (positionStats.inUse > positionStats.maxSize * 0.8) {
+      console.warn(`⚠️ POOL: Position pool usage high: ${positionStats.inUse}/${positionStats.maxSize}`);
+      this.forcePoolCleanup('position');
+    }
+    
+    // Check for memory leaks
+    const tradeHealthCheck = this.tradePool.healthCheck();
+    const positionHealthCheck = this.positionPool.healthCheck();
+    
+    if (!tradeHealthCheck.healthy) {
+      console.error('🚨 POOL: Trade pool health check failed:', tradeHealthCheck.issues);
+      this.poolUsageMetrics.errors++;
+      this.forcePoolCleanup('trade');
+    }
+    
+    if (!positionHealthCheck.healthy) {
+      console.error('🚨 POOL: Position pool health check failed:', positionHealthCheck.issues);
+      this.poolUsageMetrics.errors++;
+      this.forcePoolCleanup('position');
+    }
+    
+    // Log metrics periodically
+    if (Date.now() - this.lastPoolCleanup > 300000) { // Every 5 minutes
+      this.logPoolMetrics();
+    }
+  }
+  
+  // CRITICAL FIX: Force pool cleanup when issues detected
+  private forcePoolCleanup(poolType: 'trade' | 'position'): void {
+    console.log(`🧹 POOL: Forcing cleanup of ${poolType} pool due to health issues`);
+    
+    try {
+      if (poolType === 'trade') {
+        this.tradePool.forceGarbageCollection();
+        this.poolUsageMetrics.forceCleanups++;
+      } else {
+        this.positionPool.forceGarbageCollection();
+        this.poolUsageMetrics.forceCleanups++;
+      }
+      
+      this.lastPoolCleanup = Date.now();
+      console.log(`✅ POOL: ${poolType} pool cleanup completed`);
+      
+    } catch (cleanupError) {
+      console.error(`❌ POOL: Error during ${poolType} pool cleanup:`, cleanupError);
+      this.poolUsageMetrics.errors++;
+    }
+  }
+  
+  // CRITICAL FIX: Log pool metrics for monitoring
+  private logPoolMetrics(): void {
+    const tradeStats = this.tradePool.getStats();
+    const positionStats = this.positionPool.getStats();
+    
+    console.log('📊 POOL: Current pool statistics:');
+    console.log(`   Trade Pool: ${tradeStats.inUse}/${tradeStats.maxSize} in use, ${tradeStats.available} available, ${tradeStats.memoryEfficiency} efficiency`);
+    console.log(`   Position Pool: ${positionStats.inUse}/${positionStats.maxSize} in use, ${positionStats.available} available, ${positionStats.memoryEfficiency} efficiency`);
+    console.log(`   Metrics: Acquired=${this.poolUsageMetrics.tradesAcquired}, Released=${this.poolUsageMetrics.tradesReleased}, Cleanups=${this.poolUsageMetrics.forceCleanups}, Errors=${this.poolUsageMetrics.errors}`);
+    
+    if (tradeStats.warnings.length > 0) {
+      console.warn(`⚠️ POOL: Trade pool warnings:`, tradeStats.warnings);
+    }
+    
+    if (positionStats.warnings.length > 0) {
+      console.warn(`⚠️ POOL: Position pool warnings:`, positionStats.warnings);
+    }
   }
 
   setTransactionQueue(queue: TransactionQueue): void {
     this.transactionQueue = queue;
-    console.log('Transaction queue connected to MAXIMUM ACTIVITY TraderEngine');
+    console.log('✅ POOL: Transaction queue connected to MAXIMUM ACTIVITY TraderEngine');
   }
 
-  // MAXIMUM ACTIVITY: Dramatically enhanced trading with ALL 118 participants active
+  // CRITICAL FIX: Enhanced processTraderActions with proper pool management
   processTraderActions(simulation: ExtendedSimulationState): void {
     const traders = simulation.traders; // All 118 real Dune Analytics traders
     const speed = simulation.parameters.timeCompressionFactor;
     
     // MAXIMUM ACTIVITY MODE: Calculate ultra-aggressive simulation mode
     const simulationMode = this.getMaximumActivityMode(speed);
-    console.log(`🔥 [MAXIMUM ACTIVITY] ${simulationMode.name}: Targeting ${simulationMode.tradesPerTick} trades/tick from ALL ${traders.length} participants`);
+    console.log(`🔥 [MAXIMUM ACTIVITY] ${simulationMode.name}: Targeting ${simulationMode.tradesPerTick} trades/tick from ALL ${traders.length} participants with pool leak prevention`);
     
     // FORCE MAXIMUM TRADING ACTIVITY
     const tradesGenerated: Trade[] = [];
+    let poolErrors = 0;
     
-    // 1. FORCE ALL 118 PARTICIPANTS TO BE HYPER-ACTIVE
-    this.forceMaximumParticipantActivity(simulation, tradesGenerated, simulationMode);
-    
-    // 2. GENERATE MASSIVE MARKET MAKER ACTIVITY
-    this.generateMaximumMarketMakerActivity(simulation, tradesGenerated, simulationMode);
-    
-    // 3. GENERATE MASSIVE RETAIL TRADING ACTIVITY  
-    this.generateMaximumRetailActivity(simulation, tradesGenerated, simulationMode);
-    
-    // 4. GENERATE AGGRESSIVE POSITION ACTIVITY
-    this.generateMaximumPositionActivity(simulation, tradesGenerated, simulationMode);
-    
-    // 5. ENSURE OVERWHELMING ACTIVITY THRESHOLD
-    this.ensureMaximumActivity(simulation, tradesGenerated, simulationMode);
-    
-    // 6. UPDATE ALL TRADER STATS AND RANKINGS
-    this.updateAllTraderStatsFromTrades(simulation, tradesGenerated);
-    
-    // Convert and queue all trades
-    if (this.transactionQueue && tradesGenerated.length > 0) {
-      const convertedTrades = tradesGenerated.map(trade => ({
-        ...trade,
-        trader: {
-          ...trade.trader,
-          position: trade.trader.position || 0,
-          totalVolume: trade.trader.totalVolume || 0,
-          buyVolume: trade.trader.buyVolume || 0,
-          sellVolume: trade.trader.sellVolume || 0,
-          tradeCount: trade.trader.tradeCount || 0,
-          feesUsd: trade.trader.feesUsd || 0,
-          winRate: trade.trader.winRate || 0.5,
-          riskProfile: trade.trader.riskProfile || 'moderate' as const,
-          portfolioEfficiency: trade.trader.portfolioEfficiency || 0
-        }
-      }));
+    try {
+      // 1. FORCE ALL 118 PARTICIPANTS TO BE HYPER-ACTIVE
+      this.forceMaximumParticipantActivity(simulation, tradesGenerated, simulationMode);
       
-      this.transactionQueue.addTrades(convertedTrades as any[], simulation.id).catch(err => {
-        console.error('Failed to queue trades:', err);
+      // 2. GENERATE MASSIVE MARKET MAKER ACTIVITY
+      this.generateMaximumMarketMakerActivity(simulation, tradesGenerated, simulationMode);
+      
+      // 3. GENERATE MASSIVE RETAIL TRADING ACTIVITY  
+      this.generateMaximumRetailActivity(simulation, tradesGenerated, simulationMode);
+      
+      // 4. GENERATE AGGRESSIVE POSITION ACTIVITY
+      this.generateMaximumPositionActivity(simulation, tradesGenerated, simulationMode);
+      
+      // 5. ENSURE OVERWHELMING ACTIVITY THRESHOLD
+      this.ensureMaximumActivity(simulation, tradesGenerated, simulationMode);
+      
+      // 6. UPDATE ALL TRADER STATS AND RANKINGS
+      this.updateAllTraderStatsFromTrades(simulation, tradesGenerated);
+      
+      // CRITICAL FIX: Monitor pool usage after generation
+      const tradeStats = this.tradePool.getStats();
+      if (tradeStats.inUse > tradeStats.maxSize * 0.7) {
+        console.warn(`⚠️ POOL: High trade pool usage after generation: ${tradeStats.inUse}/${tradeStats.maxSize}`);
+      }
+      
+    } catch (error) {
+      console.error('❌ POOL: Error in processTraderActions:', error);
+      poolErrors++;
+      
+      // CRITICAL FIX: Release any trades that were generated before the error
+      tradesGenerated.forEach(trade => {
+        try {
+          this.tradePool.release(trade);
+          this.poolUsageMetrics.tradesReleased++;
+        } catch (releaseError) {
+          console.error('❌ POOL: Error releasing trade after error:', releaseError);
+        }
       });
+      
+      throw error;
     }
     
-    // Add trades to simulation for immediate candle volume
-    tradesGenerated.forEach(trade => {
-      simulation.recentTrades.unshift(trade);
-    });
-    
-    // Limit recent trades to prevent memory issues
-    if (simulation.recentTrades.length > 5000) {
-      simulation.recentTrades = simulation.recentTrades.slice(0, 5000);
+    // CRITICAL FIX: Proper trade handling with automatic cleanup
+    if (tradesGenerated.length > 0) {
+      try {
+        // Convert and queue trades
+        if (this.transactionQueue) {
+          const convertedTrades = tradesGenerated.map(trade => ({
+            ...trade,
+            trader: {
+              ...trade.trader,
+              position: trade.trader.position || 0,
+              totalVolume: trade.trader.totalVolume || 0,
+              buyVolume: trade.trader.buyVolume || 0,
+              sellVolume: trade.trader.sellVolume || 0,
+              tradeCount: trade.trader.tradeCount || 0,
+              feesUsd: trade.trader.feesUsd || 0,
+              winRate: trade.trader.winRate || 0.5,
+              riskProfile: trade.trader.riskProfile || 'moderate' as const,
+              portfolioEfficiency: trade.trader.portfolioEfficiency || 0
+            }
+          }));
+          
+          this.transactionQueue.addTrades(convertedTrades as any[], simulation.id).catch(err => {
+            console.error('❌ POOL: Failed to queue trades:', err);
+          });
+        }
+        
+        // Add trades to simulation for immediate candle volume
+        tradesGenerated.forEach(trade => {
+          simulation.recentTrades.unshift(trade);
+        });
+        
+        // CRITICAL FIX: Limit recent trades and release old ones
+        if (simulation.recentTrades.length > 5000) {
+          const tradesToRemove = simulation.recentTrades.splice(5000);
+          tradesToRemove.forEach(trade => {
+            try {
+              this.tradePool.release(trade);
+              this.poolUsageMetrics.tradesReleased++;
+            } catch (releaseError) {
+              console.error('❌ POOL: Error releasing old trade:', releaseError);
+              poolErrors++;
+            }
+          });
+        }
+        
+      } catch (handlingError) {
+        console.error('❌ POOL: Error handling generated trades:', handlingError);
+        poolErrors++;
+      }
     }
     
-    console.log(`🔥 [MAXIMUM ACTIVITY COMPLETE] Generated ${tradesGenerated.length} trades in ${simulationMode.name} mode`);
-    console.log(`📊 [MASSIVE CHART IMPACT] Total volume: ${tradesGenerated.reduce((sum, t) => sum + t.quantity, 0).toFixed(0)} tokens`);
+    // Update pool metrics
+    this.poolUsageMetrics.errors += poolErrors;
+    
+    console.log(`✅ POOL: MAXIMUM ACTIVITY COMPLETE - Generated ${tradesGenerated.length} trades with ${poolErrors} pool errors`);
+    console.log(`📊 POOL: MASSIVE CHART IMPACT - Total volume: ${tradesGenerated.reduce((sum, t) => sum + t.quantity, 0).toFixed(0)} tokens`);
   }
 
   // MAXIMUM ACTIVITY: Determine ultra-aggressive simulation mode
@@ -289,43 +452,65 @@ export class TraderEngine implements ITraderEngine {
     return position.quantity > 0 ? 'sell' : 'buy';
   }
 
-  // MAXIMUM ACTIVITY: Create high-volume trades for maximum impact
+  // CRITICAL FIX: Enhanced trade creation with proper pool management
   private createMaximumActivityTrade(
     simulation: ExtendedSimulationState, 
     trader: TraderProfile, 
     action: 'buy' | 'sell'
   ): Trade | null {
-    const currentPrice = simulation.currentPrice;
+    let trade: Trade | null = null;
     
-    // MAXIMUM ACTIVITY: Calculate larger trade sizes
-    const baseSize = this.calculateMaximumTradeSize(trader, currentPrice);
-    const priceVariation = (Math.random() - 0.5) * 0.003; // ±0.15% price variation (higher)
-    const tradePrice = currentPrice * (1 + priceVariation);
-    
-    const trade = this.tradePool.acquire();
-    trade.id = `max_${trader.trader.walletAddress.slice(0, 8)}-${simulation.currentTime}-${Math.random().toString(36).substr(2, 8)}`;
-    trade.timestamp = simulation.currentTime;
-    trade.trader = {
-      walletAddress: trader.trader.walletAddress,
-      preferredName: trader.trader.preferredName || trader.trader.walletAddress.slice(0, 8),
-      netPnl: trader.trader.netPnl || 0,
-      position: trader.trader.position || 0,
-      totalVolume: trader.trader.totalVolume || 0,
-      buyVolume: trader.trader.buyVolume || 0,
-      sellVolume: trader.trader.sellVolume || 0,
-      tradeCount: trader.trader.tradeCount || 0,
-      feesUsd: trader.trader.feesUsd || 0,
-      winRate: trader.trader.winRate || 0.5,
-      riskProfile: trader.trader.riskProfile || 'moderate',
-      portfolioEfficiency: trader.trader.portfolioEfficiency || 0
-    };
-    trade.action = action;
-    trade.price = tradePrice;
-    trade.quantity = baseSize;
-    trade.value = tradePrice * baseSize;
-    trade.impact = this.calculateMaximumTradeImpact(simulation, trade.value);
-    
-    return trade;
+    try {
+      // CRITICAL FIX: Acquire trade from pool with error handling
+      trade = this.tradePool.acquire();
+      this.poolUsageMetrics.tradesAcquired++;
+      
+      const currentPrice = simulation.currentPrice;
+      const baseSize = this.calculateMaximumTradeSize(trader, currentPrice);
+      const priceVariation = (Math.random() - 0.5) * 0.003; // ±0.15% price variation (higher)
+      const tradePrice = currentPrice * (1 + priceVariation);
+      
+      // CRITICAL FIX: Populate trade object safely
+      trade.id = `max_${trader.trader.walletAddress.slice(0, 8)}-${simulation.currentTime}-${Math.random().toString(36).substr(2, 8)}`;
+      trade.timestamp = simulation.currentTime;
+      trade.trader = {
+        walletAddress: trader.trader.walletAddress,
+        preferredName: trader.trader.preferredName || trader.trader.walletAddress.slice(0, 8),
+        netPnl: trader.trader.netPnl || 0,
+        position: trader.trader.position || 0,
+        totalVolume: trader.trader.totalVolume || 0,
+        buyVolume: trader.trader.buyVolume || 0,
+        sellVolume: trader.trader.sellVolume || 0,
+        tradeCount: trader.trader.tradeCount || 0,
+        feesUsd: trader.trader.feesUsd || 0,
+        winRate: trader.trader.winRate || 0.5,
+        riskProfile: trader.trader.riskProfile || 'moderate',
+        portfolioEfficiency: trader.trader.portfolioEfficiency || 0
+      };
+      trade.action = action;
+      trade.price = tradePrice;
+      trade.quantity = baseSize;
+      trade.value = tradePrice * baseSize;
+      trade.impact = this.calculateMaximumTradeImpact(simulation, trade.value);
+      
+      return trade;
+      
+    } catch (error) {
+      console.error('❌ POOL: Error creating trade:', error);
+      this.poolUsageMetrics.errors++;
+      
+      // CRITICAL FIX: Release trade if acquired but failed to populate
+      if (trade) {
+        try {
+          this.tradePool.release(trade);
+          this.poolUsageMetrics.tradesReleased++;
+        } catch (releaseError) {
+          console.error('❌ POOL: Error releasing failed trade:', releaseError);
+        }
+      }
+      
+      return null;
+    }
   }
 
   // MAXIMUM ACTIVITY: Calculate much larger trade sizes
@@ -374,7 +559,7 @@ export class TraderEngine implements ITraderEngine {
     return Math.min(0.01, impact); // Max 1% impact per trade (was 0.5%)
   }
 
-  // Update trader position based on trade
+  // CRITICAL FIX: Enhanced position creation with proper pool management
   private updateTraderPosition(
     simulation: ExtendedSimulationState, 
     trader: TraderProfile, 
@@ -385,16 +570,25 @@ export class TraderEngine implements ITraderEngine {
     );
     
     if (!position) {
-      // Create new position
-      position = this.positionPool.acquire();
-      position.trader = trade.trader;
-      position.entryPrice = trade.price;
-      position.quantity = trade.action === 'buy' ? trade.quantity : -trade.quantity;
-      position.entryTime = trade.timestamp;
-      position.currentPnl = 0;
-      position.currentPnlPercentage = 0;
-      
-      simulation.activePositions.push(position);
+      // CRITICAL FIX: Acquire position from pool with error handling
+      try {
+        position = this.positionPool.acquire();
+        this.poolUsageMetrics.positionsAcquired++;
+        
+        position.trader = trade.trader;
+        position.entryPrice = trade.price;
+        position.quantity = trade.action === 'buy' ? trade.quantity : -trade.quantity;
+        position.entryTime = trade.timestamp;
+        position.currentPnl = 0;
+        position.currentPnlPercentage = 0;
+        
+        simulation.activePositions.push(position);
+        
+      } catch (error) {
+        console.error('❌ POOL: Error creating position:', error);
+        this.poolUsageMetrics.errors++;
+        return;
+      }
     } else {
       // Update existing position
       const currentQuantity = position.quantity;
@@ -420,12 +614,18 @@ export class TraderEngine implements ITraderEngine {
         }
       }
       
-      // Remove position if quantity is very small
+      // CRITICAL FIX: Remove position if quantity is very small and release to pool
       if (Math.abs(position.quantity) < 10) {
         const index = simulation.activePositions.indexOf(position);
         if (index > -1) {
           simulation.activePositions.splice(index, 1);
-          this.positionPool.release(position);
+          try {
+            this.positionPool.release(position);
+            this.poolUsageMetrics.positionsReleased++;
+          } catch (releaseError) {
+            console.error('❌ POOL: Error releasing position:', releaseError);
+            this.poolUsageMetrics.errors++;
+          }
         }
       }
     }
@@ -451,27 +651,45 @@ export class TraderEngine implements ITraderEngine {
 
   // Create larger market maker trades
   private createMaximumMarketMakerTrade(simulation: ExtendedSimulationState): Trade | null {
-    const currentPrice = simulation.currentPrice;
-    const spread = this.calculateMarketSpread(simulation);
-    const action = Math.random() > 0.5 ? 'buy' : 'sell';
+    let trade: Trade | null = null;
     
-    const trade = this.tradePool.acquire();
-    trade.id = `max_mm-${simulation.currentTime}-${Math.random().toString(36).substr(2, 9)}`;
-    trade.timestamp = simulation.currentTime;
-    trade.trader = {
-      walletAddress: 'maximum-market-maker',
-      preferredName: 'Maximum Market Maker',
-      netPnl: 0
-    };
-    trade.action = action;
-    trade.price = action === 'buy' 
-      ? currentPrice * (1 - spread)
-      : currentPrice * (1 + spread);
-    trade.quantity = 1000 + Math.random() * 3000; // 1000-4000 tokens (larger)
-    trade.value = trade.price * trade.quantity;
-    trade.impact = 0.0002; // Higher impact for MM trades
-    
-    return trade;
+    try {
+      const currentPrice = simulation.currentPrice;
+      const spread = this.calculateMarketSpread(simulation);
+      const action = Math.random() > 0.5 ? 'buy' : 'sell';
+      
+      trade = this.tradePool.acquire();
+      this.poolUsageMetrics.tradesAcquired++;
+      
+      trade.id = `max_mm-${simulation.currentTime}-${Math.random().toString(36).substr(2, 9)}`;
+      trade.timestamp = simulation.currentTime;
+      trade.trader = {
+        walletAddress: 'maximum-market-maker',
+        preferredName: 'Maximum Market Maker',
+        netPnl: 0
+      };
+      trade.action = action;
+      trade.price = action === 'buy' 
+        ? currentPrice * (1 - spread)
+        : currentPrice * (1 + spread);
+      trade.quantity = 1000 + Math.random() * 3000; // 1000-4000 tokens (larger)
+      trade.value = trade.price * trade.quantity;
+      trade.impact = 0.0002; // Higher impact for MM trades
+      
+      return trade;
+      
+    } catch (error) {
+      console.error('❌ POOL: Error creating market maker trade:', error);
+      if (trade) {
+        try {
+          this.tradePool.release(trade);
+          this.poolUsageMetrics.tradesReleased++;
+        } catch (releaseError) {
+          console.error('❌ POOL: Error releasing failed MM trade:', releaseError);
+        }
+      }
+      return null;
+    }
   }
 
   // Calculate market spread
@@ -501,25 +719,43 @@ export class TraderEngine implements ITraderEngine {
 
   // Create larger retail trades
   private createMaximumRetailTrade(simulation: ExtendedSimulationState): Trade | null {
-    const currentPrice = simulation.currentPrice;
-    const priceVariation = (Math.random() - 0.5) * 0.015; // ±0.75% variation (higher)
-    const action = Math.random() > 0.5 ? 'buy' : 'sell';
+    let trade: Trade | null = null;
     
-    const trade = this.tradePool.acquire();
-    trade.id = `max_retail-${simulation.currentTime}-${Math.random().toString(36).substr(2, 9)}`;
-    trade.timestamp = simulation.currentTime;
-    trade.trader = {
-      walletAddress: `max-retail-${Math.random().toString(36).substr(2, 8)}`,
-      preferredName: 'Maximum Retail Trader',
-      netPnl: 0
-    };
-    trade.action = action;
-    trade.price = currentPrice * (1 + priceVariation);
-    trade.quantity = 200 + Math.random() * 1500; // 200-1700 tokens (larger)
-    trade.value = trade.price * trade.quantity;
-    trade.impact = this.calculateMaximumTradeImpact(simulation, trade.value);
-    
-    return trade;
+    try {
+      const currentPrice = simulation.currentPrice;
+      const priceVariation = (Math.random() - 0.5) * 0.015; // ±0.75% variation (higher)
+      const action = Math.random() > 0.5 ? 'buy' : 'sell';
+      
+      trade = this.tradePool.acquire();
+      this.poolUsageMetrics.tradesAcquired++;
+      
+      trade.id = `max_retail-${simulation.currentTime}-${Math.random().toString(36).substr(2, 9)}`;
+      trade.timestamp = simulation.currentTime;
+      trade.trader = {
+        walletAddress: `max-retail-${Math.random().toString(36).substr(2, 8)}`,
+        preferredName: 'Maximum Retail Trader',
+        netPnl: 0
+      };
+      trade.action = action;
+      trade.price = currentPrice * (1 + priceVariation);
+      trade.quantity = 200 + Math.random() * 1500; // 200-1700 tokens (larger)
+      trade.value = trade.price * trade.quantity;
+      trade.impact = this.calculateMaximumTradeImpact(simulation, trade.value);
+      
+      return trade;
+      
+    } catch (error) {
+      console.error('❌ POOL: Error creating retail trade:', error);
+      if (trade) {
+        try {
+          this.tradePool.release(trade);
+          this.poolUsageMetrics.tradesReleased++;
+        } catch (releaseError) {
+          console.error('❌ POOL: Error releasing failed retail trade:', releaseError);
+        }
+      }
+      return null;
+    }
   }
 
   // MAXIMUM ACTIVITY: Generate aggressive position-related activity
@@ -538,11 +774,17 @@ export class TraderEngine implements ITraderEngine {
       if (closeTrade) {
         tradesGenerated.push(closeTrade);
         
-        // Remove position
+        // Remove position from active list
         const index = simulation.activePositions.indexOf(position);
         if (index > -1) {
           simulation.activePositions.splice(index, 1);
-          this.positionPool.release(position);
+          try {
+            this.positionPool.release(position);
+            this.poolUsageMetrics.positionsReleased++;
+          } catch (releaseError) {
+            console.error('❌ POOL: Error releasing closed position:', releaseError);
+            this.poolUsageMetrics.errors++;
+          }
         }
       }
     });
@@ -557,17 +799,35 @@ export class TraderEngine implements ITraderEngine {
     simulation: ExtendedSimulationState, 
     position: TraderPosition
   ): Trade | null {
-    const trade = this.tradePool.acquire();
-    trade.id = `max_close-${simulation.currentTime}-${Math.random().toString(36).substr(2, 9)}`;
-    trade.timestamp = simulation.currentTime;
-    trade.trader = position.trader;
-    trade.action = position.quantity > 0 ? 'sell' : 'buy';
-    trade.price = simulation.currentPrice;
-    trade.quantity = Math.abs(position.quantity);
-    trade.value = trade.price * trade.quantity;
-    trade.impact = this.calculateMaximumTradeImpact(simulation, trade.value);
+    let trade: Trade | null = null;
     
-    return trade;
+    try {
+      trade = this.tradePool.acquire();
+      this.poolUsageMetrics.tradesAcquired++;
+      
+      trade.id = `max_close-${simulation.currentTime}-${Math.random().toString(36).substr(2, 9)}`;
+      trade.timestamp = simulation.currentTime;
+      trade.trader = position.trader;
+      trade.action = position.quantity > 0 ? 'sell' : 'buy';
+      trade.price = simulation.currentPrice;
+      trade.quantity = Math.abs(position.quantity);
+      trade.value = trade.price * trade.quantity;
+      trade.impact = this.calculateMaximumTradeImpact(simulation, trade.value);
+      
+      return trade;
+      
+    } catch (error) {
+      console.error('❌ POOL: Error creating position close trade:', error);
+      if (trade) {
+        try {
+          this.tradePool.release(trade);
+          this.poolUsageMetrics.tradesReleased++;
+        } catch (releaseError) {
+          console.error('❌ POOL: Error releasing failed close trade:', releaseError);
+        }
+      }
+      return null;
+    }
   }
 
   // MAXIMUM ACTIVITY: Ensure overwhelming activity threshold
@@ -595,24 +855,42 @@ export class TraderEngine implements ITraderEngine {
 
   // Create random trade with maximum parameters
   private createMaximumRandomTrade(simulation: ExtendedSimulationState): Trade | null {
-    const currentPrice = simulation.currentPrice;
-    const action = Math.random() > 0.5 ? 'buy' : 'sell';
+    let trade: Trade | null = null;
     
-    const trade = this.tradePool.acquire();
-    trade.id = `max_random-${simulation.currentTime}-${Math.random().toString(36).substr(2, 9)}`;
-    trade.timestamp = simulation.currentTime;
-    trade.trader = {
-      walletAddress: `max-trader-${Math.random().toString(36).substr(2, 8)}`,
-      preferredName: 'Maximum Random Trader',
-      netPnl: 0
-    };
-    trade.action = action;
-    trade.price = currentPrice * (0.998 + Math.random() * 0.004); // ±0.2% variation
-    trade.quantity = 500 + Math.random() * 2000; // 500-2500 tokens (larger)
-    trade.value = trade.price * trade.quantity;
-    trade.impact = this.calculateMaximumTradeImpact(simulation, trade.value);
-    
-    return trade;
+    try {
+      const currentPrice = simulation.currentPrice;
+      const action = Math.random() > 0.5 ? 'buy' : 'sell';
+      
+      trade = this.tradePool.acquire();
+      this.poolUsageMetrics.tradesAcquired++;
+      
+      trade.id = `max_random-${simulation.currentTime}-${Math.random().toString(36).substr(2, 9)}`;
+      trade.timestamp = simulation.currentTime;
+      trade.trader = {
+        walletAddress: `max-trader-${Math.random().toString(36).substr(2, 8)}`,
+        preferredName: 'Maximum Random Trader',
+        netPnl: 0
+      };
+      trade.action = action;
+      trade.price = currentPrice * (0.998 + Math.random() * 0.004); // ±0.2% variation
+      trade.quantity = 500 + Math.random() * 2000; // 500-2500 tokens (larger)
+      trade.value = trade.price * trade.quantity;
+      trade.impact = this.calculateMaximumTradeImpact(simulation, trade.value);
+      
+      return trade;
+      
+    } catch (error) {
+      console.error('❌ POOL: Error creating random trade:', error);
+      if (trade) {
+        try {
+          this.tradePool.release(trade);
+          this.poolUsageMetrics.tradesReleased++;
+        } catch (releaseError) {
+          console.error('❌ POOL: Error releasing failed random trade:', releaseError);
+        }
+      }
+      return null;
+    }
   }
 
   // MAXIMUM ACTIVITY: Update ALL trader stats from generated trades
@@ -781,12 +1059,14 @@ export class TraderEngine implements ITraderEngine {
       .sort((a, b) => (b.netPnl || 0) - (a.netPnl || 0));
   }
 
+  // CRITICAL FIX: Enhanced cleanup with proper pool release
   integrateProcessedTrades(simulation: ExtendedSimulationState, processedTrades: Trade[]): void {
     if (!this.processedTradesCache.has(simulation.id)) {
       this.processedTradesCache.set(simulation.id, new Set());
     }
     
     const cache = this.processedTradesCache.get(simulation.id)!;
+    let tradesAdded = 0;
     
     processedTrades.forEach(trade => {
       if (cache.has(trade.id)) return;
@@ -796,6 +1076,7 @@ export class TraderEngine implements ITraderEngine {
       const exists = simulation.recentTrades.some(t => t.id === trade.id);
       if (!exists) {
         simulation.recentTrades.unshift(trade);
+        tradesAdded++;
         
         const currentCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
         if (currentCandle) {
@@ -810,6 +1091,7 @@ export class TraderEngine implements ITraderEngine {
       }
     });
     
+    // CRITICAL FIX: Clean up cache and trades with proper pool management
     if (cache.size > 20000) {
       const entriesToDelete = Array.from(cache).slice(0, 10000);
       entriesToDelete.forEach(id => cache.delete(id));
@@ -817,12 +1099,63 @@ export class TraderEngine implements ITraderEngine {
     
     if (simulation.recentTrades.length > 5000) {
       const removed = simulation.recentTrades.splice(5000);
-      removed.forEach(trade => this.tradePool.release(trade));
+      removed.forEach(trade => {
+        try {
+          this.tradePool.release(trade);
+          this.poolUsageMetrics.tradesReleased++;
+        } catch (releaseError) {
+          console.error('❌ POOL: Error releasing integrated trade:', releaseError);
+          this.poolUsageMetrics.errors++;
+        }
+      });
+    }
+    
+    if (tradesAdded > 0) {
+      console.log(`✅ POOL: Integrated ${tradesAdded} processed trades with proper pool management`);
     }
   }
 
+  // CRITICAL FIX: Enhanced cleanup method
   cleanup(): void {
+    console.log('🧹 POOL: Starting TraderEngine cleanup with pool release...');
+    
+    // Stop pool monitoring
+    if (this.poolMonitoringInterval) {
+      clearInterval(this.poolMonitoringInterval);
+    }
+    
+    // Release all objects from pools
+    try {
+      this.tradePool.releaseAll();
+      this.positionPool.releaseAll();
+      console.log('✅ POOL: Released all pool objects');
+    } catch (releaseError) {
+      console.error('❌ POOL: Error releasing all pool objects:', releaseError);
+    }
+    
+    // Clear caches
     this.processedTradesCache.clear();
-    console.log('MAXIMUM ACTIVITY TraderEngine cleanup complete');
+    
+    // Log final metrics
+    this.logPoolMetrics();
+    
+    console.log('✅ POOL: TraderEngine cleanup completed');
+    console.log(`📊 POOL: Final metrics - Acquired: ${this.poolUsageMetrics.tradesAcquired}, Released: ${this.poolUsageMetrics.tradesReleased}, Errors: ${this.poolUsageMetrics.errors}`);
+  }
+
+  // CRITICAL FIX: Get pool health status for monitoring
+  getPoolHealth(): {
+    trade: { healthy: boolean; stats: any; issues: string[] };
+    position: { healthy: boolean; stats: any; issues: string[] };
+    metrics: typeof this.poolUsageMetrics;
+  } {
+    const tradeHealth = this.tradePool.healthCheck();
+    const positionHealth = this.positionPool.healthCheck();
+    
+    return {
+      trade: tradeHealth,
+      position: positionHealth,
+      metrics: { ...this.poolUsageMetrics }
+    };
   }
 }
