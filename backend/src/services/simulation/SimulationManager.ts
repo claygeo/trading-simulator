@@ -59,9 +59,7 @@ export class SimulationManager {
   private simulationRegistrationStatus: Map<string, 'creating' | 'registering' | 'ready' | 'starting' | 'running'> = new Map();
   private registrationCallbacks: Map<string, ((status: string) => void)[]> = new Map();
   
-  // 🔧 CRITICAL FIX: Strict CandleManager singleton pattern
-  private static candleManagerInstances: Map<string, CandleManager> = new Map();
-  private static candleManagerLocks: Map<string, boolean> = new Map();
+  // 🔧 CRITICAL FIX: Remove static CandleManager handling - use singleton pattern
   private externalCandleUpdateCallback?: CandleUpdateCallback;
 
   private marketEngine!: MarketEngine;
@@ -130,130 +128,15 @@ export class SimulationManager {
     this.performanceOptimizer.startPerformanceMonitoring();
   }
 
-  // 🔧 CRITICAL FIX: Bulletproof CandleManager singleton per simulation
-  private static getOrCreateCandleManager(simulationId: string, candleInterval: number): CandleManager {
-    console.log(`🕯️ CRITICAL: Getting CandleManager for ${simulationId} with interval ${candleInterval}ms`);
-    
-    // Check if already exists
-    if (SimulationManager.candleManagerInstances.has(simulationId)) {
-      const existing = SimulationManager.candleManagerInstances.get(simulationId)!;
-      console.log(`♻️ REUSING: Existing CandleManager for ${simulationId}`);
-      return existing;
-    }
-    
-    // Check if creation is in progress (prevent race conditions)
-    if (SimulationManager.candleManagerLocks.get(simulationId)) {
-      console.warn(`⚠️ BLOCKED: CandleManager creation already in progress for ${simulationId}`);
-      // Wait for existing creation to complete
-      const waitForCreation = (): CandleManager => {
-        if (SimulationManager.candleManagerInstances.has(simulationId)) {
-          return SimulationManager.candleManagerInstances.get(simulationId)!;
-        }
-        // Fallback: create anyway if waiting fails
-        console.warn(`⚠️ FALLBACK: Creating CandleManager despite lock for ${simulationId}`);
-        return new CandleManager(candleInterval);
-      };
-      return waitForCreation();
-    }
-    
-    // Lock creation to prevent duplicates
-    SimulationManager.candleManagerLocks.set(simulationId, true);
-    
-    try {
-      // Double-check after acquiring lock
-      if (SimulationManager.candleManagerInstances.has(simulationId)) {
-        const existing = SimulationManager.candleManagerInstances.get(simulationId)!;
-        console.log(`♻️ DOUBLE-CHECK: Found existing CandleManager for ${simulationId}`);
-        return existing;
-      }
-      
-      // Create new instance
-      console.log(`🆕 CREATING: New CandleManager for ${simulationId} (interval: ${candleInterval}ms)`);
-      const newManager = new CandleManager(candleInterval);
-      
-      // Store in singleton map
-      SimulationManager.candleManagerInstances.set(simulationId, newManager);
-      
-      // Initialize with clean state
-      newManager.clear();
-      
-      console.log(`✅ CREATED: CandleManager registered for ${simulationId}`);
-      console.log(`📊 TOTAL: ${SimulationManager.candleManagerInstances.size} CandleManager instances`);
-      
-      return newManager;
-      
-    } finally {
-      // Always release lock
-      SimulationManager.candleManagerLocks.delete(simulationId);
-    }
-  }
-
-  // 🔧 CRITICAL FIX: Cleanup specific CandleManager instance
-  private static cleanupCandleManager(simulationId: string): void {
-    console.log(`🧹 CLEANUP: Removing CandleManager for ${simulationId}`);
-    
-    const manager = SimulationManager.candleManagerInstances.get(simulationId);
-    if (manager) {
-      try {
-        manager.shutdown();
-        console.log(`🛑 SHUTDOWN: CandleManager stopped for ${simulationId}`);
-      } catch (error) {
-        console.warn(`⚠️ CLEANUP WARNING: Error shutting down CandleManager for ${simulationId}:`, error);
-      }
-      
-      SimulationManager.candleManagerInstances.delete(simulationId);
-      console.log(`🗑️ REMOVED: CandleManager unregistered for ${simulationId}`);
-    } else {
-      console.log(`❓ NO CLEANUP: No CandleManager found for ${simulationId}`);
-    }
-    
-    // Clean up any lingering locks
-    SimulationManager.candleManagerLocks.delete(simulationId);
-    
-    console.log(`📊 REMAINING: ${SimulationManager.candleManagerInstances.size} CandleManager instances`);
-  }
-
-  // 🔧 CRITICAL FIX: Get CandleManager safely
+  // 🔧 CRITICAL FIX: Get CandleManager safely using singleton pattern
   private getCandleManager(simulationId: string): CandleManager | null {
-    const manager = SimulationManager.candleManagerInstances.get(simulationId);
-    if (!manager) {
-      console.warn(`⚠️ MISSING: No CandleManager found for ${simulationId}`);
+    try {
+      // Try to get existing instance first
+      return CandleManager.getInstance(simulationId);
+    } catch (error) {
+      console.warn(`⚠️ MISSING: No CandleManager found for ${simulationId}:`, error);
       return null;
     }
-    return manager;
-  }
-
-  // 🔧 CRITICAL FIX: List all active CandleManager instances for debugging
-  public static debugCandleManagers(): void {
-    console.log(`🔍 DEBUG: ${SimulationManager.candleManagerInstances.size} CandleManager instances:`);
-    for (const [simId, manager] of SimulationManager.candleManagerInstances.entries()) {
-      const stats = manager.getStats();
-      console.log(`  📊 ${simId}: ${stats.candleCount} candles, interval=${stats.candleInterval}ms, active=${!stats.isResetting}`);
-    }
-    
-    console.log(`🔒 LOCKS: ${SimulationManager.candleManagerLocks.size} creation locks:`);
-    for (const [simId, locked] of SimulationManager.candleManagerLocks.entries()) {
-      console.log(`  🔒 ${simId}: ${locked ? 'LOCKED' : 'UNLOCKED'}`);
-    }
-  }
-
-  // 🔧 CRITICAL FIX: Emergency cleanup all CandleManagers
-  public static emergencyCleanupAllCandleManagers(): void {
-    console.log(`🚨 EMERGENCY: Cleaning up ALL ${SimulationManager.candleManagerInstances.size} CandleManager instances`);
-    
-    for (const [simId, manager] of SimulationManager.candleManagerInstances.entries()) {
-      try {
-        manager.shutdown();
-        console.log(`🛑 Emergency shutdown: ${simId}`);
-      } catch (error) {
-        console.warn(`⚠️ Emergency shutdown error for ${simId}:`, error);
-      }
-    }
-    
-    SimulationManager.candleManagerInstances.clear();
-    SimulationManager.candleManagerLocks.clear();
-    
-    console.log(`✅ EMERGENCY CLEANUP: All CandleManager instances removed`);
   }
 
   private calculateDynamicCandleInterval(baseInterval: number): number {
@@ -549,7 +432,7 @@ export class SimulationManager {
       
       // 🔧 CRITICAL FIX: Use singleton CandleManager
       const dynamicInterval = this.getPriceCategoryCandleInterval(simulation.currentPrice);
-      const candleManager = SimulationManager.getOrCreateCandleManager(simulationId, dynamicInterval);
+      const candleManager = CandleManager.getInstance(simulationId, dynamicInterval);
       
       if (this.externalCandleUpdateCallback) {
         this.externalCandleUpdateCallback.ensureCleanStart(simulationId);
@@ -576,7 +459,7 @@ export class SimulationManager {
       this.notifyRegistrationCallbacks(simulationId, 'error');
       
       // 🔧 CRITICAL FIX: Cleanup on error
-      SimulationManager.cleanupCandleManager(simulationId);
+      CandleManager.cleanup(simulationId);
       
       const emergencySimulation = await this.createSimulationWithDummyTraders(simulationId, parameters);
       this.simulationRegistrationStatus.set(simulationId, 'ready');
@@ -695,7 +578,7 @@ export class SimulationManager {
       dynamicInitialPrice = this.marketEngine.generateRandomTokenPrice(priceRange);
       
       const priceInfo = this.marketEngine.getPriceCategory(dynamicInitialPrice);
-      console.log(`🎲 DYNAMIC PRICE: Generated $${dynamicInitialPrice} (${priceInfo.description}: ${priceInfo.range})`);
+      console.log(`🎲 DYNAMIC PRICE: Generated ${dynamicInitialPrice} (${priceInfo.description}: ${priceInfo.range})`);
     }
     
     const defaultParams: SimulationParameters = {
@@ -724,7 +607,7 @@ export class SimulationManager {
     timeframeConfig.interval = dynamicInterval;
     
     // 🔧 CRITICAL FIX: Use singleton CandleManager and initialize properly
-    const candleManager = SimulationManager.getOrCreateCandleManager(simulationId, dynamicInterval);
+    const candleManager = CandleManager.getInstance(simulationId, dynamicInterval);
     candleManager.clear();
     
     const currentRealTime = Date.now();
@@ -732,12 +615,12 @@ export class SimulationManager {
     const currentPrice = finalParams.initialPrice;
     
     console.log(`🚀 SIMULATION CREATED: ${simulationId}`);
-    console.log(`   💰 Starting Price: $${currentPrice}`);
-    console.log(`   💧 Liquidity Pool: $${(finalParams.initialLiquidity / 1000000).toFixed(2)}M`);
+    console.log(`   💰 Starting Price: ${currentPrice}`);
+    console.log(`   💧 Liquidity Pool: ${(finalParams.initialLiquidity / 1000000).toFixed(2)}M`);
     console.log(`   ⚡ Speed: ${finalParams.timeCompressionFactor}x`);
     console.log(`   🕯️ Candle Interval: ${dynamicInterval}ms`);
     console.log(`   🎯 Price Category: ${this.marketEngine.getPriceCategory(currentPrice).description}`);
-    console.log(`   📊 CandleManager: SINGLETON (total: ${SimulationManager.candleManagerInstances.size})`);
+    console.log(`   📊 CandleManager: SINGLETON`);
     
     const simulation: ExtendedSimulationState = {
       id: simulationId,
@@ -1003,7 +886,7 @@ export class SimulationManager {
     simulation.currentTime = currentTime;
     
     console.log(`✅ FIXED: Generated ${candles.length} proper OHLCV candles for ${simulation.id}`);
-    console.log(`   💰 Final Price: $${currentPrice.toFixed(6)}`);
+    console.log(`   💰 Final Price: ${currentPrice.toFixed(6)}`);
     console.log(`   📊 Candles: ${candles.length} with realistic OHLCV data`);
   }
 
@@ -1022,7 +905,16 @@ export class SimulationManager {
   private advanceSimulation(id: string): void {
     const simulation = this.simulations.get(id);
     
+    // CRITICAL FIX: Enhanced pause check - must check BOTH conditions
     if (!simulation || !simulation.isRunning || simulation.isPaused) {
+      // Log why simulation was skipped for debugging
+      if (!simulation) {
+        console.warn(`⚠️ [ADVANCE] Simulation ${id} not found, skipping advance`);
+      } else if (!simulation.isRunning) {
+        console.warn(`⚠️ [ADVANCE] Simulation ${id} not running, skipping advance`);
+      } else if (simulation.isPaused) {
+        console.log(`⏸️ [ADVANCE] Simulation ${id} is paused, skipping advance`);
+      }
       return;
     }
     
@@ -1283,7 +1175,7 @@ export class SimulationManager {
     return simulation.recentTrades.length + simulation.closedPositions.length * 2;
   }
 
-  // CRITICAL FIX: Enhanced pauseSimulation with proper state management
+  // CRITICAL FIX: Enhanced pauseSimulation with proper state management and candle stopping
   pauseSimulation(id: string): void {
     console.log(`⏸️ [PAUSE] Attempting to pause simulation ${id}`);
     
@@ -1296,7 +1188,7 @@ export class SimulationManager {
         throw error;
       }
       
-      // CRITICAL FIX: Proper state validation to prevent isRunning=true && isPaused=true
+      // CRITICAL FIX: Proper state validation to prevent invalid states
       console.log(`🔍 [PAUSE] Current simulation state - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`);
       
       // State validation with clear logic
@@ -1322,17 +1214,30 @@ export class SimulationManager {
       // Store the updated simulation state
       this.simulations.set(id, simulation);
       
-      // Stop the simulation interval
+      // CRITICAL FIX: Stop the simulation interval to prevent data generation
       const interval = this.simulationIntervals.get(id);
       if (interval) {
         clearInterval(interval);
         this.simulationIntervals.delete(id);
-        console.log(`⏸️ [PAUSE] Cleared simulation interval for ${id}`);
+        console.log(`⏸️ [PAUSE] Cleared simulation interval for ${id} - NO MORE DATA GENERATION`);
       }
       
       // CRITICAL FIX: Stop TPS metrics tracking when paused to prevent spam
       this.stopTPSMetricsTracking(id);
       console.log(`📊 [PAUSE] Stopped TPS metrics tracking for paused simulation ${id}`);
+      
+      // CRITICAL FIX: Stop CandleManager updates - this prevents candle generation
+      const candleManager = this.getCandleManager(id);
+      if (candleManager) {
+        // Force finalize any current candle to prevent partial candles
+        candleManager.forceFinalizeCurrent();
+        console.log(`🕯️ [PAUSE] Finalized current candle and stopped CandleManager updates for ${id}`);
+      }
+      
+      // CRITICAL FIX: Stop external candle updates
+      if (this.externalCandleUpdateCallback) {
+        console.log(`🔗 [PAUSE] External candle coordinator notified of pause for ${id}`);
+      }
       
       // Broadcast the pause state - use the current state which shows paused but still "running" (can be resumed)
       this.broadcastService.broadcastSimulationStatus(
@@ -1344,6 +1249,7 @@ export class SimulationManager {
       );
       
       console.log(`✅ [PAUSE] Successfully paused simulation ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
+      console.log(`🛑 [PAUSE] ALL DATA GENERATION STOPPED for ${id} - interval cleared, TPS stopped, candles stopped`);
       
     } catch (error) {
       console.error(`❌ [PAUSE] Error pausing simulation ${id}:`, error);
@@ -1403,16 +1309,22 @@ export class SimulationManager {
       // Store the updated simulation state
       this.simulations.set(id, simulation);
       
-      // Restart the simulation interval
+      // CRITICAL FIX: Restart the simulation interval to resume data generation
       if (!this.simulationIntervals.has(id)) {
         this.startSimulationLoop(id);
-        console.log(`▶️ [RESUME] Restarted simulation interval for ${id}`);
+        console.log(`▶️ [RESUME] Restarted simulation interval for ${id} - DATA GENERATION RESUMED`);
       }
       
       // CRITICAL FIX: Restart TPS metrics tracking when resumed
       if (!this.metricsUpdateIntervals.has(id)) {
         this.startTPSMetricsTracking(id);
         console.log(`📊 [RESUME] Restarted TPS metrics tracking for resumed simulation ${id}`);
+      }
+      
+      // CRITICAL FIX: Resume CandleManager updates
+      const candleManager = this.getCandleManager(id);
+      if (candleManager) {
+        console.log(`🕯️ [RESUME] CandleManager ready to resume updates for ${id}`);
       }
       
       // Broadcast the resume state
@@ -1425,6 +1337,7 @@ export class SimulationManager {
       );
       
       console.log(`✅ [RESUME] Successfully resumed simulation ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
+      console.log(`🚀 [RESUME] ALL DATA GENERATION RESUMED for ${id} - interval restarted, TPS restarted, candles active`);
       
     } catch (error) {
       console.error(`❌ [RESUME] Error resuming simulation ${id}:`, error);
@@ -1606,7 +1519,7 @@ export class SimulationManager {
     const dynamicInterval = this.getPriceCategoryCandleInterval(newDynamicPrice);
     timeframeConfig.interval = dynamicInterval;
     
-    // 🔧 CRITICAL FIX: Reset CandleManager properly
+    // 🔧 CRITICAL FIX: Reset CandleManager properly using singleton
     const candleManager = this.getCandleManager(id);
     if (candleManager) {
       candleManager.clear();
@@ -1703,7 +1616,7 @@ export class SimulationManager {
     }
     
     // 🔧 CRITICAL FIX: Cleanup CandleManager singleton
-    SimulationManager.cleanupCandleManager(id);
+    CandleManager.cleanup(id);
     
     this.simulationSpeeds.delete(id);
     this.simulationTimeframes.delete(id);
@@ -1713,7 +1626,6 @@ export class SimulationManager {
     this.simulations.delete(id);
     
     console.log(`✅ DELETED: Simulation ${id} completely cleaned up`);
-    SimulationManager.debugCandleManagers(); // Debug remaining instances
   }
 
   async setTPSModeAsync(simulationId: string, mode: string): Promise<{
@@ -1947,8 +1859,10 @@ export class SimulationManager {
       }
     });
     
-    // 🔧 CRITICAL FIX: Emergency cleanup all CandleManager instances
-    SimulationManager.emergencyCleanupAllCandleManagers();
+    // 🔧 CRITICAL FIX: Cleanup all CandleManager instances
+    this.simulations.forEach((simulation, id) => {
+      CandleManager.cleanup(id);
+    });
     
     this.simulationRegistrationStatus.clear();
     this.registrationCallbacks.clear();
@@ -2052,27 +1966,37 @@ export class SimulationManager {
     ];
   }
 
-  // 🔧 CRITICAL FIX: Debug methods for monitoring CandleManager instances
   public getCandleManagerStats(): { [simulationId: string]: any } {
     const stats: { [simulationId: string]: any } = {};
     
-    for (const [simId, manager] of SimulationManager.candleManagerInstances.entries()) {
-      try {
-        stats[simId] = manager.getStats();
-      } catch (error) {
-        stats[simId] = { error: 'Failed to get stats', message: error instanceof Error ? error.message : 'Unknown error' };
+    this.simulations.forEach((simulation, simulationId) => {
+      const candleManager = this.getCandleManager(simulationId);
+      if (candleManager) {
+        try {
+          stats[simulationId] = candleManager.getStats();
+        } catch (error) {
+          stats[simulationId] = { error: 'Failed to get stats', message: error instanceof Error ? error.message : 'Unknown error' };
+        }
+      } else {
+        stats[simulationId] = { error: 'CandleManager not found' };
       }
-    }
+    });
     
     return stats;
   }
 
   public debugCandleManagerInstances(): void {
-    SimulationManager.debugCandleManagers();
-  }
-
-  public emergencyCleanupCandleManagers(): void {
-    SimulationManager.emergencyCleanupAllCandleManagers();
+    console.log(`🔍 [DEBUG] Active CandleManager instances for ${this.simulations.size} simulations:`);
+    
+    this.simulations.forEach((simulation, simulationId) => {
+      const candleManager = this.getCandleManager(simulationId);
+      if (candleManager) {
+        const stats = candleManager.getStats();
+        console.log(`  📊 ${simulationId}: ${stats.candleCount} candles, interval=${stats.candleInterval}ms, active=${!stats.isResetting}`);
+      } else {
+        console.log(`  ❌ ${simulationId}: No CandleManager found`);
+      }
+    });
   }
 }
 
