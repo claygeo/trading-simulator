@@ -1,4 +1,4 @@
-// backend/src/services/broadcastManager.ts - FIXED: Interface Mismatch Resolution
+// backend/src/services/broadcastManager.ts - FIXED: Null Safety & Interface Mismatch Resolution
 import { WebSocket, WebSocketServer } from 'ws';
 
 interface UpdateMessage {
@@ -48,7 +48,13 @@ export class BroadcastManager {
     connectionErrors: 0
   };
   
-  constructor(private wss: WebSocketServer) {
+  constructor(private wss?: WebSocketServer) {
+    // CRITICAL FIX: Handle case where WebSocketServer might be undefined
+    console.log('🚀 BroadcastManager initializing...', {
+      webSocketServerProvided: !!wss,
+      webSocketServerHasClients: !!(wss?.clients)
+    });
+    
     // Start the broadcast interval for batched updates
     this.broadcastInterval = setInterval(() => {
       this.flushUpdates();
@@ -59,7 +65,7 @@ export class BroadcastManager {
       this.calculateMetrics();
     }, 1000);
     
-    console.log('✅ BroadcastManager initialized with FIXED interface methods');
+    console.log('✅ BroadcastManager initialized with FIXED interface methods and null safety');
   }
   
   // CRITICAL FIX: Add missing addClient method
@@ -393,7 +399,7 @@ export class BroadcastManager {
   }
   
   // CRITICAL FIX: Completely rewritten flushUpdates with proper error handling
-  private async flushUpdates(): void {
+  private async flushUpdates(): Promise<void> {
     if (this.updateBuffer.size === 0) return;
     
     const startTime = Date.now();
@@ -706,8 +712,14 @@ export class BroadcastManager {
     });
   }
   
-  // CRITICAL FIX: Enhanced broadcast to all with explicit text frames
+  // CRITICAL FIX: Enhanced broadcast to all with explicit text frames and null safety
   broadcastToAll(message: any): void {
+    // CRITICAL FIX: Check if WebSocket server is available
+    if (!this.wss || !this.wss.clients) {
+      console.warn('⚠️ FIXED: WebSocket server not available for broadcast to all');
+      return;
+    }
+    
     // CRITICAL FIX: Ensure message has proper structure
     const formattedMessage = {
       simulationId: message.simulationId || 'broadcast',
@@ -833,10 +845,22 @@ export class BroadcastManager {
       totalQueueDepth / this.updateBuffer.size : 0;
   }
   
-  // CRITICAL FIX: Enhanced statistics with fixed client tracking
+  // CRITICAL FIX: Enhanced statistics with NULL SAFETY
   getStats() {
+    // CRITICAL FIX: Add comprehensive null safety checks
+    const webSocketServerAvailable = !!(this.wss && this.wss.clients);
+    const connectedClients = webSocketServerAvailable ? this.wss!.clients.size : 0;
+    
+    console.log('📊 FIXED: Getting stats with null safety:', {
+      webSocketServerAvailable,
+      connectedClients,
+      activeSubscriptions: this.clientSubscriptions.size,
+      simulationClients: this.simulationClients.size
+    });
+    
     const stats = {
-      connectedClients: this.wss.clients.size,
+      // CRITICAL FIX: Use safe client count
+      connectedClients: connectedClients,
       activeSubscriptions: this.clientSubscriptions.size,
       simulationClients: this.simulationClients.size,
       bufferedUpdates: 0,
@@ -858,10 +882,17 @@ export class BroadcastManager {
       clientsAdded: this.metrics.clientsAdded,
       clientsRemoved: this.metrics.clientsRemoved,
       connectionErrors: this.metrics.connectionErrors,
+      
+      // CRITICAL FIX: Add WebSocket server status
+      webSocketServerStatus: webSocketServerAvailable ? 'available' : 'not_available',
+      webSocketServerAvailable: webSocketServerAvailable,
+      nullSafetyApplied: true,
+      
       clientManagement: {
         addClientAvailable: true,
         removeClientAvailable: true,
-        interfaceFixed: true
+        interfaceFixed: true,
+        nullSafetyApplied: true
       }
     };
     
@@ -920,8 +951,11 @@ export class BroadcastManager {
   
   // Enhanced debug method with fixed client tracking
   debugSubscriptions(): void {
-    console.log('=== BroadcastManager Debug (INTERFACE FIXED) ===');
-    console.log('Total WebSocket clients:', this.wss.clients.size);
+    const webSocketServerAvailable = !!(this.wss && this.wss.clients);
+    
+    console.log('=== BroadcastManager Debug (NULL SAFETY APPLIED) ===');
+    console.log('WebSocket server available:', webSocketServerAvailable);
+    console.log('Total WebSocket clients:', webSocketServerAvailable ? this.wss!.clients.size : 0);
     console.log('Active subscriptions:', this.clientSubscriptions.size);
     console.log('Simulation clients:', this.simulationClients.size);
     console.log('Messages sent:', this.metrics.totalMessagesSent);
@@ -958,6 +992,7 @@ export class BroadcastManager {
     console.log('  - addClient: ✅ FIXED');
     console.log('  - removeClient: ✅ FIXED');
     console.log('  - registerClient: ✅ Enhanced');
+    console.log('  - getStats: ✅ NULL SAFETY APPLIED');
   }
   
   // Test broadcast functionality with fixed interface
@@ -966,26 +1001,32 @@ export class BroadcastManager {
       type: 'test_broadcast',
       timestamp: Date.now(),
       data: {
-        message: 'Test broadcast from FIXED BroadcastManager',
+        message: 'Test broadcast from NULL SAFE BroadcastManager',
         time: new Date().toISOString(),
         metrics: this.getStats(),
         interfaceTests: {
           addClientMethod: 'available',
           removeClientMethod: 'available',
           clientTracking: 'fixed',
-          errorHandling: 'enhanced'
+          errorHandling: 'enhanced',
+          nullSafety: 'applied'
         }
       }
     };
     
-    console.log(`🧪 FIXED: Sending test broadcast to simulation ${simulationId}`);
+    console.log(`🧪 FIXED: Sending test broadcast to simulation ${simulationId} with null safety`);
     this.sendImmediateUpdate(simulationId, testEvent);
   }
   
-  // CRITICAL FIX: Health check method
+  // CRITICAL FIX: Health check method with null safety
   healthCheck(): { healthy: boolean; issues: string[]; stats: any } {
     const stats = this.getStats();
     const issues: string[] = [];
+    
+    // Check WebSocket server availability
+    if (!this.wss || !this.wss.clients) {
+      issues.push('WebSocket server not available');
+    }
     
     // Check for interface issues
     if (this.metrics.connectionErrors > this.metrics.clientsAdded * 0.1) {
@@ -1016,9 +1057,9 @@ export class BroadcastManager {
     };
   }
   
-  // Cleanup
+  // Cleanup with null safety
   shutdown(): void {
-    console.log('🔄 FIXED: BroadcastManager shutting down with proper cleanup...');
+    console.log('🔄 FIXED: BroadcastManager shutting down with null safety...');
     
     clearInterval(this.broadcastInterval);
     this.updateBuffer.clear();
@@ -1031,7 +1072,7 @@ export class BroadcastManager {
     this.clientSubscriptions.clear();
     this.simulationClients.clear();
     
-    console.log('🔄 FIXED: BroadcastManager shut down');
+    console.log('🔄 FIXED: BroadcastManager shut down with null safety');
     console.log(`📊 FIXED: Final stats: ${this.metrics.totalMessagesSent} messages sent, ${this.metrics.textFramesSent} text frames, ${this.metrics.totalBatchesSent} batches sent, ${this.metrics.corruptedBatches} corrupted batches, ${this.metrics.clientsAdded} clients added, ${this.metrics.clientsRemoved} clients removed`);
   }
 }
