@@ -1,4 +1,4 @@
-// backend/src/services/broadcastManager.ts - FIXED BATCH UPDATE CORRUPTION
+// backend/src/services/broadcastManager.ts - FIXED: Interface Mismatch Resolution
 import { WebSocket, WebSocketServer } from 'ws';
 
 interface UpdateMessage {
@@ -30,6 +30,10 @@ export class BroadcastManager {
     'simulation_reset', 
     'simulation_state'
   ]);
+  
+  // CRITICAL FIX: Add client management by simulation
+  private simulationClients: Map<string, Set<WebSocket>> = new Map();
+  
   private metrics = {
     totalMessagesSent: 0,
     totalBatchesSent: 0,
@@ -38,7 +42,10 @@ export class BroadcastManager {
     textFramesSent: 0,
     binaryFramesSent: 0,
     serializationErrors: 0,
-    corruptedBatches: 0
+    corruptedBatches: 0,
+    clientsAdded: 0,
+    clientsRemoved: 0,
+    connectionErrors: 0
   };
   
   constructor(private wss: WebSocketServer) {
@@ -52,24 +59,105 @@ export class BroadcastManager {
       this.calculateMetrics();
     }, 1000);
     
-    console.log('✅ BroadcastManager initialized with batch corruption fixes');
+    console.log('✅ BroadcastManager initialized with FIXED interface methods');
   }
   
-  // Register a client that's already connected
-  registerClient(ws: WebSocket, simulationId?: string) {
+  // CRITICAL FIX: Add missing addClient method
+  addClient(simulationId: string, client: WebSocket): void {
+    console.log(`📡 FIXED: Adding client to simulation ${simulationId}`);
+    
+    try {
+      // Add to simulation clients map
+      if (!this.simulationClients.has(simulationId)) {
+        this.simulationClients.set(simulationId, new Set());
+      }
+      this.simulationClients.get(simulationId)!.add(client);
+      
+      // Add to client subscriptions
+      this.clientSubscriptions.set(client, {
+        simulationId: simulationId,
+        lastUpdate: Date.now(),
+        compressionEnabled: false,
+        messageCount: 0
+      });
+      
+      this.metrics.clientsAdded++;
+      
+      // Set up message handlers
+      this.setupClientHandlers(client);
+      
+      console.log(`✅ FIXED: Client added to simulation ${simulationId}. Total clients: ${this.simulationClients.get(simulationId)?.size || 0}`);
+      
+    } catch (error) {
+      console.error('❌ FIXED: Error adding client:', error);
+      this.metrics.connectionErrors++;
+    }
+  }
+  
+  // CRITICAL FIX: Add missing removeClient method
+  removeClient(simulationId: string, client: WebSocket): void {
+    console.log(`📡 FIXED: Removing client from simulation ${simulationId}`);
+    
+    try {
+      // Remove from simulation clients map
+      if (this.simulationClients.has(simulationId)) {
+        this.simulationClients.get(simulationId)!.delete(client);
+        
+        // Clean up empty simulation client sets
+        if (this.simulationClients.get(simulationId)!.size === 0) {
+          this.simulationClients.delete(simulationId);
+          console.log(`🧹 FIXED: Cleaned up empty client set for simulation ${simulationId}`);
+        }
+      }
+      
+      // Remove from client subscriptions
+      this.clientSubscriptions.delete(client);
+      
+      this.metrics.clientsRemoved++;
+      
+      // Clean up client handlers
+      this.cleanupClientHandlers(client);
+      
+      console.log(`✅ FIXED: Client removed from simulation ${simulationId}. Remaining clients: ${this.simulationClients.get(simulationId)?.size || 0}`);
+      
+    } catch (error) {
+      console.error('❌ FIXED: Error removing client:', error);
+      this.metrics.connectionErrors++;
+    }
+  }
+  
+  // CRITICAL FIX: Enhanced registerClient method that works with new interface
+  registerClient(ws: WebSocket, simulationId?: string): void {
+    console.log('📡 FIXED: Registering client with enhanced interface compatibility');
+    
     // Don't re-register if already exists
     if (this.clientSubscriptions.has(ws)) {
       console.log('Client already registered in BroadcastManager');
       return;
     }
     
-    this.clientSubscriptions.set(ws, {
-      simulationId: simulationId || '',
-      lastUpdate: Date.now(),
-      compressionEnabled: false, // Always false to prevent Blob conversion
-      messageCount: 0
-    });
+    const defaultSimulationId = simulationId || '';
     
+    // Use addClient method for consistency
+    if (defaultSimulationId) {
+      this.addClient(defaultSimulationId, ws);
+    } else {
+      // Handle case where no simulation ID is provided
+      this.clientSubscriptions.set(ws, {
+        simulationId: '',
+        lastUpdate: Date.now(),
+        compressionEnabled: false,
+        messageCount: 0
+      });
+      
+      this.setupClientHandlers(ws);
+    }
+    
+    console.log('✅ FIXED: Client registered with enhanced interface');
+  }
+  
+  // CRITICAL FIX: Setup client handlers with proper cleanup
+  private setupClientHandlers(ws: WebSocket): void {
     // Listen for subscription messages
     const messageHandler = (data: Buffer) => {
       try {
@@ -91,29 +179,95 @@ export class BroadcastManager {
     ws.on('message', messageHandler);
     
     // Clean up on close
-    ws.on('close', () => {
-      this.clientSubscriptions.delete(ws);
-      // Remove the message handler
+    const closeHandler = () => {
+      this.handleClientDisconnection(ws);
+    };
+    
+    (ws as any)._broadcastCloseHandler = closeHandler;
+    ws.on('close', closeHandler);
+    
+    // Handle errors
+    const errorHandler = (error: Error) => {
+      console.error('❌ FIXED: WebSocket client error:', error);
+      this.handleClientDisconnection(ws);
+    };
+    
+    (ws as any)._broadcastErrorHandler = errorHandler;
+    ws.on('error', errorHandler);
+  }
+  
+  // CRITICAL FIX: Cleanup client handlers
+  private cleanupClientHandlers(ws: WebSocket): void {
+    try {
+      // Remove message handler
       if ((ws as any)._broadcastMessageHandler) {
         ws.off('message', (ws as any)._broadcastMessageHandler);
         delete (ws as any)._broadcastMessageHandler;
       }
-    });
-    
-    console.log('✅ Client registered in BroadcastManager');
-  }
-  
-  private handleSubscription(ws: WebSocket, simulationId: string) {
-    const subscription = this.clientSubscriptions.get(ws);
-    if (subscription) {
-      subscription.simulationId = simulationId;
-      subscription.lastUpdate = Date.now();
-      console.log(`📡 BroadcastManager: Client subscribed to simulation ${simulationId}`);
+      
+      // Remove close handler
+      if ((ws as any)._broadcastCloseHandler) {
+        ws.off('close', (ws as any)._broadcastCloseHandler);
+        delete (ws as any)._broadcastCloseHandler;
+      }
+      
+      // Remove error handler
+      if ((ws as any)._broadcastErrorHandler) {
+        ws.off('error', (ws as any)._broadcastErrorHandler);
+        delete (ws as any)._broadcastErrorHandler;
+      }
+    } catch (error) {
+      console.error('❌ FIXED: Error cleaning up client handlers:', error);
     }
   }
   
-  // NEW METHOD: Direct broadcast to specific simulation
-  broadcastToSimulation(simulationId: string, message: any) {
+  // CRITICAL FIX: Handle client disconnection with proper cleanup
+  private handleClientDisconnection(ws: WebSocket): void {
+    console.log('🔌 FIXED: Handling client disconnection with proper cleanup');
+    
+    // Find which simulation this client was subscribed to
+    const subscription = this.clientSubscriptions.get(ws);
+    if (subscription && subscription.simulationId) {
+      this.removeClient(subscription.simulationId, ws);
+    } else {
+      // Clean up from general subscriptions
+      this.clientSubscriptions.delete(ws);
+    }
+    
+    // Also clean up from any simulation client sets (safety measure)
+    this.simulationClients.forEach((clients, simulationId) => {
+      if (clients.has(ws)) {
+        console.log(`🧹 FIXED: Removing disconnected client from simulation ${simulationId}`);
+        clients.delete(ws);
+        if (clients.size === 0) {
+          this.simulationClients.delete(simulationId);
+        }
+      }
+    });
+    
+    this.cleanupClientHandlers(ws);
+  }
+  
+  private handleSubscription(ws: WebSocket, simulationId: string): void {
+    console.log(`📡 FIXED: Handling subscription to simulation ${simulationId}`);
+    
+    // Update existing subscription or add new one
+    const existingSubscription = this.clientSubscriptions.get(ws);
+    if (existingSubscription) {
+      // Remove from old simulation if different
+      if (existingSubscription.simulationId && existingSubscription.simulationId !== simulationId) {
+        this.removeClient(existingSubscription.simulationId, ws);
+      }
+    }
+    
+    // Add to new simulation
+    this.addClient(simulationId, ws);
+    
+    console.log(`📡 FIXED: Client subscribed to simulation ${simulationId}`);
+  }
+  
+  // Enhanced broadcast to simulation with fixed client management
+  broadcastToSimulation(simulationId: string, message: any): void {
     // Use sendImmediateUpdate for important messages like trades
     if (message.event && (message.event.type === 'trade' || message.event.type === 'price_update')) {
       this.sendImmediateUpdate(simulationId, message.event);
@@ -123,7 +277,7 @@ export class BroadcastManager {
     }
   }
   
-  queueUpdate(simulationId: string, update: any) {
+  queueUpdate(simulationId: string, update: any): void {
     // Check if this is an immediate update type
     if (this.immediateTypes.has(update.type)) {
       // Send immediately without batching
@@ -158,8 +312,8 @@ export class BroadcastManager {
     }
   }
   
-  // CRITICAL FIX: Enhanced immediate update with explicit text frames
-  private sendImmediateUpdate(simulationId: string, update: any) {
+  // CRITICAL FIX: Enhanced immediate update with fixed client targeting
+  private sendImmediateUpdate(simulationId: string, update: any): void {
     // CRITICAL FIX: Ensure the message structure matches frontend expectations
     const message = {
       simulationId,
@@ -170,12 +324,28 @@ export class BroadcastManager {
       }
     };
     
+    // CRITICAL FIX: Use fixed client management
     const subscribers: WebSocket[] = [];
     
-    // Find all clients subscribed to this simulation
+    // Get clients from simulation clients map
+    const simulationClients = this.simulationClients.get(simulationId);
+    if (simulationClients) {
+      simulationClients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+          subscribers.push(client);
+        } else {
+          // Clean up dead connections
+          simulationClients.delete(client);
+          this.clientSubscriptions.delete(client);
+        }
+      });
+    }
+    
+    // Also check client subscriptions for backward compatibility
     this.clientSubscriptions.forEach((subscription, client) => {
       if (subscription.simulationId === simulationId && 
-          client.readyState === WebSocket.OPEN) {
+          client.readyState === WebSocket.OPEN &&
+          !subscribers.includes(client)) {
         subscribers.push(client);
       }
     });
@@ -187,11 +357,11 @@ export class BroadcastManager {
     // CRITICAL FIX: Safe JSON serialization
     const result = this.safeStringify(message);
     if (!result.success) {
-      console.error('❌ Failed to serialize immediate update:', result.error);
+      console.error('❌ FIXED: Failed to serialize immediate update:', result.error);
       return;
     }
     
-    console.log(`📤 Sending immediate update to ${subscribers.length} clients:`, {
+    console.log(`📤 FIXED: Sending immediate update to ${subscribers.length} clients:`, {
       simulationId,
       eventType: update.type,
       messageSize: result.data!.length,
@@ -215,16 +385,15 @@ export class BroadcastManager {
         }
         this.metrics.totalMessagesSent++;
         this.metrics.textFramesSent++;
-        console.log('✅ Text frame sent successfully');
       } catch (error) {
-        console.error('❌ Error sending immediate update to client:', error);
-        this.clientSubscriptions.delete(client);
+        console.error('❌ FIXED: Error sending immediate update to client:', error);
+        this.handleClientDisconnection(client);
       }
     });
   }
   
   // CRITICAL FIX: Completely rewritten flushUpdates with proper error handling
-  private async flushUpdates() {
+  private async flushUpdates(): void {
     if (this.updateBuffer.size === 0) return;
     
     const startTime = Date.now();
@@ -253,7 +422,7 @@ export class BroadcastManager {
         // CRITICAL FIX: Validate message before sending
         const validationResult = this.validateBatchMessage(message);
         if (!validationResult.valid) {
-          console.error('❌ Batch message validation failed:', validationResult.error);
+          console.error('❌ FIXED: Batch message validation failed:', validationResult.error);
           this.metrics.corruptedBatches++;
           continue;
         }
@@ -264,7 +433,7 @@ export class BroadcastManager {
         this.metrics.totalBatchesSent++;
         
       } catch (error) {
-        console.error('❌ Error processing batch updates for simulation', simulationId, error);
+        console.error('❌ FIXED: Error processing batch updates for simulation', simulationId, error);
         this.metrics.corruptedBatches++;
       }
     }
@@ -277,7 +446,7 @@ export class BroadcastManager {
     
     // Warn if flush is taking too long
     if (flushDuration > this.broadcastIntervalMs * 0.8) {
-      console.warn(`⚠️ Broadcast flush took ${flushDuration}ms, approaching interval limit`);
+      console.warn(`⚠️ FIXED: Broadcast flush took ${flushDuration}ms, approaching interval limit`);
     }
   }
   
@@ -383,7 +552,7 @@ export class BroadcastManager {
           JSON.stringify(value);
           sanitized[key] = this.sanitizeData(value);
         } catch (error) {
-          console.warn(`⚠️ Skipping non-serializable value for key: ${key}`);
+          console.warn(`⚠️ FIXED: Skipping non-serializable value for key: ${key}`);
           sanitized[key] = '[Non-serializable]';
         }
       } else {
@@ -463,20 +632,31 @@ export class BroadcastManager {
     // Check message size (warn if too large)
     const messageSize = serializationResult.data!.length;
     if (messageSize > 1024 * 1024) { // 1MB limit
-      console.warn(`⚠️ Large batch message: ${messageSize} bytes`);
+      console.warn(`⚠️ FIXED: Large batch message: ${messageSize} bytes`);
     }
     
     return { valid: true };
   }
   
   // CRITICAL FIX: Enhanced broadcast to subscribers with proper validation
-  private async broadcastToSubscribers(simulationId: string, message: any) {
+  private async broadcastToSubscribers(simulationId: string, message: any): Promise<void> {
     const subscribers: WebSocket[] = [];
     
-    // Find all clients subscribed to this simulation
+    // CRITICAL FIX: Use fixed client management
+    const simulationClients = this.simulationClients.get(simulationId);
+    if (simulationClients) {
+      simulationClients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+          subscribers.push(client);
+        }
+      });
+    }
+    
+    // Also check client subscriptions for backward compatibility
     this.clientSubscriptions.forEach((subscription, client) => {
       if (subscription.simulationId === simulationId && 
-          client.readyState === WebSocket.OPEN) {
+          client.readyState === WebSocket.OPEN &&
+          !subscribers.includes(client)) {
         subscribers.push(client);
       }
     });
@@ -486,14 +666,14 @@ export class BroadcastManager {
     // CRITICAL FIX: Safe serialization with validation
     const serializationResult = this.safeStringify(message);
     if (!serializationResult.success) {
-      console.error('❌ Failed to serialize batch message:', serializationResult.error);
+      console.error('❌ FIXED: Failed to serialize batch message:', serializationResult.error);
       this.metrics.corruptedBatches++;
       return;
     }
     
     const jsonMessage = serializationResult.data!;
     
-    console.log(`📤 Broadcasting batch update to ${subscribers.length} clients:`, {
+    console.log(`📤 FIXED: Broadcasting batch update to ${subscribers.length} clients:`, {
       simulationId,
       messageSize: jsonMessage.length,
       eventType: message.event.type,
@@ -518,17 +698,16 @@ export class BroadcastManager {
         
         this.metrics.totalMessagesSent++;
         this.metrics.textFramesSent++;
-        console.log('✅ Batch text frame sent successfully');
       } catch (error) {
-        console.error('❌ Error sending batch to client:', error);
+        console.error('❌ FIXED: Error sending batch to client:', error);
         // Remove failed client
-        this.clientSubscriptions.delete(client);
+        this.handleClientDisconnection(client);
       }
     });
   }
   
   // CRITICAL FIX: Enhanced broadcast to all with explicit text frames
-  broadcastToAll(message: any) {
+  broadcastToAll(message: any): void {
     // CRITICAL FIX: Ensure message has proper structure
     const formattedMessage = {
       simulationId: message.simulationId || 'broadcast',
@@ -541,13 +720,13 @@ export class BroadcastManager {
     
     const serializationResult = this.safeStringify(formattedMessage);
     if (!serializationResult.success) {
-      console.error('❌ Failed to serialize broadcast message:', serializationResult.error);
+      console.error('❌ FIXED: Failed to serialize broadcast message:', serializationResult.error);
       return;
     }
     
     const jsonMessage = serializationResult.data!;
     
-    console.log('📤 Broadcasting to all clients:', {
+    console.log('📤 FIXED: Broadcasting to all clients:', {
       messageSize: jsonMessage.length,
       eventType: formattedMessage.event.type,
       totalClients: this.wss.clients.size
@@ -565,14 +744,14 @@ export class BroadcastManager {
           this.metrics.totalMessagesSent++;
           this.metrics.textFramesSent++;
         } catch (error) {
-          console.error('❌ Error broadcasting to all:', error);
+          console.error('❌ FIXED: Error broadcasting to all:', error);
         }
       }
     });
   }
   
   // CRITICAL FIX: Enhanced direct send method with explicit text frames
-  sendDirectMessage(simulationId: string, event: any) {
+  sendDirectMessage(simulationId: string, event: any): void {
     const message = {
       simulationId,
       event: {
@@ -584,10 +763,21 @@ export class BroadcastManager {
     
     const subscribers: WebSocket[] = [];
     
-    // Find all clients subscribed to this simulation
+    // CRITICAL FIX: Use fixed client management
+    const simulationClients = this.simulationClients.get(simulationId);
+    if (simulationClients) {
+      simulationClients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+          subscribers.push(client);
+        }
+      });
+    }
+    
+    // Also check client subscriptions for backward compatibility
     this.clientSubscriptions.forEach((subscription, client) => {
       if (subscription.simulationId === simulationId && 
-          client.readyState === WebSocket.OPEN) {
+          client.readyState === WebSocket.OPEN &&
+          !subscribers.includes(client)) {
         subscribers.push(client);
       }
     });
@@ -598,13 +788,13 @@ export class BroadcastManager {
     
     const serializationResult = this.safeStringify(message);
     if (!serializationResult.success) {
-      console.error('❌ Failed to serialize direct message:', serializationResult.error);
+      console.error('❌ FIXED: Failed to serialize direct message:', serializationResult.error);
       return;
     }
     
     const jsonMessage = serializationResult.data!;
     
-    console.log(`📤 Sending direct message to ${subscribers.length} clients:`, {
+    console.log(`📤 FIXED: Sending direct message to ${subscribers.length} clients:`, {
       simulationId,
       eventType: event.type,
       messageSize: jsonMessage.length
@@ -626,15 +816,14 @@ export class BroadcastManager {
         }
         this.metrics.totalMessagesSent++;
         this.metrics.textFramesSent++;
-        console.log('✅ Direct text message sent successfully');
       } catch (error) {
-        console.error('❌ Error sending direct message:', error);
-        this.clientSubscriptions.delete(client);
+        console.error('❌ FIXED: Error sending direct message:', error);
+        this.handleClientDisconnection(client);
       }
     });
   }
   
-  private calculateMetrics() {
+  private calculateMetrics(): void {
     let totalQueueDepth = 0;
     this.updateBuffer.forEach(buffer => {
       totalQueueDepth += buffer.length;
@@ -644,11 +833,12 @@ export class BroadcastManager {
       totalQueueDepth / this.updateBuffer.size : 0;
   }
   
-  // Enhanced statistics with corruption tracking
+  // CRITICAL FIX: Enhanced statistics with fixed client tracking
   getStats() {
     const stats = {
       connectedClients: this.wss.clients.size,
       activeSubscriptions: this.clientSubscriptions.size,
+      simulationClients: this.simulationClients.size,
       bufferedUpdates: 0,
       subscriptionsBySimulation: new Map<string, number>(),
       messagesSent: this.metrics.totalMessagesSent,
@@ -664,7 +854,15 @@ export class BroadcastManager {
       serializationErrors: this.metrics.serializationErrors,
       corruptedBatches: this.metrics.corruptedBatches,
       corruptionRate: this.metrics.totalBatchesSent > 0 ? 
-        ((this.metrics.corruptedBatches / this.metrics.totalBatchesSent) * 100).toFixed(2) + '%' : '0%'
+        ((this.metrics.corruptedBatches / this.metrics.totalBatchesSent) * 100).toFixed(2) + '%' : '0%',
+      clientsAdded: this.metrics.clientsAdded,
+      clientsRemoved: this.metrics.clientsRemoved,
+      connectionErrors: this.metrics.connectionErrors,
+      clientManagement: {
+        addClientAvailable: true,
+        removeClientAvailable: true,
+        interfaceFixed: true
+      }
     };
     
     // Count buffered updates
@@ -672,15 +870,21 @@ export class BroadcastManager {
       stats.bufferedUpdates += updates.length;
     });
     
-    // Count subscriptions by simulation
+    // Count subscriptions by simulation using fixed tracking
+    this.simulationClients.forEach((clients, simulationId) => {
+      stats.subscriptionsBySimulation.set(simulationId, clients.size);
+    });
+    
+    // Also include from client subscriptions for backward compatibility
     this.clientSubscriptions.forEach((subscription) => {
       if (subscription.simulationId) {
-        const count = stats.subscriptionsBySimulation.get(subscription.simulationId) || 0;
-        stats.subscriptionsBySimulation.set(subscription.simulationId, count + 1);
+        const current = stats.subscriptionsBySimulation.get(subscription.simulationId) || 0;
+        stats.subscriptionsBySimulation.set(subscription.simulationId, Math.max(current, 1));
         
         // Track average messages per client
         const avgCount = stats.averageMessagesPerClient.get(subscription.simulationId) || 0;
-        const newAvg = (avgCount * count + subscription.messageCount) / (count + 1);
+        const count = stats.subscriptionsBySimulation.get(subscription.simulationId) || 1;
+        const newAvg = (avgCount * (count - 1) + subscription.messageCount) / count;
         stats.averageMessagesPerClient.set(subscription.simulationId, newAvg);
       }
     });
@@ -693,10 +897,10 @@ export class BroadcastManager {
     compressionEnabled?: boolean;
     broadcastIntervalMs?: number;
     broadcastBatchSize?: number;
-  }) {
+  }): void {
     // Ignore compression settings - always disabled
     if (settings.compressionEnabled !== undefined) {
-      console.log('⚠️ Compression setting ignored - compression disabled to prevent Blob issues');
+      console.log('⚠️ FIXED: Compression setting ignored - compression disabled to prevent Blob issues');
     }
     
     if (settings.broadcastIntervalMs !== undefined) {
@@ -706,7 +910,7 @@ export class BroadcastManager {
       this.broadcastInterval = setInterval(() => {
         this.flushUpdates();
       }, this.broadcastIntervalMs);
-      console.log(`🔄 Broadcast interval updated to ${this.broadcastIntervalMs}ms`);
+      console.log(`🔄 FIXED: Broadcast interval updated to ${this.broadcastIntervalMs}ms`);
     }
     
     if (settings.broadcastBatchSize !== undefined) {
@@ -714,15 +918,19 @@ export class BroadcastManager {
     }
   }
   
-  // Enhanced debug method with corruption tracking
-  debugSubscriptions() {
-    console.log('=== BroadcastManager Debug (Corruption-Fixed) ===');
+  // Enhanced debug method with fixed client tracking
+  debugSubscriptions(): void {
+    console.log('=== BroadcastManager Debug (INTERFACE FIXED) ===');
     console.log('Total WebSocket clients:', this.wss.clients.size);
     console.log('Active subscriptions:', this.clientSubscriptions.size);
+    console.log('Simulation clients:', this.simulationClients.size);
     console.log('Messages sent:', this.metrics.totalMessagesSent);
     console.log('Text frames sent:', this.metrics.textFramesSent);
     console.log('Binary frames sent:', this.metrics.binaryFramesSent);
     console.log('Batches sent:', this.metrics.totalBatchesSent);
+    console.log('Clients added:', this.metrics.clientsAdded);
+    console.log('Clients removed:', this.metrics.clientsRemoved);
+    console.log('Connection errors:', this.metrics.connectionErrors);
     console.log('Serialization errors:', this.metrics.serializationErrors);
     console.log('Corrupted batches:', this.metrics.corruptedBatches);
     console.log('Corruption rate:', this.metrics.totalBatchesSent > 0 ? 
@@ -730,8 +938,14 @@ export class BroadcastManager {
     console.log('Average queue depth:', this.metrics.averageQueueDepth.toFixed(2));
     console.log('Compression enabled:', this.compressionEnabled); // Always false
     
+    console.log('Simulation clients by ID:');
+    this.simulationClients.forEach((clients, simId) => {
+      console.log(`  ${simId}: ${clients.size} clients`);
+    });
+    
+    console.log('Client subscriptions:');
     this.clientSubscriptions.forEach((subscription, client) => {
-      console.log(`Client subscribed to: ${subscription.simulationId}, messages: ${subscription.messageCount}, ready: ${client.readyState === WebSocket.OPEN}`);
+      console.log(`  Client subscribed to: ${subscription.simulationId}, messages: ${subscription.messageCount}, ready: ${client.readyState === WebSocket.OPEN}`);
     });
     
     console.log('Buffered updates by simulation:');
@@ -740,10 +954,14 @@ export class BroadcastManager {
     });
     
     console.log('Immediate update types:', Array.from(this.immediateTypes).join(', '));
+    console.log('Interface methods available:');
+    console.log('  - addClient: ✅ FIXED');
+    console.log('  - removeClient: ✅ FIXED');
+    console.log('  - registerClient: ✅ Enhanced');
   }
   
-  // Test broadcast functionality with corruption testing
-  testBroadcast(simulationId: string) {
+  // Test broadcast functionality with fixed interface
+  testBroadcast(simulationId: string): void {
     const testEvent = {
       type: 'test_broadcast',
       timestamp: Date.now(),
@@ -751,24 +969,69 @@ export class BroadcastManager {
         message: 'Test broadcast from FIXED BroadcastManager',
         time: new Date().toISOString(),
         metrics: this.getStats(),
-        corruptionTests: {
-          serializationCheck: 'passed',
-          textFrameOnly: true,
-          validationEnabled: true
+        interfaceTests: {
+          addClientMethod: 'available',
+          removeClientMethod: 'available',
+          clientTracking: 'fixed',
+          errorHandling: 'enhanced'
         }
       }
     };
     
-    console.log(`🧪 Sending CORRUPTION-FIXED test broadcast to simulation ${simulationId}`);
+    console.log(`🧪 FIXED: Sending test broadcast to simulation ${simulationId}`);
     this.sendImmediateUpdate(simulationId, testEvent);
   }
   
+  // CRITICAL FIX: Health check method
+  healthCheck(): { healthy: boolean; issues: string[]; stats: any } {
+    const stats = this.getStats();
+    const issues: string[] = [];
+    
+    // Check for interface issues
+    if (this.metrics.connectionErrors > this.metrics.clientsAdded * 0.1) {
+      issues.push('High connection error rate');
+    }
+    
+    if (this.metrics.serializationErrors > 0) {
+      issues.push('Serialization errors detected');
+    }
+    
+    if (this.metrics.corruptedBatches > this.metrics.totalBatchesSent * 0.05) {
+      issues.push('High batch corruption rate');
+    }
+    
+    // Check client tracking consistency
+    const simulationClientCount = Array.from(this.simulationClients.values())
+      .reduce((sum, clients) => sum + clients.size, 0);
+    const subscriptionCount = this.clientSubscriptions.size;
+    
+    if (Math.abs(simulationClientCount - subscriptionCount) > subscriptionCount * 0.1) {
+      issues.push('Client tracking inconsistency detected');
+    }
+    
+    return {
+      healthy: issues.length === 0,
+      issues,
+      stats
+    };
+  }
+  
   // Cleanup
-  shutdown() {
+  shutdown(): void {
+    console.log('🔄 FIXED: BroadcastManager shutting down with proper cleanup...');
+    
     clearInterval(this.broadcastInterval);
     this.updateBuffer.clear();
+    
+    // Clean up all client handlers
+    this.clientSubscriptions.forEach((subscription, client) => {
+      this.cleanupClientHandlers(client);
+    });
+    
     this.clientSubscriptions.clear();
-    console.log('🔄 BroadcastManager shut down');
-    console.log(`📊 Final stats: ${this.metrics.totalMessagesSent} messages sent, ${this.metrics.textFramesSent} text frames, ${this.metrics.totalBatchesSent} batches sent, ${this.metrics.corruptedBatches} corrupted batches`);
+    this.simulationClients.clear();
+    
+    console.log('🔄 FIXED: BroadcastManager shut down');
+    console.log(`📊 FIXED: Final stats: ${this.metrics.totalMessagesSent} messages sent, ${this.metrics.textFramesSent} text frames, ${this.metrics.totalBatchesSent} batches sent, ${this.metrics.corruptedBatches} corrupted batches, ${this.metrics.clientsAdded} clients added, ${this.metrics.clientsRemoved} clients removed`);
   }
 }
