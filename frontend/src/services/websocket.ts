@@ -1,4 +1,4 @@
-// frontend/src/services/websocket.ts - FIXED: Enhanced TPS Support & Reliable Metrics
+// frontend/src/services/websocket.ts - FIXED: Prevents Multiple CandleManager Instances
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 interface WebSocketMessage {
@@ -77,6 +77,10 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
   const isProcessing = useRef(false);
   const lastProcessedTime = useRef(0);
   const lastMessageId = useRef<string>('');
+  
+  // CRITICAL FIX: Track current subscription to prevent multiple CandleManager instances
+  const currentSubscription = useRef<string | null>(null);
+  const subscriptionStatus = useRef<'none' | 'subscribing' | 'subscribed' | 'unsubscribing'>('none');
   
   const corruptionBuffer = useRef<ArrayBuffer[]>([]);
   const lastValidMessage = useRef<any>(null);
@@ -256,7 +260,6 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     }
   }, [simulationId]);
 
-  // FIXED: Enhanced TPS mode change function
   const sendTPSModeChange = useCallback((mode: string) => {
     if (ws.current && ws.current.readyState === WebSocket.OPEN && simulationId) {
       try {
@@ -275,16 +278,9 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       }
     } else {
       console.warn('⚠️ [WS] Cannot send TPS mode change - WebSocket not ready or no simulation ID');
-      console.log('WebSocket state:', {
-        wsExists: !!ws.current,
-        readyState: ws.current?.readyState,
-        simulationId,
-        expectedReadyState: WebSocket.OPEN
-      });
     }
   }, [simulationId]);
 
-  // FIXED: Enhanced stress test message function
   const sendStressTestMessage = useCallback((messageType: string, data: any) => {
     if (ws.current && ws.current.readyState === WebSocket.OPEN && simulationId) {
       try {
@@ -305,6 +301,105 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       console.warn('⚠️ [WS] Cannot send stress test message - WebSocket not ready or no simulation ID');
     }
   }, [simulationId]);
+
+  // CRITICAL FIX: Proper subscription management to prevent duplicate CandleManager instances
+  const subscribeToSimulation = useCallback((simId: string) => {
+    if (!ws.current || ws.current.readyState !== WebSocket.OPEN) {
+      console.warn('⚠️ [WS] Cannot subscribe - WebSocket not ready');
+      return;
+    }
+
+    // CRITICAL: Check if we're already subscribed to this simulation
+    if (currentSubscription.current === simId && subscriptionStatus.current === 'subscribed') {
+      console.log(`✅ [WS] Already subscribed to simulation: ${simId}`);
+      return;
+    }
+
+    // CRITICAL: If we're subscribed to a different simulation, unsubscribe first
+    if (currentSubscription.current && currentSubscription.current !== simId) {
+      console.log(`🔄 [WS] Switching subscription from ${currentSubscription.current} to ${simId}`);
+      unsubscribeFromSimulation(currentSubscription.current);
+    }
+
+    subscriptionStatus.current = 'subscribing';
+    currentSubscription.current = simId;
+
+    try {
+      const subscribeMessage = {
+        type: 'subscribe',
+        simulationId: simId,
+        timestamp: Date.now(),
+        // CRITICAL: Add unique client ID to prevent backend confusion
+        clientId: `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        // CRITICAL: Explicitly request single CandleManager instance
+        singleInstanceMode: true,
+        preventDuplicates: true,
+        clientCapabilities: {
+          corruptionRecovery: true,
+          binaryHandling: true,
+          encodingFallbacks: ['utf-8', 'latin1', 'ascii'],
+          ultraFastMode: true,
+          maxMessageRate: 1000,
+          stressTestSupport: true,
+          tpsModeSupport: true,
+          metricsSupport: true,
+          // CRITICAL: Add singleton support capability
+          singletonCandleManager: true
+        }
+      };
+      
+      console.log(`📡 [WS] Subscribing to simulation with singleton mode: ${simId}`);
+      ws.current.send(JSON.stringify(subscribeMessage));
+    } catch (error: unknown) {
+      console.error('❌ [WS] Failed to subscribe:', getErrorMessage(error));
+      subscriptionStatus.current = 'none';
+      currentSubscription.current = null;
+    }
+  }, []);
+
+  // CRITICAL FIX: Proper unsubscription to clean up CandleManager instances
+  const unsubscribeFromSimulation = useCallback((simId: string) => {
+    if (!ws.current || ws.current.readyState !== WebSocket.OPEN) {
+      console.warn('⚠️ [WS] Cannot unsubscribe - WebSocket not ready');
+      return;
+    }
+
+    if (!simId) {
+      console.warn('⚠️ [WS] Cannot unsubscribe - no simulation ID');
+      return;
+    }
+
+    subscriptionStatus.current = 'unsubscribing';
+
+    try {
+      const unsubscribeMessage = {
+        type: 'unsubscribe',
+        simulationId: simId,
+        timestamp: Date.now(),
+        // CRITICAL: Request cleanup of CandleManager instance
+        cleanupCandleManager: true,
+        reason: 'client_disconnect'
+      };
+      
+      console.log(`📡 [WS] Unsubscribing from simulation with cleanup: ${simId}`);
+      ws.current.send(JSON.stringify(unsubscribeMessage));
+      
+      // Clear local subscription state
+      setTimeout(() => {
+        if (currentSubscription.current === simId) {
+          currentSubscription.current = null;
+          subscriptionStatus.current = 'none';
+          console.log(`✅ [WS] Unsubscribed and cleaned up: ${simId}`);
+        }
+      }, 1000);
+      
+    } catch (error: unknown) {
+      console.error('❌ [WS] Failed to unsubscribe:', getErrorMessage(error));
+      // Force cleanup anyway
+      currentSubscription.current = null;
+      subscriptionStatus.current = 'none';
+    }
+  }, []);
 
   const connect = useCallback(() => {
     try {
@@ -327,10 +422,14 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
         ws.current = null;
       }
       
+      // CRITICAL: Reset subscription state on new connection
+      currentSubscription.current = null;
+      subscriptionStatus.current = 'none';
+      
       ws.current = new WebSocket(wsUrl);
       ws.current.binaryType = 'arraybuffer';
       
-      // CRITICAL: Store WebSocket reference globally for StressTestController
+      // Store WebSocket reference globally for StressTestController
       (window as any).wsConnection = ws.current;
       
       ws.current.onopen = () => {
@@ -356,32 +455,10 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
         corruptionBuffer.current = [];
         lastValidMessage.current = null;
 
+        // CRITICAL: Only subscribe if we have a simulation ID
         if (simulationId) {
           setTimeout(() => {
-            if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-              try {
-                const subscribeMessage = {
-                  type: 'subscribe',
-                  simulationId: simulationId,
-                  timestamp: Date.now(),
-                  clientCapabilities: {
-                    corruptionRecovery: true,
-                    binaryHandling: true,
-                    encodingFallbacks: ['utf-8', 'latin1', 'ascii'],
-                    ultraFastMode: true,
-                    maxMessageRate: 1000,
-                    stressTestSupport: true, // TPS support
-                    tpsModeSupport: true,     // TPS mode support
-                    metricsSupport: true      // Enhanced metrics support
-                  }
-                };
-                
-                console.log(`📡 [WS] Subscribing to simulation: ${simulationId}`);
-                ws.current.send(JSON.stringify(subscribeMessage));
-              } catch (error: unknown) {
-                console.error('❌ [WS] Failed to subscribe:', getErrorMessage(error));
-              }
-            }
+            subscribeToSimulation(simulationId);
           }, 200);
         }
       };
@@ -399,7 +476,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
           }
           lastMessageId.current = messageId;
           
-          // FIXED: Handle TPS-related message types specifically
+          // CRITICAL: Handle subscription confirmation to prevent duplicate CandleManagers
           if (data.type) {
             switch (data.type) {
               case 'connection':
@@ -407,6 +484,23 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
                 return;
               case 'subscription_confirmed':
                 console.log('✅ [WS] Subscription confirmed for simulation:', data.simulationId);
+                // CRITICAL: Mark subscription as complete
+                if (data.simulationId === currentSubscription.current) {
+                  subscriptionStatus.current = 'subscribed';
+                  console.log(`🔐 [WS] Subscription locked for: ${data.simulationId}`);
+                }
+                return;
+              case 'unsubscription_confirmed':
+                console.log('✅ [WS] Unsubscription confirmed for simulation:', data.simulationId);
+                // CRITICAL: Clear subscription state
+                if (data.simulationId === currentSubscription.current) {
+                  currentSubscription.current = null;
+                  subscriptionStatus.current = 'none';
+                  console.log(`🔓 [WS] Subscription cleared for: ${data.simulationId}`);
+                }
+                return;
+              case 'singleton_mode_confirmed':
+                console.log('🔐 [WS] Singleton CandleManager mode confirmed:', data.simulationId);
                 return;
               case 'pong':
                 return;
@@ -417,28 +511,28 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
                 console.error('❌ [WS] Backend error:', data.message);
                 setConnectionError(data.message || 'Unknown backend error');
                 return;
-              // FIXED: Handle TPS mode confirmation
               case 'tps_mode_changed':
                 console.log('🔄 [WS] TPS mode changed confirmed:', data);
-                // Pass through to message queue for UI handling
                 break;
-              // FIXED: Handle stress test responses
               case 'stress_test_response':
                 console.log('🧪 [WS] Stress test response:', data);
-                // Pass through to message queue for UI handling
                 break;
-              // FIXED: Handle TPS status responses
               case 'tps_status':
                 console.log('📊 [WS] TPS status received:', data);
-                // Pass through to message queue for UI handling
                 break;
               default:
-                // Pass through other message types
                 break;
             }
           }
           
+          // CRITICAL: Only process messages from our subscribed simulation
           if (data.simulationId && data.event) {
+            // Verify this message is from our current subscription
+            if (currentSubscription.current && data.simulationId !== currentSubscription.current) {
+              console.warn(`⚠️ [WS] Ignoring message from unsubscribed simulation: ${data.simulationId} (current: ${currentSubscription.current})`);
+              return;
+            }
+
             const message: WebSocketMessage = {
               simulationId: data.simulationId,
               event: {
@@ -448,7 +542,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
               }
             };
             
-            // FIXED: Priority handling for TPS-related messages
+            // Priority handling for TPS-related messages
             if (message.event.type === 'external_market_pressure' || 
                 message.event.type === 'tps_mode_changed' ||
                 message.event.type === 'tps_status' ||
@@ -503,6 +597,10 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
         setIsConnected(false);
         ws.current = null;
         
+        // CRITICAL: Clear subscription state on close
+        currentSubscription.current = null;
+        subscriptionStatus.current = 'none';
+        
         // Clear global reference
         (window as any).wsConnection = null;
         
@@ -535,14 +633,35 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       setIsConnected(false);
       setConnectionError('Failed to create backend connection - check configuration');
     }
-  }, [simulationId, processMessageQueue, parseWebSocketMessage]);
+  }, [simulationId, processMessageQueue, parseWebSocketMessage, subscribeToSimulation]);
 
+  // CRITICAL FIX: Enhanced subscription management in useEffect
   useEffect(() => {
     if (simulationId) {
       console.log(`🎯 [WS] Setting up WebSocket for simulation: ${simulationId}`);
-      connect();
+      
+      // If WebSocket is already connected, just switch subscription
+      if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+        // Check if we need to switch simulations
+        if (currentSubscription.current !== simulationId) {
+          console.log(`🔄 [WS] Switching to new simulation: ${simulationId}`);
+          subscribeToSimulation(simulationId);
+        } else {
+          console.log(`✅ [WS] Already connected to simulation: ${simulationId}`);
+        }
+      } else {
+        // Need to establish new connection
+        connect();
+      }
     } else {
-      console.log('🔌 [WS] No simulation ID - closing connection');
+      console.log('🔌 [WS] No simulation ID - cleaning up connection');
+      
+      // Unsubscribe from current simulation if any
+      if (currentSubscription.current) {
+        unsubscribeFromSimulation(currentSubscription.current);
+      }
+      
+      // Close WebSocket if no simulation ID
       if (ws.current) {
         try {
           ws.current.close(1000, 'No simulation ID');
@@ -555,6 +674,10 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
         // Clear global reference
         (window as any).wsConnection = null;
       }
+      
+      // Reset subscription state
+      currentSubscription.current = null;
+      subscriptionStatus.current = 'none';
     }
 
     return () => {
@@ -563,20 +686,21 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
         reconnectTimeout.current = null;
       }
       
+      // CRITICAL: Clean unsubscribe on component unmount
+      if (currentSubscription.current && ws.current && ws.current.readyState === WebSocket.OPEN) {
+        unsubscribeFromSimulation(currentSubscription.current);
+      }
+    };
+  }, [simulationId, connect, subscribeToSimulation, unsubscribeFromSimulation]);
+
+  // Final cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (currentSubscription.current) {
+        unsubscribeFromSimulation(currentSubscription.current);
+      }
+      
       if (ws.current) {
-        if (simulationId && ws.current.readyState === WebSocket.OPEN) {
-          try {
-            console.log(`📡 [WS] Unsubscribing from simulation: ${simulationId}`);
-            ws.current.send(JSON.stringify({
-              type: 'unsubscribe',
-              simulationId: simulationId,
-              timestamp: Date.now()
-            }));
-          } catch (error: unknown) {
-            console.error('❌ [WS] Error unsubscribing:', getErrorMessage(error));
-          }
-        }
-        
         try {
           ws.current.close(1000, 'Component unmounted');
         } catch (error) {
@@ -590,8 +714,10 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       
       messageQueue.current = [];
       setIsConnected(false);
+      currentSubscription.current = null;
+      subscriptionStatus.current = 'none';
     };
-  }, [simulationId, connect]);
+  }, [unsubscribeFromSimulation]);
 
   useEffect(() => {
     if (ws.current && ws.current.readyState === WebSocket.OPEN && simulationId) {
@@ -599,16 +725,18 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     }
   }, [isPaused, simulationId, setPauseState]);
 
-  // FIXED: Enhanced ping with TPS status request
+  // Enhanced ping with TPS status request and subscription health check
   useEffect(() => {
     const pingInterval = setInterval(() => {
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
         try {
-          // Send regular ping
+          // Send regular ping with subscription info
           ws.current.send(JSON.stringify({
             type: 'ping',
             timestamp: Date.now(),
             simulationId: simulationId || undefined,
+            currentSubscription: currentSubscription.current,
+            subscriptionStatus: subscriptionStatus.current,
             stats: {
               messagesReceived: messageStats.current.received,
               messagesProcessed: messageStats.current.processed,
@@ -620,6 +748,13 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
           if (simulationId && Math.random() < 0.3) { // 30% chance per ping
             sendStressTestMessage('get_tps_status', { simulationId });
           }
+          
+          // CRITICAL: Health check - ensure we're still properly subscribed
+          if (simulationId && currentSubscription.current !== simulationId) {
+            console.warn(`⚠️ [WS] Subscription health check failed - expected: ${simulationId}, actual: ${currentSubscription.current}`);
+            subscribeToSimulation(simulationId);
+          }
+          
         } catch (error: unknown) {
           console.error('❌ [WS] Ping error:', getErrorMessage(error));
         }
@@ -627,7 +762,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     }, 25000); // Every 25 seconds
 
     return () => clearInterval(pingInterval);
-  }, [simulationId, sendStressTestMessage]);
+  }, [simulationId, sendStressTestMessage, subscribeToSimulation]);
 
   return { 
     isConnected, 
@@ -635,8 +770,12 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     setPauseState,
     connectionError,
     messageStats: messageStats.current,
-    // FIXED: Export enhanced stress test functions
     sendTPSModeChange,
-    sendStressTestMessage
+    sendStressTestMessage,
+    // CRITICAL: Export subscription status for debugging
+    subscriptionStatus: {
+      current: currentSubscription.current,
+      status: subscriptionStatus.current
+    }
   };
 };
