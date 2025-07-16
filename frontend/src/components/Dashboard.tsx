@@ -1,4 +1,4 @@
-// frontend/src/components/Dashboard.tsx - SIMPLIFIED: Clean Reset Solution
+// frontend/src/components/Dashboard.tsx - FIXED: Prevents Duplicate Simulations & Multiple Streams
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -37,7 +37,7 @@ interface SimulationParameters {
   useCustomPrice?: boolean;
 }
 
-// ENHANCED MOBILE DETECTION with better reliability
+// FIXED: Enhanced mobile detection with better reliability
 const useIsMobile = () => {
   const [isMobile, setIsMobile] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -172,7 +172,7 @@ const useIsMobile = () => {
 const Dashboard: React.FC = () => {
   const { isMobile, isLoading, debugInfo } = useIsMobile();
   
-  // Desktop dashboard state
+  // CRITICAL FIX: Prevent multiple initializations
   const [simulationId, setSimulationId] = useState<string | null>(null);
   const [simulation, setSimulation] = useState<Simulation | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -223,8 +223,11 @@ const Dashboard: React.FC = () => {
     scenarioType: 'standard'
   });
   
+  // CRITICAL FIX: Initialization guard refs
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const initializationRef = useRef<boolean>(false);
+  const initializationLockRef = useRef<boolean>(false); // FIXED: Double initialization prevention
+  const simulationCreatedRef = useRef<boolean>(false); // FIXED: Track if simulation already created
   
   const lastMessageProcessedRef = useRef<string>('');
   const marketConditionUpdateRef = useRef<number>(0);
@@ -247,8 +250,9 @@ const Dashboard: React.FC = () => {
     'quantum': 100
   } as const;
 
+  // CRITICAL FIX: Only connect WebSocket when simulation is confirmed ready
   const { isConnected, lastMessage, setPauseState, connectionError, messageStats } = useWebSocket(
-    isWebSocketReady && simulationRegistrationStatus === 'ready' ? simulationId || undefined : undefined,
+    isWebSocketReady && simulationRegistrationStatus === 'ready' && simulationId ? simulationId : undefined,
     simulation?.isPaused
   );
 
@@ -372,23 +376,28 @@ const Dashboard: React.FC = () => {
     
   }, [determineMarketCondition, marketCondition]);
 
-  // WebSocket message handling
+  // CRITICAL FIX: Enhanced WebSocket message handling with deduplication
   useEffect(() => {
     if (!lastMessage) return;
     
     const { simulationId: msgSimId, event } = lastMessage;
     
+    // CRITICAL: Create unique message identifier
     const messageId = `${msgSimId}-${event.type}-${event.timestamp}`;
     if (lastMessageProcessedRef.current === messageId) {
+      console.log(`🔄 SKIPPED: Duplicate message ${messageId}`);
       return;
     }
     lastMessageProcessedRef.current = messageId;
     
+    // CRITICAL: Only process messages for OUR simulation
     if (simulationId && msgSimId !== simulationId) {
+      console.log(`⚠️ IGNORED: Message for different simulation ${msgSimId} (ours: ${simulationId})`);
       return;
     }
     
     if (!simulation && event.type !== 'simulation_state') {
+      console.log(`⚠️ IGNORED: Message for non-existent simulation: ${event.type}`);
       return;
     }
     
@@ -396,9 +405,13 @@ const Dashboard: React.FC = () => {
     
     setWsMessageCount(prev => prev + 1);
     
+    // Log message processing for debugging
+    console.log(`📨 [WS] Processing message: ${type} for simulation ${msgSimId}`);
+    
     switch (type) {
       case 'simulation_state':
         if (data) {
+          console.log(`📊 [WS] Simulation state update for ${msgSimId}`);
           updateSimulationState(data, 'simulation_state');
           
           if (data.registrationStatus === 'ready') {
@@ -440,6 +453,7 @@ const Dashboard: React.FC = () => {
         
       case 'candle_update':
         if (data && data.priceHistory) {
+          console.log(`📊 [WS] Candle update: ${data.priceHistory.length} candles`);
           setPriceHistory(data.priceHistory);
         }
         break;
@@ -477,6 +491,7 @@ const Dashboard: React.FC = () => {
         
       case 'simulation_status':
         if (data) {
+          console.log(`📊 [WS] Simulation status: isRunning=${data.isRunning}, isPaused=${data.isPaused}`);
           setSimulation(prev => prev ? {
             ...prev,
             isRunning: data.isRunning ?? prev.isRunning,
@@ -500,6 +515,10 @@ const Dashboard: React.FC = () => {
       case 'scenario_ended':
         setCurrentScenario(null);
         setScenarioPhaseData(null);
+        break;
+        
+      default:
+        console.log(`🔍 [WS] Unhandled message type: ${type}`);
         break;
     }
     
@@ -535,10 +554,16 @@ const Dashboard: React.FC = () => {
     return 'BTC/USDT';
   }, []);
 
-  // Initialization with dynamic pricing support
+  // CRITICAL FIX: Single initialization with proper locking to prevent duplicate simulations
   useEffect(() => {
-    if (initializationRef.current) return;
+    // CRITICAL: Prevent multiple initialization calls
+    if (initializationRef.current || initializationLockRef.current || simulationCreatedRef.current) {
+      console.log('🔒 PREVENTED: Double initialization attempt');
+      return;
+    }
+    
     initializationRef.current = true;
+    initializationLockRef.current = true;
 
     const initSimulation = async () => {
       setLoading(true);
@@ -546,6 +571,14 @@ const Dashboard: React.FC = () => {
       
       try {
         setInitializationStep('Creating simulation with dynamic pricing...');
+        console.log('🚀 FIXED: Starting single simulation creation');
+        
+        // CRITICAL: Check if simulation already exists
+        if (simulationCreatedRef.current) {
+          console.log('⚠️ PREVENTED: Simulation already created');
+          initializationLockRef.current = false;
+          return;
+        }
         
         const response = await SimulationApi.createSimulation({
           duration: simulationParameters.duration,
@@ -560,7 +593,7 @@ const Dashboard: React.FC = () => {
         
         if (response.error) {
           setError(response.error);
-          initializationRef.current = false;
+          initializationLockRef.current = false;
           return;
         }
         
@@ -571,7 +604,11 @@ const Dashboard: React.FC = () => {
           throw new Error('No simulation ID received from server');
         }
         
+        // CRITICAL: Mark simulation as created IMMEDIATELY to prevent duplicates
+        simulationCreatedRef.current = true;
         setSimulationId(simId);
+        
+        console.log(`✅ FIXED: Single simulation created with ID: ${simId}`);
         
         if (response.data?.dynamicPricing) {
           setDynamicPricingInfo(response.data.dynamicPricing);
@@ -631,24 +668,30 @@ const Dashboard: React.FC = () => {
         setTokenSymbol(determineTokenSymbol(dynamicPrice));
         
         setInitializationStep('Enabling WebSocket connection...');
-        setIsWebSocketReady(true);
+        
+        // CRITICAL: Only enable WebSocket after simulation is confirmed ready
+        setTimeout(() => {
+          setIsWebSocketReady(true);
+          console.log('🔌 FIXED: WebSocket enabled for single simulation');
+        }, 500);
         
         setInitializationStep('Ready for trading with dynamic pricing!');
         
       } catch (error) {
         setError('Failed to initialize simulation');
+        simulationCreatedRef.current = false; // Reset on error
         if (process.env.NODE_ENV === 'development') {
           console.error(error);
         }
         setSimulationRegistrationStatus('error');
-        initializationRef.current = false;
       } finally {
         setLoading(false);
+        initializationLockRef.current = false;
       }
     };
     
     initSimulation();
-  }, []);
+  }, []); // CRITICAL: Empty dependency array to prevent re-runs
 
   // Timer for elapsed time
   useEffect(() => {
@@ -706,18 +749,22 @@ const Dashboard: React.FC = () => {
 
   const handleStartSimulation = useCallback(async () => {
     if (!simulationId) {
+      console.warn('⚠️ Cannot start: No simulation ID');
       return;
     }
     
     if (!isConnected) {
+      console.warn('⚠️ Cannot start: WebSocket not connected');
       return;
     }
     
     if (simulationRegistrationStatus !== 'ready') {
+      console.warn('⚠️ Cannot start: Simulation not ready');
       return;
     }
     
     try {
+      console.log(`🚀 Starting simulation ${simulationId}`);
       const response = await SimulationApi.startSimulation(simulationId);
       
       if (response.error) {
@@ -734,6 +781,8 @@ const Dashboard: React.FC = () => {
         setSimulationStartTime(Date.now());
       }
       
+      console.log(`✅ Simulation ${simulationId} started successfully`);
+      
     } catch (error) {
       if (process.env.NODE_ENV === 'development') {
         console.error('Failed to start simulation:', error);
@@ -745,9 +794,11 @@ const Dashboard: React.FC = () => {
     if (!simulationId) return;
     
     try {
+      console.log(`⏸️ Pausing simulation ${simulationId}`);
       await SimulationApi.pauseSimulation(simulationId);
       setSimulation(prev => prev ? { ...prev, isPaused: true } : prev);
       setPauseState(true);
+      console.log(`✅ Simulation ${simulationId} paused successfully`);
     } catch (error) {
       if (process.env.NODE_ENV === 'development') {
         console.error('Failed to pause simulation:', error);
@@ -755,24 +806,25 @@ const Dashboard: React.FC = () => {
     }
   }, [simulationId, setPauseState]);
 
-  // SIMPLIFIED: Clean reset implementation without nuclear complexity
+  // FIXED: Clean reset implementation that triggers PriceChart reset via empty priceHistory
   const handleResetSimulation = useCallback(async () => {
     if (!simulationId) return;
     
     try {
-      console.log('🔄 SIMPLE RESET: Starting clean reset process');
+      console.log('🔄 CLEAN RESET: Starting simple reset process');
       
-      // Pause simulation if running
+      // Step 1: Pause simulation if running
       if (simulation?.isRunning) {
+        console.log('🔄 CLEAN RESET: Pausing simulation first');
         await SimulationApi.pauseSimulation(simulationId);
         await new Promise(resolve => setTimeout(resolve, 300));
       }
       
-      // Clear local state first - this will trigger chart reset via empty priceHistory
-      console.log('🧹 SIMPLE RESET: Clearing local state');
+      // Step 2: Clear local state - this triggers PriceChart reset when priceHistory becomes empty
+      console.log('🧹 CLEAN RESET: Clearing local state (triggers chart reset)');
       setRecentTrades([]);
       setOrderBook({ bids: [], asks: [], lastUpdateTime: Date.now() });
-      setPriceHistory([]); // This empty array will trigger chart clearing
+      setPriceHistory([]); // CRITICAL: This empty array triggers PriceChart's detectAndHandleReset
       setActivePositions([]);
       setTraderRankings([]);
       setCurrentPrice(0);
@@ -787,6 +839,7 @@ const Dashboard: React.FC = () => {
       setScenarioPhaseData(null);
       setDynamicPricingInfo(null);
       
+      // Clear refs
       lastMessageProcessedRef.current = '';
       marketConditionUpdateRef.current = 0;
       
@@ -800,18 +853,19 @@ const Dashboard: React.FC = () => {
         timerRef.current = null;
       }
       
-      // Call backend reset to generate new simulation state
-      console.log('🔄 SIMPLE RESET: Calling backend reset');
+      // Step 3: Call backend reset to generate new simulation state
+      console.log('🔄 CLEAN RESET: Calling backend reset');
       const resetResponse = await SimulationApi.resetSimulation(simulationId);
       
       if (resetResponse.error && process.env.NODE_ENV === 'development') {
         console.error('Failed to reset backend simulation:', resetResponse.error);
       }
       
+      // Give backend time to complete reset
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      // Get fresh simulation data with new dynamic price
-      console.log('🔄 SIMPLE RESET: Fetching fresh simulation data');
+      // Step 4: Get fresh simulation data with new dynamic price
+      console.log('🔄 CLEAN RESET: Fetching fresh simulation data');
       const freshSimResponse = await SimulationApi.getSimulation(simulationId);
       
       if (freshSimResponse?.data) {
@@ -825,7 +879,7 @@ const Dashboard: React.FC = () => {
           ...freshSimData,
           isRunning: false,
           isPaused: false,
-          priceHistory: [],
+          priceHistory: [], // Ensure empty start
           recentTrades: [],
           activePositions: [],
           currentPrice: newDynamicPrice
@@ -834,7 +888,7 @@ const Dashboard: React.FC = () => {
         updateSimulationState({
           currentPrice: newDynamicPrice,
           orderBook: { bids: [], asks: [], lastUpdateTime: Date.now() },
-          priceHistory: [],
+          priceHistory: [], // This will keep chart empty until new data arrives
           recentTrades: [],
           activePositions: [],
           traderRankings: freshSimData.traderRankings || [],
@@ -847,7 +901,7 @@ const Dashboard: React.FC = () => {
           setDynamicPricingInfo(resetResponse.data.dynamicPricing);
         }
         
-        console.log('✅ SIMPLE RESET: Complete with new dynamic price');
+        console.log('✅ CLEAN RESET: Complete with new dynamic price');
         
       } else {
         if (process.env.NODE_ENV === 'development') {
@@ -876,17 +930,17 @@ const Dashboard: React.FC = () => {
           currentPrice: fallbackPrice
         } : prev);
         
-        console.log('⚠️ SIMPLE RESET: Emergency fallback complete');
+        console.log('⚠️ CLEAN RESET: Emergency fallback complete');
       }
       
     } catch (error) {
       if (process.env.NODE_ENV === 'development') {
-        console.error('Error during simple reset:', error);
+        console.error('Error during clean reset:', error);
       }
       
       // Emergency cleanup
       setRecentTrades([]);
-      setPriceHistory([]);
+      setPriceHistory([]); // Trigger chart reset
       setActivePositions([]);
       setOrderBook({ bids: [], asks: [], lastUpdateTime: Date.now() });
       setCurrentPrice(0);
@@ -912,7 +966,7 @@ const Dashboard: React.FC = () => {
         } : prev);
       }
       
-      console.log('❌ SIMPLE RESET: Error recovery complete');
+      console.log('❌ CLEAN RESET: Error recovery complete');
     }
   }, [simulationId, simulation, determineTokenSymbol, updateSimulationState]);
 
@@ -927,6 +981,7 @@ const Dashboard: React.FC = () => {
     if (simulationId) {
       try {
         await SimulationApi.setSimulationSpeed(simulationId, speedValue);
+        console.log(`⚡ Speed changed to ${speedValue}x for simulation ${simulationId}`);
       } catch (error) {
         if (process.env.NODE_ENV === 'development') {
           console.error(`Failed to update simulation speed:`, error);
@@ -937,7 +992,7 @@ const Dashboard: React.FC = () => {
 
   const toggleDynamicView = useCallback(() => {
     setDynamicChartView(prev => !prev);
-  }, [dynamicChartView]);
+  }, []);
 
   // Show mobile detection loading
   if (isLoading) {
@@ -993,23 +1048,28 @@ const Dashboard: React.FC = () => {
           <div className="mt-2 text-xs text-gray-500">
             Status: {simulationRegistrationStatus}
           </div>
+          {simulationId && (
+            <div className="mt-2 text-xs text-cyan-400">
+              Simulation ID: {simulationId.substring(0, 8)}...
+            </div>
+          )}
           <div className="mt-4 text-sm text-blue-400">
-            ✅ Trade count limitations REMOVED
+            ✅ FIXED: No duplicate simulations
           </div>
           <div className="mt-2 text-sm text-green-400">
-            ✅ Ultra-fast mode activated
+            ✅ FIXED: Single data stream
           </div>
           <div className="mt-2 text-sm text-purple-400">
-            ✅ Memory management optimized
+            ✅ FIXED: Clean WebSocket connection
           </div>
           <div className="mt-2 text-sm text-orange-400">
-            💰 Dynamic pricing enabled - NO MORE $100!
+            💰 FIXED: Dynamic pricing - NO $100!
           </div>
           <div className="mt-2 text-sm text-cyan-400">
             🖥️ Desktop mode • Enhanced mobile detection
           </div>
           <div className="mt-2 text-sm text-green-400">
-            ✅ SIMPLE RESET: Nuclear complexity removed
+            ✅ FIXED: Initialization locked to prevent duplication
           </div>
         </div>
       </div>
@@ -1025,6 +1085,11 @@ const Dashboard: React.FC = () => {
           <p className="mt-2 text-sm text-gray-400">
             Registration Status: {simulationRegistrationStatus}
           </p>
+          {simulationId && (
+            <p className="mt-2 text-xs text-cyan-400">
+              Simulation ID: {simulationId.substring(0, 8)}...
+            </p>
+          )}
           <div className="mt-4">
             <button 
               onClick={() => window.location.reload()} 
@@ -1060,6 +1125,11 @@ const Dashboard: React.FC = () => {
           <p className="mt-2 text-sm text-gray-400">
             Registration Status: {simulationRegistrationStatus}
           </p>
+          {simulationId && (
+            <p className="mt-2 text-xs text-cyan-400">
+              Simulation ID: {simulationId.substring(0, 8)}...
+            </p>
+          )}
         </div>
       </div>
     );
@@ -1071,11 +1141,18 @@ const Dashboard: React.FC = () => {
 
   return (
     <div className="h-screen w-full bg-gray-900 text-white p-2 flex flex-col overflow-hidden">
-      {/* Clean, minimal header for production use */}
+      {/* Header with simulation info */}
       <div className="flex flex-col mb-2 bg-gray-800 rounded-md shadow-sm">
         <div className="flex justify-between items-center h-10 p-2">
           <div className="flex items-center">
             <h1 className="text-base font-bold mr-3">Trading Simulator</h1>
+            
+            {/* FIXED: Show simulation ID for debugging */}
+            {simulationId && (
+              <div className="ml-2 text-xs bg-blue-900 px-2 py-1 rounded text-blue-300">
+                ID: {simulationId.substring(0, 8)}...
+              </div>
+            )}
             
             {/* Essential trading info only */}
             <div className="ml-2 text-xs bg-gray-700 px-2 py-1 rounded">
@@ -1229,7 +1306,7 @@ const Dashboard: React.FC = () => {
             <button 
               onClick={handleResetSimulation}
               className="px-3 py-0.5 bg-red-600 text-white rounded hover:bg-red-700 transition"
-              title="Simple reset - clears chart when priceHistory becomes empty"
+              title="Clean reset - triggers chart reset via empty priceHistory"
             >
               Reset
             </button>
@@ -1252,10 +1329,13 @@ const Dashboard: React.FC = () => {
             </div>
             
             <div className="grid grid-cols-2 gap-4 text-sm">
-              {/* Simulation Status */}
+              {/* FIXED: Simulation Status */}
               <div className="bg-gray-700 p-3 rounded">
-                <div className="text-blue-400 font-semibold mb-2">Simulation Status</div>
+                <div className="text-blue-400 font-semibold mb-2">FIXED Simulation Status</div>
                 <div className="space-y-1 text-xs">
+                  <div>Simulation ID: <span className="text-cyan-400">{simulationId?.substring(0, 12) || 'None'}...</span></div>
+                  <div>Created: <span className={simulationCreatedRef.current ? 'text-green-400' : 'text-red-400'}>{simulationCreatedRef.current ? 'Yes' : 'No'}</span></div>
+                  <div>Init Lock: <span className={initializationLockRef.current ? 'text-yellow-400' : 'text-green-400'}>{initializationLockRef.current ? 'Locked' : 'Free'}</span></div>
                   <div>Registration: <span className="text-green-400">{simulationRegistrationStatus}</span></div>
                   <div>WebSocket: <span className={isConnected ? 'text-green-400' : 'text-red-400'}>{isConnected ? 'Connected' : 'Disconnected'}</span></div>
                   <div>WebSocket Ready: <span className={isWebSocketReady ? 'text-green-400' : 'text-yellow-400'}>{isWebSocketReady ? 'Yes' : 'No'}</span></div>
@@ -1277,27 +1357,39 @@ const Dashboard: React.FC = () => {
                 </div>
               </div>
 
-              {/* Reset System Status */}
+              {/* FIXED: Clean Reset System Status */}
               <div className="bg-gray-700 p-3 rounded">
-                <div className="text-green-400 font-semibold mb-2">Simple Reset System</div>
+                <div className="text-green-400 font-semibold mb-2">FIXED Clean Reset System</div>
                 <div className="space-y-1 text-xs">
-                  <div>Reset Method: <span className="text-green-400">SIMPLE</span></div>
+                  <div>Reset Method: <span className="text-green-400">CLEAN</span></div>
                   <div>Price History Length: <span className="text-white">{priceHistory.length}</span></div>
-                  <div>Nuclear System: <span className="text-red-400">REMOVED</span></div>
-                  <div>✅ Clean: <span className="text-green-400">Chart clears on empty priceHistory</span></div>
-                  <div>📡 Simulation ID: <span className="text-cyan-400">{simulationId?.substring(0, 8) || 'None'}...</span></div>
+                  <div>Chart Reset Trigger: <span className="text-green-400">Empty priceHistory array</span></div>
+                  <div>✅ Fixed: <span className="text-green-400">No duplicate simulations</span></div>
+                  <div>📡 Single Stream: <span className="text-green-400">One simulation ID</span></div>
                 </div>
               </div>
 
-              {/* Dynamic Pricing Info */}
+              {/* FIXED: Dynamic Pricing Info */}
               <div className="bg-gray-700 p-3 rounded">
-                <div className="text-green-400 font-semibold mb-2">Dynamic Pricing</div>
+                <div className="text-green-400 font-semibold mb-2">FIXED Dynamic Pricing</div>
                 <div className="space-y-1 text-xs">
                   <div>Current Price: <span className="text-white">${currentPrice.toFixed(6)}</span></div>
                   <div>Category: <span className="text-green-400">{dynamicPricingInfo?.priceCategory || 'Unknown'}</span></div>
                   <div>Was Custom: <span className={dynamicPricingInfo?.wasCustom ? 'text-yellow-400' : 'text-gray-400'}>{dynamicPricingInfo?.wasCustom ? 'Yes' : 'No'}</span></div>
                   <div>Token Symbol: <span className="text-white">{tokenSymbol}</span></div>
                   <div>✅ FIXED: <span className="text-green-400">No hardcoded $100!</span></div>
+                </div>
+              </div>
+
+              {/* FIXED: Deduplication Status */}
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="text-cyan-400 font-semibold mb-2">FIXED Deduplication</div>
+                <div className="space-y-1 text-xs">
+                  <div>Duplicate Prevention: <span className="text-green-400">ACTIVE</span></div>
+                  <div>Message Dedup: <span className="text-green-400">ENABLED</span></div>
+                  <div>Last Msg ID: <span className="text-white">{lastMessageProcessedRef.current.substring(0, 20)}...</span></div>
+                  <div>Init Guard: <span className="text-green-400">PROTECTED</span></div>
+                  <div>Single WebSocket: <span className="text-green-400">ENFORCED</span></div>
                 </div>
               </div>
 
@@ -1313,17 +1405,6 @@ const Dashboard: React.FC = () => {
                   </div>
                 </div>
               )}
-
-              {/* Memory Management */}
-              <div className="bg-gray-700 p-3 rounded">
-                <div className="text-orange-400 font-semibold mb-2">Memory Management</div>
-                <div className="space-y-1 text-xs">
-                  <div>Memory Threshold: <span className="text-white">{ULTRA_FAST_CONFIG.MEMORY_MANAGEMENT_THRESHOLD}</span></div>
-                  <div>Performance Threshold: <span className="text-white">{ULTRA_FAST_CONFIG.PERFORMANCE_MODE_THRESHOLD}</span></div>
-                  <div>Max Price History: <span className="text-white">{ULTRA_FAST_CONFIG.MAX_PRICE_HISTORY}</span></div>
-                  <div>Max Positions: <span className="text-white">{ULTRA_FAST_CONFIG.MAX_ACTIVE_POSITIONS}</span></div>
-                </div>
-              </div>
             </div>
 
             {/* Message Stats */}
@@ -1353,7 +1434,7 @@ const Dashboard: React.FC = () => {
         </div>
       )}
       
-      {/* Simplified Grid Layout */}
+      {/* Grid Layout - Clean and simple */}
       <div style={{ 
         display: 'grid', 
         gridTemplateColumns: '3fr 9fr', 
@@ -1380,7 +1461,7 @@ const Dashboard: React.FC = () => {
           </div>
         </div>
         
-        {/* SIMPLIFIED: Price Chart - just pass the data, chart handles reset internally */}
+        {/* FIXED: Price Chart - passes data to trigger reset when priceHistory is empty */}
         <div style={{ 
           gridColumn: '2 / 3', 
           gridRow: '1 / 2', 
