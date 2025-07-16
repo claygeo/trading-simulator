@@ -1,4 +1,4 @@
-// frontend/src/components/PriceChart.tsx - DEEP FIX: TradingView Null Value Prevention
+// frontend/src/components/PriceChart.tsx - PERFECT: Backend Integration
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { 
   createChart, 
@@ -49,8 +49,6 @@ interface ChartState {
   isLiveBuilding: boolean;
   buildingStartTime: number | null;
   lastResetTime: number | null;
-  updatesPending: number;
-  lastSuccessfulUpdate: number;
 }
 
 const PriceChart: React.FC<PriceChartProps> = ({
@@ -72,113 +70,74 @@ const PriceChart: React.FC<PriceChartProps> = ({
     candleCount: 0,
     isLiveBuilding: false,
     buildingStartTime: null,
-    lastResetTime: null,
-    updatesPending: 0,
-    lastSuccessfulUpdate: 0
+    lastResetTime: null
   });
 
   const lastUpdateRef = useRef<number>(0);
   const lastCandleCountRef = useRef<number>(0);
   const updateThrottleRef = useRef<NodeJS.Timeout | null>(null);
   const isUpdatingRef = useRef<boolean>(false);
-  const pendingUpdateRef = useRef<{ candleData: CandlestickData[]; volumeData: HistogramData[] } | null>(null);
   
   const initialZoomSetRef = useRef<boolean>(false);
   const shouldAutoFitRef = useRef<boolean>(true);
-  
-  // 🔧 CRITICAL: Enhanced data validation with deep TradingView format checking
-  const sanitizeChartData = useCallback((rawPriceHistory: any[]): CandlestickData[] => {
-    if (!Array.isArray(rawPriceHistory)) {
-      console.log('📊 SANITIZE: Input is not an array');
-      return [];
-    }
-    
-    if (rawPriceHistory.length === 0) {
-      console.log('📊 SANITIZE: Empty array received');
+
+  // PERFECT: Data sanitization that matches your backend exactly
+  const sanitizeChartData = useCallback((backendPriceHistory: any[]): CandlestickData[] => {
+    if (!Array.isArray(backendPriceHistory) || backendPriceHistory.length === 0) {
       return [];
     }
     
     const validCandles: CandlestickData[] = [];
-    let lastValidTime = 0;
     
-    for (let i = 0; i < rawPriceHistory.length; i++) {
-      const candle = rawPriceHistory[i];
+    for (const candle of backendPriceHistory) {
+      // Skip null/undefined candles
+      if (!candle) continue;
       
-      // 🔧 CRITICAL: Ultra-strict null checking
-      if (candle === null || candle === undefined) {
-        console.warn(`📊 SANITIZE: Null candle at index ${i}`);
-        continue;
-      }
+      // Your backend sends 'timestamp' field - extract it
+      const timestamp = candle.timestamp;
+      if (typeof timestamp !== 'number' || isNaN(timestamp)) continue;
       
-      // Extract timestamp with multiple fallbacks
-      let timestamp: number;
-      if (typeof candle.timestamp === 'number' && !isNaN(candle.timestamp)) {
-        timestamp = candle.timestamp;
-      } else if (typeof candle.time === 'number' && !isNaN(candle.time)) {
-        timestamp = candle.time;
-      } else {
-        console.warn(`📊 SANITIZE: Invalid timestamp at index ${i}:`, candle);
-        continue;
-      }
+      // Convert to seconds for TradingView (your backend sends milliseconds)
+      const timeInSeconds = Math.floor(timestamp / 1000);
       
-      // 🔧 CRITICAL: Validate all OHLC values with extreme precision
+      // Validate OHLC values (your backend generates these correctly)
       const open = Number(candle.open);
       const high = Number(candle.high);
       const low = Number(candle.low);
       const close = Number(candle.close);
       
-      // Check for NaN, null, undefined, or non-positive values
-      if (!Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) {
-        console.warn(`📊 SANITIZE: Non-finite OHLC values at index ${i}:`, { open, high, low, close });
+      // Skip if any OHLC value is invalid
+      if (!Number.isFinite(open) || !Number.isFinite(high) || 
+          !Number.isFinite(low) || !Number.isFinite(close) ||
+          open <= 0 || high <= 0 || low <= 0 || close <= 0) {
         continue;
       }
       
-      if (open <= 0 || high <= 0 || low <= 0 || close <= 0) {
-        console.warn(`📊 SANITIZE: Non-positive OHLC values at index ${i}:`, { open, high, low, close });
-        continue;
-      }
-      
-      // 🔧 CRITICAL: Validate OHLC relationships
+      // Your CandleManager already validates OHLC relationships, but double-check
       if (high < low || high < open || high < close || low > open || low > close) {
-        console.warn(`📊 SANITIZE: Invalid OHLC relationships at index ${i}:`, { open, high, low, close });
         continue;
       }
       
-      // Convert timestamp to seconds for TradingView
-      const timeInSeconds = Math.floor(timestamp / 1000);
-      
-      // 🔧 CRITICAL: Ensure chronological order
-      if (timeInSeconds <= lastValidTime) {
-        console.warn(`📊 SANITIZE: Non-chronological timestamp at index ${i}: ${timeInSeconds} <= ${lastValidTime}`);
-        continue;
-      }
-      
-      // 🔧 CRITICAL: Create TradingView-compatible data with explicit type casting
-      const candleData: CandlestickData = {
+      // Create TradingView-compatible candle
+      validCandles.push({
         time: timeInSeconds as UTCTimestamp,
-        open: Number(open.toFixed(8)), // Limit precision to prevent floating point issues
-        high: Number(high.toFixed(8)),
-        low: Number(low.toFixed(8)),
-        close: Number(close.toFixed(8))
-      };
-      
-      // 🔧 CRITICAL: Final validation of the created object
-      if (!Number.isFinite(candleData.open) || !Number.isFinite(candleData.high) || 
-          !Number.isFinite(candleData.low) || !Number.isFinite(candleData.close)) {
-        console.warn(`📊 SANITIZE: Final validation failed at index ${i}:`, candleData);
-        continue;
-      }
-      
-      validCandles.push(candleData);
-      lastValidTime = timeInSeconds;
+        open: open,
+        high: high,
+        low: low,
+        close: close
+      });
     }
     
-    console.log(`📊 SANITIZE: ${rawPriceHistory.length} → ${validCandles.length} valid candles (${rawPriceHistory.length - validCandles.length} filtered)`);
+    // Your TimeframeManager already handles chronological order, but ensure it
+    validCandles.sort((a, b) => Number(a.time) - Number(b.time));
+    
+    console.log(`📊 BACKEND SYNC: ${backendPriceHistory.length} → ${validCandles.length} TradingView candles`);
     
     return validCandles;
   }, []);
 
   const calculateOptimalVisibleRange = useCallback((candleCount: number): { from: number; to: number } => {
+    // Your ultra-fast timeframes generate candles rapidly, so adjust visible range
     const MIN_VISIBLE_CANDLES = 25;
     const MAX_VISIBLE_CANDLES = 80;
     const PREFERRED_VISIBLE_CANDLES = 50;
@@ -201,16 +160,15 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return { from, to };
   }, []);
 
+  // Simple reset detection - triggered when your Dashboard calls reset
   const detectAndHandleReset = useCallback((candleData: CandlestickData[]) => {
     const isEmpty = candleData.length === 0;
     const wasNotEmpty = lastCandleCountRef.current > 0;
     
     if (isEmpty && wasNotEmpty) {
-      console.log('🔄 SIMPLE RESET: Chart data cleared (priceHistory went empty)');
+      console.log('🔄 RESET: Chart data cleared (Dashboard reset simulation)');
       
-      // Clear any pending updates
-      pendingUpdateRef.current = null;
-      
+      // Clear chart data
       if (candlestickSeriesRef.current && volumeSeriesRef.current) {
         try {
           candlestickSeriesRef.current.setData([]);
@@ -224,45 +182,38 @@ const PriceChart: React.FC<PriceChartProps> = ({
         }
       }
       
+      // Reset state
       setChartState(prev => ({
         ...prev,
         status: 'empty',
         candleCount: 0,
         isLiveBuilding: false,
         buildingStartTime: null,
-        lastResetTime: Date.now(),
-        updatesPending: 0
+        lastResetTime: Date.now()
       }));
       
       lastCandleCountRef.current = 0;
       initialZoomSetRef.current = false;
       shouldAutoFitRef.current = true;
       
-      console.log('✅ SIMPLE RESET: Complete');
+      console.log('✅ RESET: Complete, ready for new candles');
       return true;
     }
     
     return false;
   }, []);
 
-  // 🔧 CRITICAL: Completely rewritten update function with race condition prevention
+  // Chart update function optimized for your ultra-fast backend
   const updateChart = useCallback((candleData: CandlestickData[], volumeData: HistogramData[]) => {
-    if (!chartState.isReady || !candlestickSeriesRef.current || !volumeSeriesRef.current) {
+    if (!chartState.isReady || !candlestickSeriesRef.current || !volumeSeriesRef.current || isUpdatingRef.current) {
       return;
     }
 
     const now = Date.now();
-    
-    // 🔧 CRITICAL: Prevent race conditions by blocking concurrent updates
-    if (isUpdatingRef.current) {
-      console.log('🔒 UPDATE: Blocking concurrent update');
-      pendingUpdateRef.current = { candleData, volumeData };
-      return;
-    }
-    
-    // 🔧 CRITICAL: More aggressive throttling during high-frequency updates
     const timeSinceLastUpdate = now - lastUpdateRef.current;
-    const minUpdateInterval = candleData.length > 100 ? 100 : 50; // Slower updates for large datasets
+    
+    // Throttle updates for your fast timeframes (your backend sends updates every 100-250ms)
+    const minUpdateInterval = 50; // 50ms throttling to match your ultra-fast backend
     
     if (timeSinceLastUpdate < minUpdateInterval) {
       if (updateThrottleRef.current) {
@@ -277,8 +228,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
     isUpdatingRef.current = true;
     lastUpdateRef.current = now;
-    
-    setChartState(prev => ({ ...prev, updatesPending: prev.updatesPending + 1 }));
 
     try {
       // Check for reset condition first
@@ -289,9 +238,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
       
       const incomingCandleCount = candleData.length;
 
-      // Track when chart starts building after being empty
+      // Track when chart starts building (your backend starts with empty then builds)
       if (incomingCandleCount > 0 && lastCandleCountRef.current === 0) {
-        console.log('📈 BUILDING: Chart started building with valid candles');
+        console.log('📈 BUILDING: Chart started with backend candles');
         setChartState(prev => ({
           ...prev,
           status: 'building',
@@ -300,114 +249,62 @@ const PriceChart: React.FC<PriceChartProps> = ({
         }));
       }
 
-      // 🔧 CRITICAL: Defensive chart updates with multiple safety layers
-      let updateSuccess = false;
-      let retryCount = 0;
-      const maxRetries = 3;
-      
-      while (!updateSuccess && retryCount < maxRetries) {
-        try {
-          // 🔧 CRITICAL: Pre-update validation
-          if (!candlestickSeriesRef.current || !volumeSeriesRef.current) {
-            throw new Error('Chart series not available');
-          }
-          
-          // 🔧 CRITICAL: Final data validation before TradingView
-          for (let i = 0; i < candleData.length; i++) {
-            const candle = candleData[i];
-            if (!Number.isFinite(candle.open) || !Number.isFinite(candle.high) || 
-                !Number.isFinite(candle.low) || !Number.isFinite(candle.close) ||
-                candle.open <= 0 || candle.high <= 0 || candle.low <= 0 || candle.close <= 0) {
-              throw new Error(`Invalid candle data at index ${i}: ${JSON.stringify(candle)}`);
-            }
-          }
-          
-          // 🔧 CRITICAL: Atomic update operation
-          console.log(`📊 UPDATE: Attempting to update chart with ${candleData.length} candles (attempt ${retryCount + 1})`);
-          
-          candlestickSeriesRef.current.setData([...candleData]); // Create new array to prevent reference issues
-          volumeSeriesRef.current.setData([...volumeData]);
-          
-          setOptimalZoom(candleData);
-          updateSuccess = true;
-          
-          console.log(`✅ UPDATE: Successfully updated chart with ${candleData.length} candles`);
-          
-        } catch (chartError: any) {
-          retryCount++;
-          console.error(`❌ UPDATE ERROR (attempt ${retryCount}/${maxRetries}):`, chartError);
-          
-          if (retryCount < maxRetries) {
-            // 🔧 CRITICAL: Progressive recovery strategy
-            console.log(`🔧 RECOVERY: Attempting recovery strategy ${retryCount}`);
-            
-            if (retryCount === 1) {
-              // Strategy 1: Clear and retry
-              try {
-                candlestickSeriesRef.current?.setData([]);
-                volumeSeriesRef.current?.setData([]);
-                await new Promise(resolve => setTimeout(resolve, 50));
-              } catch (clearError) {
-                console.warn('Clear strategy failed:', clearError);
-              }
-            } else if (retryCount === 2) {
-              // Strategy 2: Reduce dataset size
-              const reducedCandleData = candleData.slice(-50); // Only last 50 candles
-              const reducedVolumeData = volumeData.slice(-50);
-              candleData = reducedCandleData;
-              volumeData = reducedVolumeData;
-              console.log(`🔧 RECOVERY: Reduced dataset to ${candleData.length} candles`);
-            }
-            
-            await new Promise(resolve => setTimeout(resolve, 100)); // Wait before retry
-          } else {
-            // Final recovery attempt failed
-            console.error('❌ CRITICAL: All recovery attempts failed');
-            setChartState(prev => ({ ...prev, status: 'error' }));
-            break;
-          }
-        }
-      }
-      
-      if (updateSuccess) {
-        lastCandleCountRef.current = incomingCandleCount;
+      // Update TradingView Charts
+      try {
+        candlestickSeriesRef.current.setData(candleData);
+        volumeSeriesRef.current.setData(volumeData);
         
-        setChartState(prev => ({
-          ...prev,
-          candleCount: incomingCandleCount,
-          status: incomingCandleCount >= 50 ? 'ready' : incomingCandleCount > 0 ? 'building' : 'empty',
-          lastSuccessfulUpdate: now,
-          updatesPending: Math.max(0, prev.updatesPending - 1)
-        }));
+        setOptimalZoom(candleData);
+        
+        console.log(`📊 UPDATE: ${candleData.length} candles from backend`);
+        
+      } catch (chartError) {
+        console.error('❌ TradingView error:', chartError);
+        
+        // Simple recovery - clear and retry once
+        try {
+          candlestickSeriesRef.current.setData([]);
+          volumeSeriesRef.current.setData([]);
+          
+          setTimeout(() => {
+            if (candlestickSeriesRef.current && volumeSeriesRef.current) {
+              candlestickSeriesRef.current.setData(candleData);
+              volumeSeriesRef.current.setData(volumeData);
+            }
+          }, 100);
+          
+        } catch (recoveryError) {
+          console.error('❌ Recovery failed:', recoveryError);
+          setChartState(prev => ({ ...prev, status: 'error' }));
+        }
+        
+        isUpdatingRef.current = false;
+        return;
       }
 
-    } catch (error: any) {
-      console.error('❌ CRITICAL ERROR in updateChart:', error);
-      setChartState(prev => ({ 
-        ...prev, 
-        status: 'error',
-        updatesPending: Math.max(0, prev.updatesPending - 1)
+      lastCandleCountRef.current = incomingCandleCount;
+      
+      // Update chart state based on your backend's fast candle generation
+      setChartState(prev => ({
+        ...prev,
+        candleCount: incomingCandleCount,
+        status: incomingCandleCount >= 50 ? 'ready' : incomingCandleCount > 0 ? 'building' : 'empty'
       }));
+
+    } catch (error) {
+      console.error('❌ Chart update error:', error);
+      setChartState(prev => ({ ...prev, status: 'error' }));
     } finally {
       isUpdatingRef.current = false;
-      
-      // 🔧 CRITICAL: Process any pending updates
-      if (pendingUpdateRef.current) {
-        const pending = pendingUpdateRef.current;
-        pendingUpdateRef.current = null;
-        setTimeout(() => {
-          updateChart(pending.candleData, pending.volumeData);
-        }, 50);
-      }
     }
   }, [chartState.isReady, detectAndHandleReset]);
 
-  // 🔧 CRITICAL: Enhanced data conversion with volume safety
+  // Convert your backend data to TradingView format
   const convertPriceHistory = useMemo((): { candleData: CandlestickData[]; volumeData: HistogramData[] } => {
     const candleData = sanitizeChartData(priceHistory);
     
     const volumeData: HistogramData[] = candleData.map((candle, index) => {
-      // Find corresponding original candle for volume data
+      // Get volume from original data
       let volume = 0;
       if (index < priceHistory.length && priceHistory[index]?.volume) {
         volume = Number(priceHistory[index].volume);
@@ -426,7 +323,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return { candleData, volumeData };
   }, [priceHistory, sanitizeChartData]);
 
-  // Monitor price history changes and update chart
+  // Monitor price history changes from your WebSocket
   useEffect(() => {
     if (!chartState.isReady) {
       return;
@@ -464,11 +361,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
         timeScale: {
           borderColor: '#1C2951',
           timeVisible: true,
-          secondsVisible: false,
+          secondsVisible: true, // Show seconds for your ultra-fast timeframes
           barSpacing: 12,
           minBarSpacing: 0.5,
           rightOffset: 5,
-          shiftVisibleRangeOnNewBar: false,
+          shiftVisibleRangeOnNewBar: true, // Auto-scroll for live updates
         },
         handleScroll: {
           mouseWheel: true,
@@ -522,7 +419,6 @@ const PriceChart: React.FC<PriceChartProps> = ({
       lastCandleCountRef.current = 0;
       lastUpdateRef.current = 0;
       isUpdatingRef.current = false;
-      pendingUpdateRef.current = null;
       
       setChartState(prev => ({
         ...prev,
@@ -530,12 +426,10 @@ const PriceChart: React.FC<PriceChartProps> = ({
         isReady: true,
         candleCount: 0,
         isLiveBuilding: false,
-        buildingStartTime: null,
-        updatesPending: 0,
-        lastSuccessfulUpdate: Date.now()
+        buildingStartTime: null
       }));
 
-      console.log('✅ DEEP FIX: Chart initialized with race condition prevention');
+      console.log('✅ BACKEND SYNC: Chart ready for ultra-fast backend data');
 
     } catch (error) {
       console.error('❌ Failed to create chart:', error);
@@ -543,14 +437,12 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }
 
     return () => {
-      console.log('🧹 Cleaning up chart component');
+      console.log('🧹 Cleaning up chart');
       
       if (updateThrottleRef.current) {
         clearTimeout(updateThrottleRef.current);
         updateThrottleRef.current = null;
       }
-      
-      pendingUpdateRef.current = null;
       
       if (chartRef.current) {
         try {
@@ -570,9 +462,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         candleCount: 0,
         isLiveBuilding: false,
         buildingStartTime: null,
-        lastResetTime: null,
-        updatesPending: 0,
-        lastSuccessfulUpdate: 0
+        lastResetTime: null
       });
       
       initialZoomSetRef.current = false;
@@ -602,6 +492,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         }
       }
     } else if (dynamicView && shouldAutoFitRef.current && candleCount > lastCandleCountRef.current) {
+      // For ultra-fast updates, occasionally adjust zoom
       if (Math.random() < 0.1) {
         try {
           const { from, to } = calculateOptimalVisibleRange(candleCount);
@@ -669,7 +560,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }
   }, [convertPriceHistory, setOptimalZoom]);
 
-  // Building stats for development
+  // Building stats for your ultra-fast backend
   const buildingStats = useMemo(() => {
     if (!chartState.isLiveBuilding || !chartState.buildingStartTime) {
       return null;
@@ -686,8 +577,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       candlesPerSecond: candlesPerSecond,
       totalCandles: chartState.candleCount,
       isPostReset: !!chartState.lastResetTime && 
-                   chartState.buildingStartTime > chartState.lastResetTime,
-      updatesPending: chartState.updatesPending
+                   chartState.buildingStartTime > chartState.lastResetTime
     };
   }, [chartState]);
 
@@ -696,7 +586,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
       case 'initializing':
         return { color: 'bg-yellow-900 text-yellow-300', icon: '⚡', text: 'Initializing...' };
       case 'empty':
-        return { color: 'bg-blue-900 text-blue-300', icon: '⏳', text: 'Ready for data' };
+        return { color: 'bg-blue-900 text-blue-300', icon: '⏳', text: 'Ready for backend' };
       case 'building':
         return { 
           color: 'bg-green-900 text-green-300', 
@@ -737,14 +627,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
           </div>
           
           <div className="bg-green-900 bg-opacity-75 px-3 py-1 rounded text-xs text-green-300">
-            ✅ DEEP FIX: Race Prevention
+            ✅ BACKEND SYNC
           </div>
-          
-          {chartState.updatesPending > 0 && (
-            <div className="bg-yellow-900 bg-opacity-75 px-3 py-1 rounded text-xs text-yellow-300">
-              ⏳ Pending: {chartState.updatesPending}
-            </div>
-          )}
           
           {buildingStats && (
             <div className="bg-green-900 bg-opacity-75 px-3 py-1 rounded text-xs text-green-300">
@@ -768,7 +652,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         <button
           onClick={optimizeZoom}
           className="px-3 py-1 bg-purple-700 bg-opacity-80 text-purple-300 text-xs rounded hover:bg-opacity-100 transition"
-          title="Optimize zoom for professional view"
+          title="Optimize zoom"
         >
           🎯 Optimize
         </button>
@@ -794,20 +678,18 @@ const PriceChart: React.FC<PriceChartProps> = ({
           <div>🔄 Trades: {trades.length}</div>
           <div>🎯 Status: {chartState.status}</div>
           <div>🏗️ Building: {chartState.isLiveBuilding ? 'YES' : 'NO'}</div>
-          <div>⚡ Updating: {isUpdatingRef.current ? 'ACTIVE' : 'IDLE'}</div>
-          <div>🔒 Pending: {chartState.updatesPending}</div>
-          <div>✅ DEEP FIX: RACE PREVENTION</div>
-          <div>🛡️ RETRY MECHANISM</div>
-          <div>📡 ATOMIC UPDATES</div>
+          <div>⚡ Updates: {isUpdatingRef.current ? 'ACTIVE' : 'IDLE'}</div>
+          <div>✅ BACKEND: Ultra-fast sync</div>
+          <div>📡 INTERVALS: 3-15 second candles</div>
+          <div>🔧 FORMAT: Backend → TradingView</div>
           {chartState.lastResetTime && (
             <div>🕐 Last Reset: {Math.floor((Date.now() - chartState.lastResetTime) / 1000)}s ago</div>
           )}
-          <div>🎯 Pro Zoom: {initialZoomSetRef.current ? 'SET' : 'PENDING'}</div>
+          <div>🎯 Zoom: {initialZoomSetRef.current ? 'SET' : 'PENDING'}</div>
           {buildingStats && (
             <>
               <div>⏱️ Time: {buildingStats.elapsed}s</div>
               <div>📈 Rate: {buildingStats.candlesPerSecond}/s</div>
-              <div>⏳ Queue: {buildingStats.updatesPending}</div>
             </>
           )}
         </div>
@@ -817,7 +699,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75">
           <div className="bg-red-900 text-red-100 p-6 rounded-lg max-w-md text-center">
             <h3 className="font-bold text-lg mb-2">Chart Error</h3>
-            <p className="text-sm">TradingView chart encountered an error. This may be due to data format issues.</p>
+            <p className="text-sm">TradingView chart error. Your backend data may be valid but chart can't display it.</p>
             <button 
               onClick={() => window.location.reload()} 
               className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-sm transition"
@@ -832,20 +714,19 @@ const PriceChart: React.FC<PriceChartProps> = ({
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-center text-gray-400">
             <div className="text-6xl mb-6">📊</div>
-            <h3 className="text-xl font-bold mb-3">Deep Fixed Chart Ready</h3>
-            <p className="text-sm mb-4">Race condition prevention & atomic updates active</p>
+            <h3 className="text-xl font-bold mb-3">Backend Sync Ready</h3>
+            <p className="text-sm mb-4">Optimized for your ultra-fast timeframes</p>
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
-                <span>Waiting for backend candle data...</span>
+                <span>Waiting for CandleManager data...</span>
               </div>
-              <div>🔒 Race condition prevention</div>
-              <div>🛡️ Retry mechanism with recovery</div>
-              <div>📡 Atomic chart updates</div>
-              <div>🔧 Enhanced data validation</div>
-              <div>⚡ Smart throttling for high-frequency</div>
-              <div>📈 Simple reset on empty priceHistory</div>
-              <div>✨ Deep TradingView compatibility</div>
+              <div>⚡ Ultra-fast intervals: 3-15 seconds</div>
+              <div>📡 Backend format: timestamp→time conversion</div>
+              <div>🔧 OHLCV validation: Backend + Frontend</div>
+              <div>📈 TimeframeManager integration</div>
+              <div>🔄 Reset: Triggered by Dashboard</div>
+              <div>✅ WebSocket: Real-time sync</div>
             </div>
           </div>
         </div>
@@ -855,12 +736,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
         <div className="absolute top-20 left-4 pointer-events-none">
           <div className="bg-green-900 bg-opacity-75 px-4 py-2 rounded-lg">
             <div className="text-green-300 text-sm font-medium">
-              🔴 DEEP FIXED LIVE: {chartState.candleCount} candles
-              {chartState.updatesPending > 0 && ` (${chartState.updatesPending} pending)`}
+              🔴 BACKEND SYNC: {chartState.candleCount} ultra-fast candles
             </div>
             {buildingStats && (
               <div className="text-green-400 text-xs mt-1">
-                {buildingStats.elapsed}s elapsed • {buildingStats.candlesPerSecond} candles/sec • Race prevention active
+                {buildingStats.elapsed}s elapsed • {buildingStats.candlesPerSecond} candles/sec • CandleManager sync active
                 {buildingStats.isPostReset && ' • Post-Reset Build'}
               </div>
             )}
