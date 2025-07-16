@@ -1,4 +1,4 @@
-// backend/src/services/simulation/SimulationManager.ts - FIXED: Eliminates Thin Candles & Improves Reset
+// backend/src/services/simulation/SimulationManager.ts - FIXED: TPS Spam Eliminated & Pause Error Fixed
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import {
@@ -51,6 +51,11 @@ export class SimulationManager {
   private liveTPSMetrics: Map<string, ExternalMarketMetrics> = new Map();
   private metricsUpdateIntervals: Map<string, NodeJS.Timeout> = new Map();
   
+  // 🔧 FIXED: TPS metrics throttling to prevent spam
+  private lastTPSBroadcast: Map<string, number> = new Map();
+  private lastTPSMetricsSnapshot: Map<string, string> = new Map();
+  private readonly TPS_BROADCAST_THROTTLE_MS = 2000; // Only broadcast TPS changes every 2 seconds
+  
   private simulationRegistrationStatus: Map<string, 'creating' | 'registering' | 'ready' | 'starting' | 'running'> = new Map();
   private registrationCallbacks: Map<string, ((status: string) => void)[]> = new Map();
   
@@ -72,7 +77,8 @@ export class SimulationManager {
 
   private readonly baseUpdateInterval: number = 50;
   private readonly processedTradesSyncIntervalTime: number = 25;
-  private readonly metricsUpdateInterval: number = 100;
+  // 🔧 FIXED: Increased metrics update interval to reduce spam
+  private readonly metricsUpdateInterval: number = 2000; // Changed from 100ms to 2000ms
 
   constructor() {
     this.initializeEngines();
@@ -151,12 +157,13 @@ export class SimulationManager {
     }
   }
 
+  // 🔧 FIXED: Enhanced TPS metrics tracking with spam prevention
   private startTPSMetricsTracking(simulationId: string): void {
     if (this.metricsUpdateIntervals.has(simulationId)) {
       return;
     }
     
-    console.log(`📊 [TPS METRICS] Starting metrics tracking for simulation ${simulationId}`);
+    console.log(`📊 [TPS METRICS] Starting metrics tracking for simulation ${simulationId} with anti-spam throttling`);
     
     const interval = setInterval(() => {
       const simulation = this.simulations.get(simulationId);
@@ -169,11 +176,50 @@ export class SimulationManager {
       const liveMetrics = this.calculateLiveTPSMetrics(simulation);
       this.liveTPSMetrics.set(simulationId, liveMetrics);
       
-      this.broadcastTPSMetricsUpdate(simulationId, liveMetrics);
+      // 🔧 FIXED: Only broadcast if metrics have actually changed
+      this.throttledTPSMetricsBroadcast(simulationId, liveMetrics);
       
     }, this.metricsUpdateInterval);
     
     this.metricsUpdateIntervals.set(simulationId, interval);
+  }
+
+  // 🔧 FIXED: New throttled broadcast method to prevent TPS spam
+  private throttledTPSMetricsBroadcast(simulationId: string, metrics: ExternalMarketMetrics): void {
+    const now = Date.now();
+    const lastBroadcast = this.lastTPSBroadcast.get(simulationId) || 0;
+    
+    // Only broadcast if enough time has passed
+    if (now - lastBroadcast < this.TPS_BROADCAST_THROTTLE_MS) {
+      return;
+    }
+    
+    // Create a snapshot of the metrics to compare for changes
+    const metricsSnapshot = JSON.stringify({
+      actualTPS: metrics.actualTPS,
+      currentTPS: metrics.currentTPS,
+      queueDepth: metrics.queueDepth,
+      marketSentiment: metrics.marketSentiment,
+      dominantTraderType: metrics.dominantTraderType
+    });
+    
+    const lastSnapshot = this.lastTPSMetricsSnapshot.get(simulationId);
+    
+    // 🔧 FIXED: Only broadcast if metrics have actually changed OR if it's been a while
+    const hasChanges = lastSnapshot !== metricsSnapshot;
+    const forceUpdate = now - lastBroadcast > this.TPS_BROADCAST_THROTTLE_MS * 5; // Force update every 10 seconds
+    
+    if (hasChanges || forceUpdate) {
+      this.broadcastTPSMetricsUpdate(simulationId, metrics);
+      this.lastTPSBroadcast.set(simulationId, now);
+      this.lastTPSMetricsSnapshot.set(simulationId, metricsSnapshot);
+      
+      if (hasChanges) {
+        console.log(`📊 [TPS METRICS] Broadcasting metrics change for ${simulationId}: actualTPS=${metrics.actualTPS}, queueDepth=${metrics.queueDepth}`);
+      } else {
+        console.log(`📊 [TPS METRICS] Force broadcasting metrics for ${simulationId} (periodic update)`);
+      }
+    }
   }
 
   private stopTPSMetricsTracking(simulationId: string): void {
@@ -182,6 +228,9 @@ export class SimulationManager {
       clearInterval(interval);
       this.metricsUpdateIntervals.delete(simulationId);
       this.liveTPSMetrics.delete(simulationId);
+      // 🔧 FIXED: Clean up throttling maps
+      this.lastTPSBroadcast.delete(simulationId);
+      this.lastTPSMetricsSnapshot.delete(simulationId);
       console.log(`📊 [TPS METRICS] Stopped metrics tracking for simulation ${simulationId}`);
     }
   }
@@ -388,7 +437,9 @@ export class SimulationManager {
         console.log(`🔗 FIXED: External candle coordinator initialized for ${simulationId}`);
       }
       
-      this.startTPSMetricsTracking(simulationId);
+      // 🔧 FIXED: Don't start TPS metrics tracking immediately on creation
+      // Only start when simulation actually starts
+      console.log(`📊 [TPS METRICS] TPS tracking will start when simulation ${simulationId} is started`);
       
       await this.verifySimulationRegistration(simulationId);
       
@@ -690,8 +741,10 @@ export class SimulationManager {
       const speed = this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor;
       const timeframe = this.simulationTimeframes.get(id) || '1m';
       
+      // 🔧 FIXED: Only start TPS metrics tracking when simulation actually starts
       if (!this.metricsUpdateIntervals.has(id)) {
         this.startTPSMetricsTracking(id);
+        console.log(`📊 [TPS METRICS] Started TPS tracking for running simulation ${id}`);
       }
       
       const marketAnalysis = this.timeframeManager.analyzeMarketConditions(id, simulation);
@@ -1091,35 +1144,61 @@ export class SimulationManager {
     return simulation.recentTrades.length + simulation.closedPositions.length * 2;
   }
 
+  // 🔧 FIXED: Enhanced pauseSimulation with better error handling
   pauseSimulation(id: string): void {
-    const simulation = this.simulations.get(id);
+    console.log(`⏸️ [PAUSE] Attempting to pause simulation ${id}`);
     
-    if (!simulation) {
-      throw new Error(`Simulation with ID ${id} not found`);
+    try {
+      const simulation = this.simulations.get(id);
+      
+      if (!simulation) {
+        const error = new Error(`Simulation with ID ${id} not found`);
+        console.error(`❌ [PAUSE] ${error.message}`);
+        throw error;
+      }
+      
+      if (!simulation.isRunning || simulation.isPaused) {
+        const error = new Error(`Simulation ${id} is not running or already paused (isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused})`);
+        console.error(`❌ [PAUSE] ${error.message}`);
+        throw error;
+      }
+      
+      console.log(`⏸️ [PAUSE] Pausing simulation ${id} - current state: running=${simulation.isRunning}, paused=${simulation.isPaused}`);
+      
+      simulation.isPaused = true;
+      this.simulations.set(id, simulation);
+      
+      const interval = this.simulationIntervals.get(id);
+      if (interval) {
+        clearInterval(interval);
+        this.simulationIntervals.delete(id);
+        console.log(`⏸️ [PAUSE] Cleared simulation interval for ${id}`);
+      }
+      
+      // 🔧 FIXED: Stop TPS metrics tracking when paused to prevent spam
+      this.stopTPSMetricsTracking(id);
+      console.log(`📊 [PAUSE] Stopped TPS metrics tracking for paused simulation ${id}`);
+      
+      this.broadcastService.broadcastSimulationStatus(
+        id,
+        simulation.isRunning,
+        true,
+        this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor,
+        simulation.currentPrice
+      );
+      
+      console.log(`✅ [PAUSE] Successfully paused simulation ${id}`);
+      
+    } catch (error) {
+      console.error(`❌ [PAUSE] Error pausing simulation ${id}:`, error);
+      
+      // Re-throw the error with more context for the API endpoint
+      if (error instanceof Error) {
+        throw new Error(`Failed to pause simulation ${id}: ${error.message}`);
+      } else {
+        throw new Error(`Failed to pause simulation ${id}: Unknown error`);
+      }
     }
-    
-    if (!simulation.isRunning || simulation.isPaused) {
-      throw new Error(`Simulation ${id} is not running or already paused`);
-    }
-    
-    simulation.isPaused = true;
-    this.simulations.set(id, simulation);
-    
-    const interval = this.simulationIntervals.get(id);
-    if (interval) {
-      clearInterval(interval);
-      this.simulationIntervals.delete(id);
-    }
-    
-    this.stopTPSMetricsTracking(id);
-    
-    this.broadcastService.broadcastSimulationStatus(
-      id,
-      simulation.isRunning,
-      true,
-      this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor,
-      simulation.currentPrice
-    );
   }
 
   resetSimulation(id: string): void {
@@ -1485,6 +1564,10 @@ export class SimulationManager {
     });
     this.metricsUpdateIntervals.clear();
     this.liveTPSMetrics.clear();
+    
+    // 🔧 FIXED: Clean up throttling maps
+    this.lastTPSBroadcast.clear();
+    this.lastTPSMetricsSnapshot.clear();
     
     this.simulations.forEach((simulation, id) => {
       if (simulation.isRunning) {
