@@ -1,4 +1,4 @@
-// backend/src/websocket/index.ts - FIXED: TPS Error Handling & Metrics Broadcasting
+// backend/src/websocket/index.ts - FIXED: Initial Candle Jump Eliminated & Enhanced TPS Support
 import { WebSocket, WebSocketServer } from 'ws';
 import { BroadcastManager } from '../services/broadcastManager';
 import { PerformanceMonitor } from '../monitoring/performanceMonitor';
@@ -99,9 +99,10 @@ export function setupWebSocketServer(
           realtimeAdaptation: true,
           raceConditionPrevention: true,
           tpsModeSupport: true,      // TPS mode support
-          stressTestSupport: true    // Stress test support
+          stressTestSupport: true,   // Stress test support
+          initialCandleJumpPrevention: true // NEW: Fixed initial candle jump
         },
-        version: '2.3.0' // Version bump for TPS support
+        version: '2.3.1' // Version bump for candle jump fix
       }), { binary: false, compress: false, fin: true });
     } catch (error) {
       console.error('Error sending welcome message:', error);
@@ -555,7 +556,7 @@ function getTargetTPSForMode(mode: string): number {
   }
 }
 
-// CRITICAL FIX: Enhanced subscription with the SAME simulationManager instance
+// 🔧 CRITICAL FIX: Enhanced subscription with NO initial candle data to prevent jump
 async function handleSubscriptionWithRetry(
   ws: WebSocket, 
   message: WebSocketMessage, 
@@ -699,20 +700,24 @@ async function handleSubscriptionWithRetry(
     console.log(`🧹 [WS SUB] Cleared retry timer for ${simulationId}`);
   }
   
-  console.log(`📡 [WS SUB] Sending initial state for simulation ${simulationId} to ${clientId}`);
+  console.log(`📡 [WS SUB] Sending initial state for simulation ${simulationId} to ${clientId} - WITH CANDLE JUMP PREVENTION`);
   
   // FIXED: Get live TPS metrics for initial state
   const liveMetrics = simulationManager.getLiveTPSMetrics(simulationId);
   
-  // Prepare enhanced simulation state with TPS information
+  // 🔧 CRITICAL FIX: Enhanced simulation state WITHOUT candle data if simulation is not running
+  const isSimulationActuallyRunning = simulation.isRunning && !simulation.isPaused;
+  
   const enhancedState = {
     isRunning: simulation.isRunning,
     isPaused: simulation.isPaused,
     currentPrice: simulation.currentPrice,
-    priceHistory: simulation.priceHistory,
+    // 🔧 CRITICAL FIX: Only include price history if simulation is actually running
+    priceHistory: isSimulationActuallyRunning ? simulation.priceHistory : [],
     orderBook: simulation.orderBook,
     activePositions: simulation.activePositions,
-    recentTrades: simulation.recentTrades.slice(0, 200),
+    // 🔧 CRITICAL FIX: Only include recent trades if simulation is actually running
+    recentTrades: isSimulationActuallyRunning ? simulation.recentTrades.slice(0, 200) : [],
     traderRankings: simulation.traderRankings.slice(0, 20),
     speed: simulation.parameters.timeCompressionFactor,
     marketConditions: simulation.marketConditions,
@@ -723,8 +728,9 @@ async function handleSubscriptionWithRetry(
     },
     externalMarketMetrics: liveMetrics || simulation.externalMarketMetrics,
     registrationStatus: 'ready',
-    cleanStart: simulation.priceHistory.length === 0,
-    candleCount: simulation.priceHistory.length,
+    // 🔧 CRITICAL FIX: Use actual running state instead of candle count
+    cleanStart: !isSimulationActuallyRunning || (simulation.priceHistory?.length || 0) === 0,
+    candleCount: isSimulationActuallyRunning ? (simulation.priceHistory?.length || 0) : 0,
     // TPS mode information
     currentTPSMode: simulation.currentTPSMode || 'NORMAL',
     tpsSupport: true,
@@ -732,7 +738,10 @@ async function handleSubscriptionWithRetry(
       supportedModes: ['NORMAL', 'BURST', 'STRESS', 'HFT'],
       liquidationCascade: true,
       mevBotSimulation: true
-    }
+    },
+    // 🔧 CRITICAL FIX: Add flag to indicate if this is a fresh connection
+    initialCandleJumpPrevented: true,
+    actuallyRunning: isSimulationActuallyRunning
   };
   
   ws.send(JSON.stringify({
@@ -753,10 +762,14 @@ async function handleSubscriptionWithRetry(
     registrationStatus: 'ready',
     tpsSupport: true,
     currentTPSMode: enhancedState.currentTPSMode,
-    message: 'Successfully subscribed to ready simulation using SHARED SimulationManager with TPS support'
+    // 🔧 CRITICAL FIX: Enhanced confirmation message
+    initialCandleJumpPrevented: true,
+    actuallyRunning: isSimulationActuallyRunning,
+    candleDataIncluded: isSimulationActuallyRunning,
+    message: `Successfully subscribed to simulation ${simulationId} using SHARED SimulationManager with TPS support and candle jump prevention`
   }), { binary: false, compress: false, fin: true });
   
-  console.log(`🎉 [WS SUB] SUBSCRIPTION SUCCESS! ${clientId} subscribed to ${simulationId} using SHARED manager, trades: ${enhancedState.recentTrades.length}, candles: ${enhancedState.candleCount}, TPS mode: ${enhancedState.currentTPSMode}`);
+  console.log(`🎉 [WS SUB] SUBSCRIPTION SUCCESS! ${clientId} subscribed to ${simulationId} using SHARED manager, trades: ${enhancedState.recentTrades.length}, candles: ${enhancedState.candleCount}, TPS mode: ${enhancedState.currentTPSMode}, actuallyRunning: ${isSimulationActuallyRunning}, candleJumpPrevented: true`);
 }
 
 // Handle subscription with preferences (original function, modified to be race-condition aware)
@@ -899,7 +912,8 @@ function handleDebugRequest(ws: WebSocket, clientId: string, broadcastManager?: 
       raceConditionPrevention: true,
       sharedSimulationManager: true,
       tpsSupport: true,
-      stressTestSupport: true
+      stressTestSupport: true,
+      initialCandleJumpPrevention: true // NEW
     }
   };
   
