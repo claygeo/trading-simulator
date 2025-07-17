@@ -1,9 +1,11 @@
-// backend/src/services/simulation/CandleManager.ts - FIXED: Singleton Pattern Prevention
+// backend/src/services/simulation/CandleManager.ts - ENHANCED: Bulletproof Singleton Pattern
 import { PricePoint } from './types';
 
 export class CandleManager {
   private static instances = new Map<string, CandleManager>();
   private static globalInstanceCounter = 0;
+  private static creationLock = new Set<string>(); // 🔧 NEW: Race condition prevention
+  private static creationPromises = new Map<string, Promise<CandleManager>>(); // 🔧 NEW: Promise coordination
   
   private candles: PricePoint[] = [];
   private currentCandle: PricePoint | null = null;
@@ -38,42 +40,130 @@ export class CandleManager {
     this.candleInterval = Math.min(candleInterval, 15000);
     this.timestampCoordinator = new TimestampCoordinator(candleInterval);
     
-    console.log(`🕯️ FIXED CandleManager CREATED: ${this.instanceId} with ${this.candleInterval/1000}s intervals`);
+    console.log(`🕯️ [SINGLETON] CandleManager CREATED: ${this.instanceId} with ${this.candleInterval/1000}s intervals`);
   }
   
-  // 🚨 CRITICAL FIX: Singleton getInstance method
-  static getInstance(simulationId: string, candleInterval: number = 10000): CandleManager {
-    // Check if instance already exists
+  // 🚨 ENHANCED: Bulletproof singleton getInstance method with race protection
+  static async getInstance(simulationId: string, candleInterval: number = 10000): Promise<CandleManager> {
+    console.log(`🔍 [SINGLETON] CandleManager.getInstance called for ${simulationId}`);
+    console.log(`🔍 [SINGLETON] Current instances: [${Array.from(CandleManager.instances.keys()).join(', ')}]`);
+    console.log(`🔍 [SINGLETON] Active creation locks: [${Array.from(CandleManager.creationLock).join(', ')}]`);
+    
+    // STEP 1: Check if instance already exists
     if (CandleManager.instances.has(simulationId)) {
       const existing = CandleManager.instances.get(simulationId)!;
-      console.log(`🔄 FIXED: Reusing existing CandleManager for ${simulationId} (instance: ${existing.instanceId})`);
+      console.log(`🔄 [SINGLETON] REUSING existing CandleManager for ${simulationId} (instance: ${existing.instanceId})`);
       return existing;
     }
     
-    // Create new instance
-    const instance = new CandleManager(simulationId, candleInterval);
-    CandleManager.instances.set(simulationId, instance);
+    // STEP 2: Check if creation is already in progress
+    if (CandleManager.creationPromises.has(simulationId)) {
+      console.log(`⏳ [SINGLETON] Creation already in progress for ${simulationId}, waiting...`);
+      return await CandleManager.creationPromises.get(simulationId)!;
+    }
     
-    console.log(`🆕 FIXED: Created NEW CandleManager for ${simulationId} (instance: ${instance.instanceId})`);
-    console.log(`📊 FIXED: Total active CandleManager instances: ${CandleManager.instances.size}`);
+    // STEP 3: Prevent concurrent creation with lock
+    if (CandleManager.creationLock.has(simulationId)) {
+      console.warn(`⚠️ [SINGLETON] Concurrent creation attempt for ${simulationId}, waiting for lock release...`);
+      // Wait for lock to be released, then retry
+      await CandleManager.waitForLockRelease(simulationId);
+      return CandleManager.getInstance(simulationId, candleInterval);
+    }
     
-    return instance;
-  }
-  
-  // 🚨 CRITICAL FIX: Cleanup method to remove instance
-  static cleanup(simulationId: string): void {
-    const instance = CandleManager.instances.get(simulationId);
-    if (instance) {
-      console.log(`🧹 FIXED: Cleaning up CandleManager for ${simulationId} (instance: ${instance.instanceId})`);
-      instance.shutdown();
-      CandleManager.instances.delete(simulationId);
-      console.log(`📊 FIXED: Remaining CandleManager instances: ${CandleManager.instances.size}`);
-    } else {
-      console.warn(`⚠️ FIXED: No CandleManager found for cleanup: ${simulationId}`);
+    // STEP 4: Create new instance with comprehensive protection
+    const creationPromise = CandleManager.createInstanceWithLock(simulationId, candleInterval);
+    CandleManager.creationPromises.set(simulationId, creationPromise);
+    
+    try {
+      const instance = await creationPromise;
+      return instance;
+    } finally {
+      CandleManager.creationPromises.delete(simulationId);
     }
   }
   
-  // 🚨 CRITICAL FIX: Get debug info about all instances
+  // 🔧 NEW: Protected instance creation with lock mechanism
+  private static async createInstanceWithLock(simulationId: string, candleInterval: number): Promise<CandleManager> {
+    // Set creation lock
+    CandleManager.creationLock.add(simulationId);
+    console.log(`🔒 [SINGLETON] Creation lock acquired for ${simulationId}`);
+    
+    try {
+      // Double-check pattern: ensure no instance was created while waiting
+      if (CandleManager.instances.has(simulationId)) {
+        const existing = CandleManager.instances.get(simulationId)!;
+        console.log(`🔄 [SINGLETON] Instance created during lock wait, returning existing: ${existing.instanceId}`);
+        return existing;
+      }
+      
+      // Create new instance
+      const instance = new CandleManager(simulationId, candleInterval);
+      CandleManager.instances.set(simulationId, instance);
+      
+      console.log(`🆕 [SINGLETON] CREATED new CandleManager for ${simulationId} (instance: ${instance.instanceId})`);
+      console.log(`📊 [SINGLETON] Total active CandleManager instances: ${CandleManager.instances.size}`);
+      
+      return instance;
+      
+    } finally {
+      // Always release the lock after a small delay to prevent immediate race conditions
+      setTimeout(() => {
+        CandleManager.creationLock.delete(simulationId);
+        console.log(`🔓 [SINGLETON] Creation lock released for ${simulationId}`);
+      }, 50);
+    }
+  }
+  
+  // 🔧 NEW: Wait for lock release utility
+  private static async waitForLockRelease(simulationId: string, timeout: number = 5000): Promise<void> {
+    const startTime = Date.now();
+    
+    while (CandleManager.creationLock.has(simulationId)) {
+      if (Date.now() - startTime > timeout) {
+        console.error(`❌ [SINGLETON] Timeout waiting for creation lock release: ${simulationId}`);
+        // Force release the lock
+        CandleManager.creationLock.delete(simulationId);
+        break;
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  
+  // 🚨 ENHANCED: Improved cleanup method with lock coordination
+  static cleanup(simulationId: string): void {
+    console.log(`🧹 [SINGLETON] Cleanup requested for ${simulationId}`);
+    
+    // Set creation lock during cleanup to prevent new instance creation
+    CandleManager.creationLock.add(simulationId);
+    
+    try {
+      const instance = CandleManager.instances.get(simulationId);
+      if (instance) {
+        console.log(`🧹 [SINGLETON] Cleaning up CandleManager for ${simulationId} (instance: ${instance.instanceId})`);
+        instance.shutdown();
+        CandleManager.instances.delete(simulationId);
+        console.log(`📊 [SINGLETON] Remaining CandleManager instances: ${CandleManager.instances.size}`);
+      } else {
+        console.warn(`⚠️ [SINGLETON] No CandleManager found for cleanup: ${simulationId}`);
+      }
+      
+      // Clean up any orphaned creation promises
+      if (CandleManager.creationPromises.has(simulationId)) {
+        CandleManager.creationPromises.delete(simulationId);
+        console.log(`🧹 [SINGLETON] Removed orphaned creation promise for ${simulationId}`);
+      }
+      
+    } finally {
+      // Release the lock after a delay to prevent immediate recreation
+      setTimeout(() => {
+        CandleManager.creationLock.delete(simulationId);
+        console.log(`🔓 [SINGLETON] Cleanup lock released for ${simulationId}`);
+      }, 100);
+    }
+  }
+  
+  // 🔧 ENHANCED: Debug info with creation locks and promises
   static getDebugInfo(): any {
     const instances = Array.from(CandleManager.instances.entries()).map(([simId, instance]) => ({
       simulationId: simId,
@@ -81,14 +171,113 @@ export class CandleManager {
       candleCount: instance.candles.length,
       isResetting: instance.isResetting,
       lastUpdate: instance.lastPriceUpdate,
-      interval: instance.candleInterval
+      interval: instance.candleInterval,
+      creationLocked: CandleManager.creationLock.has(simId),
+      hasCreationPromise: CandleManager.creationPromises.has(simId)
     }));
     
     return {
       totalInstances: CandleManager.instances.size,
       globalCounter: CandleManager.globalInstanceCounter,
-      instances
+      activeCreationLocks: Array.from(CandleManager.creationLock),
+      activeCreationPromises: Array.from(CandleManager.creationPromises.keys()),
+      instances,
+      singletonIntegrity: CandleManager.validateSingletonIntegrity()
     };
+  }
+  
+  // 🔧 NEW: Singleton integrity validation
+  static validateSingletonIntegrity(): { isValid: boolean; issues: string[] } {
+    const issues: string[] = [];
+    
+    // Check for duplicate simulation IDs (shouldn't happen with proper singleton)
+    const simulationIds = Array.from(CandleManager.instances.keys());
+    const uniqueIds = new Set(simulationIds);
+    
+    if (simulationIds.length !== uniqueIds.size) {
+      issues.push('❌ Duplicate simulation IDs detected in instances map');
+    }
+    
+    // Check for orphaned creation locks
+    CandleManager.creationLock.forEach(lockedId => {
+      if (!CandleManager.instances.has(lockedId) && !CandleManager.creationPromises.has(lockedId)) {
+        issues.push(`⚠️ Orphaned creation lock for simulation: ${lockedId}`);
+      }
+    });
+    
+    // Check for orphaned creation promises
+    CandleManager.creationPromises.forEach((promise, simId) => {
+      if (CandleManager.instances.has(simId)) {
+        issues.push(`⚠️ Creation promise exists for already created instance: ${simId}`);
+      }
+    });
+    
+    // Check for instances without proper IDs
+    CandleManager.instances.forEach((instance, simId) => {
+      if (!instance.instanceId || !instance.instanceId.includes(simId)) {
+        issues.push(`❌ Instance ${simId} has invalid instanceId: ${instance.instanceId}`);
+      }
+    });
+    
+    const isValid = issues.length === 0;
+    
+    if (isValid) {
+      console.log(`✅ [SINGLETON] Integrity validation passed - ${CandleManager.instances.size} instances healthy`);
+    } else {
+      console.warn(`⚠️ [SINGLETON] Integrity validation failed with ${issues.length} issues:`, issues);
+    }
+    
+    return { isValid, issues };
+  }
+  
+  // 🔧 NEW: Force cleanup of all singleton resources
+  static forceCleanupAll(): void {
+    console.log(`🧹 [SINGLETON] FORCE cleanup of all resources initiated`);
+    
+    // Clear all instances
+    const instanceCount = CandleManager.instances.size;
+    CandleManager.instances.forEach((instance, simId) => {
+      instance.shutdown();
+    });
+    CandleManager.instances.clear();
+    
+    // Clear all locks and promises
+    CandleManager.creationLock.clear();
+    CandleManager.creationPromises.clear();
+    
+    console.log(`🧹 [SINGLETON] FORCE cleanup completed - removed ${instanceCount} instances`);
+  }
+  
+  // 🔧 NEW: Synchronous getInstance for backward compatibility (use with caution)
+  static getInstanceSync(simulationId: string, candleInterval: number = 10000): CandleManager {
+    console.warn(`⚠️ [SINGLETON] Using deprecated sync getInstance for ${simulationId} - consider using async version`);
+    
+    // Check if instance already exists
+    if (CandleManager.instances.has(simulationId)) {
+      const existing = CandleManager.instances.get(simulationId)!;
+      console.log(`🔄 [SINGLETON] REUSING existing CandleManager for ${simulationId} (instance: ${existing.instanceId})`);
+      return existing;
+    }
+    
+    // Check for concurrent creation
+    if (CandleManager.creationLock.has(simulationId)) {
+      throw new Error(`❌ [SINGLETON] Cannot create instance synchronously - creation in progress for ${simulationId}`);
+    }
+    
+    // Create instance immediately (less safe)
+    CandleManager.creationLock.add(simulationId);
+    
+    try {
+      const instance = new CandleManager(simulationId, candleInterval);
+      CandleManager.instances.set(simulationId, instance);
+      
+      console.log(`🆕 [SINGLETON] CREATED new CandleManager (SYNC) for ${simulationId} (instance: ${instance.instanceId})`);
+      return instance;
+    } finally {
+      setTimeout(() => {
+        CandleManager.creationLock.delete(simulationId);
+      }, 50);
+    }
   }
   
   initialize(simulationStartTime: number, initialPrice?: number): void {
@@ -593,7 +782,7 @@ export class CandleManager {
     // Instance will be removed from static map by cleanup() method
   }
   
-  // 🔧 FIXED: Enhanced statistics with validation metrics and instance info
+  // 🔧 ENHANCED: Statistics with validation metrics, instance info, and singleton status
   getStats(): any {
     const candleCount = this.candles.length + (this.currentCandle ? 1 : 0);
     const lastCandle = this.candles[this.candles.length - 1];
@@ -617,9 +806,11 @@ export class CandleManager {
         fixRate: this.validationStats.totalUpdates > 0 ?
           (this.validationStats.timestampFixes + this.validationStats.ohlcFixes) / this.validationStats.totalUpdates : 0
       },
-      globalInfo: {
+      singletonInfo: {
         totalInstances: CandleManager.instances.size,
-        globalCounter: CandleManager.globalInstanceCounter
+        globalCounter: CandleManager.globalInstanceCounter,
+        hasCreationLock: CandleManager.creationLock.has(this.simulationId),
+        hasCreationPromise: CandleManager.creationPromises.has(this.simulationId)
       }
     };
   }
