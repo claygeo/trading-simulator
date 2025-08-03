@@ -1,4 +1,4 @@
-// backend/src/services/simulation/CandleManager.ts - FIXED: Singleton Pattern Prevention
+// backend/src/services/simulation/CandleManager.ts - FIXED: Clean Singleton Pattern
 import { PricePoint } from './types';
 
 export class CandleManager {
@@ -10,7 +10,6 @@ export class CandleManager {
   private candleInterval: number;
   private lastCandleTime: number = 0;
   private simulationStartTime: number = 0;
-  private baseTimeOffset: number = 0;
   private simulationId: string;
   private instanceId: string;
   
@@ -38,39 +37,44 @@ export class CandleManager {
     this.candleInterval = Math.min(candleInterval, 15000);
     this.timestampCoordinator = new TimestampCoordinator(candleInterval);
     
-    console.log(`🕯️ FIXED CandleManager CREATED: ${this.instanceId} with ${this.candleInterval/1000}s intervals`);
+    console.log(`🕯️ SINGLETON: CandleManager CREATED: ${this.instanceId} with ${this.candleInterval/1000}s intervals`);
   }
   
-  // 🚨 CRITICAL FIX: Singleton getInstance method
+  // 🚨 CRITICAL FIX: Singleton getInstance method with strict checking
   static getInstance(simulationId: string, candleInterval: number = 10000): CandleManager {
     // Check if instance already exists
     if (CandleManager.instances.has(simulationId)) {
       const existing = CandleManager.instances.get(simulationId)!;
-      console.log(`🔄 FIXED: Reusing existing CandleManager for ${simulationId} (instance: ${existing.instanceId})`);
+      console.log(`🔄 SINGLETON: Reusing CandleManager for ${simulationId} (instance: ${existing.instanceId})`);
       return existing;
     }
     
-    // Create new instance
+    // Create new instance only if none exists
     const instance = new CandleManager(simulationId, candleInterval);
     CandleManager.instances.set(simulationId, instance);
     
-    console.log(`🆕 FIXED: Created NEW CandleManager for ${simulationId} (instance: ${instance.instanceId})`);
-    console.log(`📊 FIXED: Total active CandleManager instances: ${CandleManager.instances.size}`);
+    console.log(`🆕 SINGLETON: Created NEW CandleManager for ${simulationId} (instance: ${instance.instanceId})`);
+    console.log(`📊 SINGLETON: Total active instances: ${CandleManager.instances.size}`);
     
     return instance;
   }
   
-  // 🚨 CRITICAL FIX: Cleanup method to remove instance
+  // 🚨 CRITICAL FIX: Force cleanup method to remove instance
   static cleanup(simulationId: string): void {
     const instance = CandleManager.instances.get(simulationId);
     if (instance) {
-      console.log(`🧹 FIXED: Cleaning up CandleManager for ${simulationId} (instance: ${instance.instanceId})`);
+      console.log(`🧹 SINGLETON: Cleaning up CandleManager for ${simulationId} (instance: ${instance.instanceId})`);
       instance.shutdown();
       CandleManager.instances.delete(simulationId);
-      console.log(`📊 FIXED: Remaining CandleManager instances: ${CandleManager.instances.size}`);
+      console.log(`📊 SINGLETON: Remaining instances: ${CandleManager.instances.size}`);
     } else {
-      console.warn(`⚠️ FIXED: No CandleManager found for cleanup: ${simulationId}`);
+      console.warn(`⚠️ SINGLETON: No CandleManager found for cleanup: ${simulationId}`);
     }
+  }
+  
+  // 🚨 CRITICAL FIX: Check if instance exists
+  static hasInstance(simulationId: string): boolean {
+    return CandleManager.instances.has(simulationId);
   }
   
   // 🚨 CRITICAL FIX: Get debug info about all instances
@@ -92,8 +96,9 @@ export class CandleManager {
   }
   
   initialize(simulationStartTime: number, initialPrice?: number): void {
+    console.log(`🔧 SINGLETON: Initializing ${this.instanceId} at ${new Date(simulationStartTime).toISOString()}`);
+    
     this.simulationStartTime = simulationStartTime;
-    this.baseTimeOffset = simulationStartTime;
     this.timestampCoordinator.initialize(simulationStartTime);
     this.lastCandleTime = 0;
     
@@ -111,7 +116,7 @@ export class CandleManager {
       this.adjustIntervalForPriceCategory();
     }
     
-    console.log(`🕯️ FIXED: CandleManager ${this.instanceId} initialized with start time: ${new Date(simulationStartTime).toISOString()}, price category: ${this.priceCategory}`);
+    console.log(`✅ SINGLETON: ${this.instanceId} initialized - price category: ${this.priceCategory}, interval: ${this.candleInterval}ms`);
   }
   
   private updatePriceCategory(price: number): void {
@@ -130,7 +135,7 @@ export class CandleManager {
     }
     
     if (oldCategory !== this.priceCategory) {
-      console.log(`📊 ${this.instanceId}: Price category changed: ${oldCategory} → ${this.priceCategory} (price: $${price})`);
+      console.log(`📊 ${this.instanceId}: Price category: ${oldCategory} → ${this.priceCategory} (price: $${price})`);
       this.adjustIntervalForPriceCategory();
     }
   }
@@ -140,7 +145,7 @@ export class CandleManager {
     
     switch (this.priceCategory) {
       case 'micro':
-        this.candleInterval = 6000; // 6 seconds for high volatility micro-cap
+        this.candleInterval = 6000; // 6 seconds for micro-cap
         break;
       case 'small':
         this.candleInterval = 8000; // 8 seconds for small-cap
@@ -152,19 +157,19 @@ export class CandleManager {
         this.candleInterval = 12000; // 12 seconds for large-cap
         break;
       case 'mega':
-        this.candleInterval = 15000; // 15 seconds for stable mega-cap
+        this.candleInterval = 15000; // 15 seconds for mega-cap
         break;
     }
     
     if (oldInterval !== this.candleInterval) {
-      console.log(`⚡ ${this.instanceId}: Candle interval adjusted: ${oldInterval}ms → ${this.candleInterval}ms for ${this.priceCategory}-cap`);
+      console.log(`⚡ ${this.instanceId}: Interval adjusted: ${oldInterval}ms → ${this.candleInterval}ms`);
       this.timestampCoordinator.updateInterval(this.candleInterval);
     }
   }
   
   updateCandle(timestamp: number, price: number, volume: number = 0): void {
     if (this.isResetting) {
-      console.warn(`⚠️ ${this.instanceId}: CandleManager is resetting, skipping update`);
+      console.warn(`⚠️ ${this.instanceId}: Skipping update during reset`);
       return;
     }
     
@@ -173,12 +178,11 @@ export class CandleManager {
     try {
       this.updatePriceCategory(price);
       
-      // 🔧 FIXED: Enhanced timestamp coordination with validation
+      // 🔧 FIXED: Coordinated timestamp handling
       const coordinatedTimestamp = this.timestampCoordinator.getCoordinatedTimestamp(timestamp);
       
-      // 🔧 FIXED: Validate timestamp before processing
       if (!this.validateTimestamp(coordinatedTimestamp)) {
-        console.warn(`⚠️ ${this.instanceId}: Invalid timestamp ${coordinatedTimestamp}, generating sequential timestamp`);
+        console.warn(`⚠️ ${this.instanceId}: Invalid timestamp, using sequential`);
         const sequentialTimestamp = this.generateSequentialTimestamp();
         this._updateCandleInternal(sequentialTimestamp, price, volume);
       } else {
@@ -186,14 +190,12 @@ export class CandleManager {
       }
       
     } catch (error) {
-      console.error(`❌ ${this.instanceId}: Error in updateCandle:`, error);
+      console.error(`❌ ${this.instanceId}: Update error:`, error);
       this.validationStats.invalidCandles++;
     }
   }
   
-  // 🔧 FIXED: Enhanced timestamp validation
   private validateTimestamp(timestamp: number): boolean {
-    // Check if timestamp is reasonable
     const now = Date.now();
     const oneHourAgo = now - (60 * 60 * 1000);
     const oneHourFromNow = now + (60 * 60 * 1000);
@@ -202,7 +204,6 @@ export class CandleManager {
       return false;
     }
     
-    // Check if timestamp is sequential
     if (this.lastCandleTime > 0 && timestamp <= this.lastCandleTime) {
       return false;
     }
@@ -210,7 +211,6 @@ export class CandleManager {
     return true;
   }
   
-  // 🔧 FIXED: Generate guaranteed sequential timestamp
   private generateSequentialTimestamp(): number {
     if (this.lastCandleTime === 0) {
       this.lastCandleTime = this.simulationStartTime;
@@ -221,9 +221,8 @@ export class CandleManager {
   }
   
   private _updateCandleInternal(timestamp: number, price: number, volume: number): void {
-    // 🔧 FIXED: Ensure timestamps are always sequential
+    // Ensure sequential timestamps
     if (this.lastCandleTime > 0 && timestamp <= this.lastCandleTime) {
-      console.warn(`⚠️ ${this.instanceId}: Non-sequential timestamp detected: ${timestamp} <= ${this.lastCandleTime}, auto-correcting`);
       timestamp = this.lastCandleTime + this.candleInterval;
       this.validationStats.timestampFixes++;
     }
@@ -232,7 +231,7 @@ export class CandleManager {
     const isNewCandle = !this.currentCandle || this.currentCandle.timestamp !== candleTime;
     
     if (isNewCandle) {
-      if (this.currentCandle && this.currentCandle.timestamp < candleTime) {
+      if (this.currentCandle) {
         this._finalizeCurrentCandle();
       }
       this._createNewCandle(candleTime, price, volume);
@@ -247,7 +246,6 @@ export class CandleManager {
   private _alignTimestamp(timestamp: number): number {
     const aligned = Math.floor(timestamp / this.candleInterval) * this.candleInterval;
     
-    // 🔧 FIXED: Ensure strict progression
     if (this.lastCandleTime > 0 && aligned <= this.lastCandleTime) {
       return this.lastCandleTime + this.candleInterval;
     }
@@ -255,21 +253,16 @@ export class CandleManager {
     return aligned;
   }
   
-  // 🔧 FIXED: Create new candle with enhanced OHLCV validation
   private _createNewCandle(candleTime: number, price: number, volume: number): void {
     const lastCandle = this.candles[this.candles.length - 1];
-    let openPrice = price; // Default to current price
+    let openPrice = price;
     
-    // 🔧 FIXED: Better open price determination
     if (lastCandle) {
-      // Use previous candle's close as this candle's open
       openPrice = lastCandle.close;
     }
     
-    // 🔧 FIXED: Validate price values
     if (!this.isValidPrice(price) || !this.isValidPrice(openPrice)) {
-      console.warn(`⚠️ ${this.instanceId}: Invalid price values detected, using fallback`);
-      price = lastCandle ? lastCandle.close : 1.0; // Fallback price
+      price = lastCandle ? lastCandle.close : 1.0;
       openPrice = price;
     }
     
@@ -279,100 +272,62 @@ export class CandleManager {
       high: price,
       low: price,
       close: price,
-      volume: Math.max(0, volume || 0) // Ensure non-negative volume
+      volume: Math.max(0, volume || 0)
     };
     
     this.volumeAccumulator = this.currentCandle.volume;
     
-    console.log(`🆕 ${this.instanceId}: CANDLE #${this.candles.length + 1}: ${new Date(candleTime).toISOString().substr(11, 8)} | O:${openPrice.toFixed(6)} | C:${price.toFixed(6)} | V:${volume.toFixed(0)} | ${this.priceCategory}-cap`);
+    console.log(`🆕 ${this.instanceId}: CANDLE #${this.candles.length + 1}: ${new Date(candleTime).toISOString().substr(11, 8)} | O:${openPrice.toFixed(6)} | C:${price.toFixed(6)} | V:${volume.toFixed(0)}`);
   }
   
-  // 🔧 FIXED: Enhanced price validation
   private isValidPrice(price: number): boolean {
     return typeof price === 'number' && 
            !isNaN(price) && 
            isFinite(price) && 
            price > 0 && 
-           price < 1000000; // Reasonable upper bound
+           price < 1000000;
   }
   
-  // 🔧 FIXED: Update existing candle with comprehensive validation
   private _updateExistingCandle(price: number, volume: number): void {
-    if (!this.currentCandle) return;
-    
-    // 🔧 FIXED: Validate input price
-    if (!this.isValidPrice(price)) {
-      console.warn(`⚠️ ${this.instanceId}: Invalid price ${price} for candle update, skipping`);
-      return;
-    }
-    
-    // 🔧 FIXED: Update OHLC with proper validation
-    const originalHigh = this.currentCandle.high;
-    const originalLow = this.currentCandle.low;
+    if (!this.currentCandle || !this.isValidPrice(price)) return;
     
     this.currentCandle.high = Math.max(this.currentCandle.high, price);
     this.currentCandle.low = Math.min(this.currentCandle.low, price);
     this.currentCandle.close = price;
     
-    // Accumulate volume
     this.volumeAccumulator += Math.max(0, volume || 0);
     this.currentCandle.volume = this.volumeAccumulator;
     
-    // 🔧 FIXED: Enhanced OHLC relationship validation
     if (!this.validateOHLCRelationships(this.currentCandle)) {
-      console.warn(`⚠️ ${this.instanceId}: OHLC validation failed, auto-correcting`);
       this.fixOHLCRelationships(this.currentCandle);
       this.validationStats.ohlcFixes++;
     }
   }
   
-  // 🔧 FIXED: Comprehensive OHLC validation
   private validateOHLCRelationships(candle: PricePoint): boolean {
-    // Check basic relationships
-    if (candle.high < candle.low) {
-      return false;
-    }
+    if (candle.high < candle.low) return false;
+    if (candle.high < candle.open || candle.high < candle.close) return false;
+    if (candle.low > candle.open || candle.low > candle.close) return false;
     
-    if (candle.high < candle.open || candle.high < candle.close) {
-      return false;
-    }
+    if (!this.isValidPrice(candle.open) || !this.isValidPrice(candle.high) || 
+        !this.isValidPrice(candle.low) || !this.isValidPrice(candle.close)) return false;
     
-    if (candle.low > candle.open || candle.low > candle.close) {
-      return false;
-    }
-    
-    // Check for valid price values
-    if (!this.isValidPrice(candle.open) || 
-        !this.isValidPrice(candle.high) || 
-        !this.isValidPrice(candle.low) || 
-        !this.isValidPrice(candle.close)) {
-      return false;
-    }
-    
-    // Check volume
-    if (candle.volume < 0 || !isFinite(candle.volume)) {
-      return false;
-    }
+    if (candle.volume < 0 || !isFinite(candle.volume)) return false;
     
     return true;
   }
   
-  // 🔧 FIXED: Auto-fix OHLC relationships
   private fixOHLCRelationships(candle: PricePoint): void {
-    // Ensure all prices are valid numbers
     candle.open = this.isValidPrice(candle.open) ? candle.open : candle.close;
     candle.high = this.isValidPrice(candle.high) ? candle.high : candle.close;
     candle.low = this.isValidPrice(candle.low) ? candle.low : candle.close;
     candle.close = this.isValidPrice(candle.close) ? candle.close : candle.open;
     
-    // Fix OHLC relationships
     candle.high = Math.max(candle.open, candle.high, candle.low, candle.close);
     candle.low = Math.min(candle.open, candle.high, candle.low, candle.close);
-    
-    // Ensure volume is non-negative
     candle.volume = Math.max(0, candle.volume || 0);
     
-    console.log(`🔧 ${this.instanceId}: Auto-corrected OHLC relationships for candle at ${new Date(candle.timestamp).toISOString()}`);
+    console.log(`🔧 ${this.instanceId}: Auto-corrected OHLC for candle at ${new Date(candle.timestamp).toISOString()}`);
   }
   
   private _finalizeCurrentCandle(): void {
@@ -380,7 +335,6 @@ export class CandleManager {
     
     const candle = { ...this.currentCandle };
     
-    // 🔧 FIXED: Final validation and auto-correction
     if (!this.validateOHLCRelationships(candle)) {
       this.fixOHLCRelationships(candle);
       this.validationStats.ohlcFixes++;
@@ -393,11 +347,8 @@ export class CandleManager {
       this.candles = this.candles.slice(-2000);
     }
     
-    const candleNumber = this.candles.length;
     const priceChange = ((candle.close - candle.open) / candle.open * 100);
-    const wickInfo = `H:${candle.high.toFixed(6)} L:${candle.low.toFixed(6)}`;
-    
-    console.log(`✅ ${this.instanceId}: FINALIZED #${candleNumber}: ${new Date(candle.timestamp).toISOString().substr(11, 8)} | ${wickInfo} | Change: ${priceChange > 0 ? '+' : ''}${priceChange.toFixed(3)}% | Vol: ${candle.volume.toFixed(0)} | ${this.priceCategory}-cap`);
+    console.log(`✅ ${this.instanceId}: FINALIZED #${this.candles.length}: Change: ${priceChange > 0 ? '+' : ''}${priceChange.toFixed(3)}% | Vol: ${candle.volume.toFixed(0)}`);
     
     this.currentCandle = null;
     this.volumeAccumulator = 0;
@@ -410,9 +361,7 @@ export class CandleManager {
       allCandles.push({ ...this.currentCandle });
     }
     
-    // 🔧 FIXED: Enhanced validation of returned candles
     const validCandles = this._validateCandleSequence(allCandles);
-    
     return limit ? validCandles.slice(-limit) : validCandles;
   }
   
@@ -422,7 +371,6 @@ export class CandleManager {
       return;
     }
     
-    // 🔧 FIXED: Enhanced validation and sanitization
     const validCandles = this._validateCandleSequence(candles);
     this.candles = validCandles;
     
@@ -433,85 +381,40 @@ export class CandleManager {
     console.log(`📊 ${this.instanceId}: Set ${validCandles.length} validated candles`);
   }
   
-  // 🔧 FIXED: Comprehensive candle sequence validation with auto-correction
   private _validateCandleSequence(candles: PricePoint[]): PricePoint[] {
     if (candles.length === 0) return [];
     
     const result: PricePoint[] = [];
     let lastTimestamp = 0;
-    let fixedTimestamps = 0;
-    let fixedOHLC = 0;
-    let removedCandles = 0;
+    let fixedCount = 0;
     
     for (const candle of candles) {
-      // 🔧 FIXED: Create a working copy
       let workingCandle = { ...candle };
       
-      // Fix timestamp if needed
       if (workingCandle.timestamp <= lastTimestamp) {
         workingCandle.timestamp = lastTimestamp + this.candleInterval;
-        fixedTimestamps++;
+        fixedCount++;
       }
       
-      // 🔧 FIXED: Validate and fix all price values
       if (!this.isValidPrice(workingCandle.open)) workingCandle.open = workingCandle.close || 1.0;
       if (!this.isValidPrice(workingCandle.high)) workingCandle.high = workingCandle.close || 1.0;
       if (!this.isValidPrice(workingCandle.low)) workingCandle.low = workingCandle.close || 1.0;
       if (!this.isValidPrice(workingCandle.close)) workingCandle.close = workingCandle.open || 1.0;
       
-      // Fix volume
-      if (typeof workingCandle.volume !== 'number' || isNaN(workingCandle.volume)) {
-        workingCandle.volume = 0;
-      }
-      workingCandle.volume = Math.max(0, workingCandle.volume);
-      
-      // 🔧 FIXED: Fix OHLC relationships
-      const originalOHLC = {
-        open: workingCandle.open,
-        high: workingCandle.high,
-        low: workingCandle.low,
-        close: workingCandle.close
-      };
+      workingCandle.volume = Math.max(0, workingCandle.volume || 0);
       
       this.fixOHLCRelationships(workingCandle);
       
-      // Count OHLC fixes
-      if (originalOHLC.high !== workingCandle.high || 
-          originalOHLC.low !== workingCandle.low) {
-        fixedOHLC++;
-      }
-      
-      // 🔧 FIXED: Final validation before adding
-      if (this.validateOHLCRelationships(workingCandle) && 
-          this.isValidPrice(workingCandle.close) &&
-          workingCandle.timestamp > lastTimestamp) {
-        
+      if (this.validateOHLCRelationships(workingCandle)) {
         result.push(workingCandle);
         lastTimestamp = workingCandle.timestamp;
-      } else {
-        removedCandles++;
-        console.warn(`⚠️ ${this.instanceId}: Removed invalid candle at ${new Date(candle.timestamp).toISOString()}`);
       }
     }
     
-    // Update validation stats
-    this.validationStats.timestampFixes += fixedTimestamps;
-    this.validationStats.ohlcFixes += fixedOHLC;
-    this.validationStats.invalidCandles += removedCandles;
-    
-    if (fixedTimestamps > 0) {
-      console.log(`🔧 ${this.instanceId}: Corrected ${fixedTimestamps} timestamp issues`);
+    if (fixedCount > 0) {
+      console.log(`🔧 ${this.instanceId}: Fixed ${fixedCount} validation issues`);
     }
     
-    if (fixedOHLC > 0) {
-      console.log(`🔧 ${this.instanceId}: Corrected ${fixedOHLC} OHLC relationship issues`);
-    }
-    
-    if (removedCandles > 0) {
-      console.log(`🗑️ ${this.instanceId}: Removed ${removedCandles} invalid candles`);
-    }
-    
-    console.log(`📊 ${this.instanceId}: VALIDATION: ${result.length}/${candles.length} candles validated and corrected`);
     return result;
   }
   
@@ -532,20 +435,16 @@ export class CandleManager {
   }
   
   private async _performReset(): Promise<void> {
-    console.log(`🔄 ${this.instanceId}: Starting coordinated reset with enhanced validation`);
+    console.log(`🔄 ${this.instanceId}: Starting reset`);
     
-    // Clear all data
     this.candles = [];
     this.currentCandle = null;
     this.lastCandleTime = 0;
     this.volumeAccumulator = 0;
     this.lastPriceUpdate = 0;
-    
-    // Reset price category to default
     this.priceCategory = 'mid';
     this.candleInterval = 10000;
     
-    // Reset validation stats
     this.validationStats = {
       totalUpdates: 0,
       timestampFixes: 0,
@@ -554,19 +453,15 @@ export class CandleManager {
       lastValidationRun: Date.now()
     };
     
-    // Reset timestamp coordinator
     this.timestampCoordinator.reset();
     
     await new Promise(resolve => setTimeout(resolve, 100));
     
-    console.log(`✅ ${this.instanceId}: Reset complete with enhanced validation`);
+    console.log(`✅ ${this.instanceId}: Reset complete`);
   }
   
   clear(): void {
-    if (this.isResetting) {
-      console.warn(`⚠️ ${this.instanceId}: Clear called during reset, skipping`);
-      return;
-    }
+    if (this.isResetting) return;
     
     this.candles = [];
     this.currentCandle = null;
@@ -575,7 +470,6 @@ export class CandleManager {
     this.lastPriceUpdate = 0;
     this.timestampCoordinator.reset();
     
-    // Reset validation stats
     this.validationStats = {
       totalUpdates: 0,
       timestampFixes: 0,
@@ -584,16 +478,14 @@ export class CandleManager {
       lastValidationRun: Date.now()
     };
     
-    console.log(`🧹 ${this.instanceId}: Cleared with enhanced validation`);
+    console.log(`🧹 ${this.instanceId}: Cleared`);
   }
   
   shutdown(): void {
-    console.log(`🔌 ${this.instanceId}: Shutting down CandleManager`);
+    console.log(`🔌 ${this.instanceId}: Shutting down`);
     this.clear();
-    // Instance will be removed from static map by cleanup() method
   }
   
-  // 🔧 FIXED: Enhanced statistics with validation metrics and instance info
   getStats(): any {
     const candleCount = this.candles.length + (this.currentCandle ? 1 : 0);
     const lastCandle = this.candles[this.candles.length - 1];
@@ -609,53 +501,11 @@ export class CandleManager {
       candleInterval: this.candleInterval,
       lastPrice: lastCandle ? lastCandle.close : 0,
       totalVolume: this.candles.reduce((sum, c) => sum + (c.volume || 0), 0),
-      coordinatorStats: this.timestampCoordinator.getStats(),
       validationStats: {
         ...this.validationStats,
         successRate: this.validationStats.totalUpdates > 0 ? 
-          (this.validationStats.totalUpdates - this.validationStats.invalidCandles) / this.validationStats.totalUpdates : 1,
-        fixRate: this.validationStats.totalUpdates > 0 ?
-          (this.validationStats.timestampFixes + this.validationStats.ohlcFixes) / this.validationStats.totalUpdates : 0
-      },
-      globalInfo: {
-        totalInstances: CandleManager.instances.size,
-        globalCounter: CandleManager.globalInstanceCounter
+          (this.validationStats.totalUpdates - this.validationStats.invalidCandles) / this.validationStats.totalUpdates : 1
       }
-    };
-  }
-  
-  getCurrentCandleProgress(): {
-    exists: boolean;
-    timestamp?: number;
-    duration?: number;
-    progress?: number;
-    priceRange?: { high: number; low: number; open: number; close: number };
-    volume?: number;
-    isValid?: boolean;
-  } {
-    if (!this.currentCandle) {
-      return { exists: false };
-    }
-    
-    const now = Date.now();
-    const candleStart = this.currentCandle.timestamp;
-    const candleEnd = candleStart + this.candleInterval;
-    const duration = now - candleStart;
-    const progress = Math.min(1, duration / this.candleInterval);
-    
-    return {
-      exists: true,
-      timestamp: this.currentCandle.timestamp,
-      duration: duration,
-      progress: progress,
-      priceRange: {
-        open: this.currentCandle.open,
-        high: this.currentCandle.high,
-        low: this.currentCandle.low,
-        close: this.currentCandle.close
-      },
-      volume: this.currentCandle.volume,
-      isValid: this.validateOHLCRelationships(this.currentCandle)
     };
   }
   
@@ -666,69 +516,16 @@ export class CandleManager {
     }
     return false;
   }
-  
-  // 🔧 FIXED: Get validation report
-  getValidationReport(): any {
-    return {
-      instanceId: this.instanceId,
-      simulationId: this.simulationId,
-      stats: this.validationStats,
-      health: {
-        successRate: this.validationStats.totalUpdates > 0 ? 
-          (this.validationStats.totalUpdates - this.validationStats.invalidCandles) / this.validationStats.totalUpdates : 1,
-        errorRate: this.validationStats.totalUpdates > 0 ?
-          this.validationStats.invalidCandles / this.validationStats.totalUpdates : 0,
-        autoFixRate: this.validationStats.totalUpdates > 0 ?
-          (this.validationStats.timestampFixes + this.validationStats.ohlcFixes) / this.validationStats.totalUpdates : 0
-      },
-      recommendations: this.generateRecommendations()
-    };
-  }
-  
-  // 🔧 FIXED: Generate health recommendations
-  private generateRecommendations(): string[] {
-    const recommendations: string[] = [];
-    
-    if (this.validationStats.totalUpdates === 0) {
-      recommendations.push("No updates processed yet - system ready");
-      return recommendations;
-    }
-    
-    const errorRate = this.validationStats.invalidCandles / this.validationStats.totalUpdates;
-    const fixRate = (this.validationStats.timestampFixes + this.validationStats.ohlcFixes) / this.validationStats.totalUpdates;
-    
-    if (errorRate > 0.1) {
-      recommendations.push("High error rate detected - check input data quality");
-    }
-    
-    if (fixRate > 0.2) {
-      recommendations.push("High auto-fix rate - consider reviewing timestamp coordination");
-    }
-    
-    if (this.validationStats.timestampFixes > this.validationStats.ohlcFixes * 3) {
-      recommendations.push("Timestamp issues are primary concern - check clock synchronization");
-    }
-    
-    if (this.validationStats.ohlcFixes > this.validationStats.timestampFixes * 3) {
-      recommendations.push("OHLC data quality issues - check price calculation logic");
-    }
-    
-    if (recommendations.length === 0) {
-      recommendations.push("System operating optimally - no issues detected");
-    }
-    
-    return recommendations;
-  }
 }
 
-// 🔧 FIXED: Enhanced timestamp coordination with better validation
+// 🔧 FIXED: Enhanced timestamp coordination
 class TimestampCoordinator {
   private startTime: number = 0;
   private expectedInterval: number;
   private lastTimestamp: number = 0;
   private driftCorrection: number = 0;
   private updateCount: number = 0;
-  private sequenceNumber: number = 0; // For guaranteed sequential timestamps
+  private sequenceNumber: number = 0;
   
   constructor(interval: number) {
     this.expectedInterval = interval;
@@ -740,29 +537,21 @@ class TimestampCoordinator {
     this.driftCorrection = 0;
     this.updateCount = 0;
     this.sequenceNumber = 0;
-    
-    console.log(`📅 FIXED TimestampCoordinator: initialized with start: ${new Date(startTime).toISOString()}, interval: ${this.expectedInterval}ms`);
   }
   
   updateInterval(newInterval: number): void {
     this.expectedInterval = newInterval;
-    console.log(`⚡ FIXED TimestampCoordinator: interval updated to: ${newInterval}ms`);
   }
   
   getCoordinatedTimestamp(inputTimestamp: number): number {
-    // 🔧 FIXED: Always ensure sequential progression
     this.sequenceNumber++;
     
-    // If this is the first timestamp or after reset
     if (this.lastTimestamp === 0) {
       this.lastTimestamp = Math.max(inputTimestamp, this.startTime);
       return this.lastTimestamp;
     }
     
-    // Calculate expected next timestamp
     const expectedNext = this.lastTimestamp + this.expectedInterval;
-    
-    // 🔧 FIXED: Always use sequential timestamps to prevent any ordering issues
     const coordinatedTimestamp = Math.max(expectedNext, inputTimestamp);
     
     if (inputTimestamp !== coordinatedTimestamp) {
@@ -788,7 +577,6 @@ class TimestampCoordinator {
     this.driftCorrection = 0;
     this.updateCount = 0;
     this.sequenceNumber = 0;
-    console.log('📅 FIXED TimestampCoordinator: reset');
   }
   
   getStats(): any {
@@ -799,7 +587,7 @@ class TimestampCoordinator {
       averageDrift: this.updateCount > 0 ? this.driftCorrection / this.updateCount : 0,
       lastTimestamp: this.lastTimestamp,
       expectedInterval: this.expectedInterval,
-      isHealthy: this.updateCount > 0 && Math.abs(this.driftCorrection / this.updateCount) < 1000 // Less than 1 second average drift
+      isHealthy: this.updateCount > 0 && Math.abs(this.driftCorrection / this.updateCount) < 1000
     };
   }
 }
