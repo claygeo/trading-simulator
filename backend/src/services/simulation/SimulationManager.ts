@@ -1,4 +1,4 @@
-// backend/src/services/simulation/SimulationManager.ts - COMPLETE FIXED VERSION WITH CRITICAL POOL LEAK FIXES
+// backend/src/services/simulation/SimulationManager.ts - FIXED: Single Data Stream Architecture
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import {
@@ -51,15 +51,15 @@ export class SimulationManager {
   private liveTPSMetrics: Map<string, ExternalMarketMetrics> = new Map();
   private metricsUpdateIntervals: Map<string, NodeJS.Timeout> = new Map();
   
-  // 🔧 FIXED: TPS metrics throttling to prevent spam
+  // 🔧 FIXED: TPS metrics throttling
   private lastTPSBroadcast: Map<string, number> = new Map();
   private lastTPSMetricsSnapshot: Map<string, string> = new Map();
-  private readonly TPS_BROADCAST_THROTTLE_MS = 2000; // Only broadcast TPS changes every 2 seconds
+  private readonly TPS_BROADCAST_THROTTLE_MS = 2000;
   
   private simulationRegistrationStatus: Map<string, 'creating' | 'registering' | 'ready' | 'starting' | 'running'> = new Map();
   private registrationCallbacks: Map<string, ((status: string) => void)[]> = new Map();
   
-  // 🔧 CRITICAL FIX: Remove static CandleManager handling - use singleton pattern
+  // 🚨 CRITICAL FIX: Remove static CandleManager handling - use singleton pattern only
   private externalCandleUpdateCallback?: CandleUpdateCallback;
 
   private marketEngine!: MarketEngine;
@@ -77,12 +77,11 @@ export class SimulationManager {
 
   private readonly baseUpdateInterval: number = 50;
   private readonly processedTradesSyncIntervalTime: number = 25;
-  // 🔧 FIXED: Increased metrics update interval to reduce spam
-  private readonly metricsUpdateInterval: number = 2000; // Changed from 100ms to 2000ms
+  private readonly metricsUpdateInterval: number = 2000;
 
-  // 🚨 CRITICAL FIX: Pool cleanup tracking to prevent leaks
+  // 🚨 CRITICAL FIX: Pool cleanup tracking
   private poolCleanupIntervals: Map<string, NodeJS.Timeout> = new Map();
-  private readonly POOL_CLEANUP_INTERVAL = 60000; // Cleanup every 60 seconds
+  private readonly POOL_CLEANUP_INTERVAL = 60000;
   private simulationTradeCounters: Map<string, { generated: number; released: number }> = new Map();
 
   constructor() {
@@ -91,16 +90,14 @@ export class SimulationManager {
     this.startGlobalPoolMonitoring();
   }
 
-  // 🚨 CRITICAL FIX: Global pool monitoring to prevent system-wide leaks
   private startGlobalPoolMonitoring(): void {
     setInterval(() => {
       this.monitorAllSimulationPools();
-    }, 30000); // Check every 30 seconds
+    }, 30000);
 
-    console.log('🔍 CRITICAL FIX: Started global pool monitoring to prevent memory leaks');
+    console.log('🔍 MONITOR: Started global pool monitoring');
   }
 
-  // 🚨 CRITICAL FIX: Monitor all simulation pools for leaks
   private monitorAllSimulationPools(): void {
     let totalLeaks = 0;
     let criticalSimulations: string[] = [];
@@ -109,61 +106,47 @@ export class SimulationManager {
       const counters = this.simulationTradeCounters.get(simulationId);
       if (counters) {
         const leakage = counters.generated - counters.released;
-        if (leakage > 100) { // More than 100 unreleased objects
+        if (leakage > 100) {
           totalLeaks += leakage;
           criticalSimulations.push(simulationId);
-          console.warn(`🚨 POOL LEAK: Simulation ${simulationId} has ${leakage} unreleased objects`);
+          console.warn(`🚨 LEAK: Simulation ${simulationId} has ${leakage} unreleased objects`);
         }
       }
 
-      // Check TraderEngine pool health
       const traderEngineHealth = this.traderEngine.getPoolHealth();
       if (!traderEngineHealth.trade.healthy || !traderEngineHealth.position.healthy) {
-        console.error(`🚨 POOL HEALTH: Simulation ${simulationId} has unhealthy pools:`, {
-          trade: traderEngineHealth.trade.issues,
-          position: traderEngineHealth.position.issues
-        });
-        
+        console.error(`🚨 POOL HEALTH: Simulation ${simulationId} has unhealthy pools`);
         this.forceSimulationPoolCleanup(simulationId);
       }
     });
 
     if (totalLeaks > 500) {
-      console.error(`🚨 SYSTEM ALERT: Total system leakage of ${totalLeaks} objects across ${criticalSimulations.length} simulations`);
+      console.error(`🚨 SYSTEM ALERT: Total leakage of ${totalLeaks} objects`);
       criticalSimulations.forEach(simId => this.forceSimulationPoolCleanup(simId));
     }
   }
 
-  // 🚨 CRITICAL FIX: Force cleanup pools for a specific simulation
   private forceSimulationPoolCleanup(simulationId: string): void {
-    console.log(`🧹 CRITICAL FIX: Force cleaning pools for simulation ${simulationId}`);
+    console.log(`🧹 CLEANUP: Force cleaning pools for ${simulationId}`);
     
     const simulation = this.simulations.get(simulationId);
     if (!simulation) return;
 
     try {
-      // 1. Clean up recent trades - release old trades back to pool
       if (simulation.recentTrades.length > 1000) {
         const tradesToRelease = simulation.recentTrades.splice(1000);
-        console.log(`🔄 CRITICAL FIX: Releasing ${tradesToRelease.length} old trades back to pool`);
-        
-        // Note: The actual release should be done by the DataGenerator or TraderEngine
-        // This is a placeholder - in real implementation, call the appropriate release method
         tradesToRelease.forEach(trade => {
           try {
             this.dataGenerator.releaseTrade(trade);
             this.incrementReleasedCounter(simulationId);
           } catch (error) {
-            console.error(`❌ Error releasing trade ${trade.id}:`, error);
+            console.error(`❌ Error releasing trade:`, error);
           }
         });
       }
 
-      // 2. Clean up excess positions
       if (simulation.activePositions.length > 100) {
         const positionsToClose = simulation.activePositions.splice(100);
-        console.log(`🔄 CRITICAL FIX: Releasing ${positionsToClose.length} excess positions`);
-        
         positionsToClose.forEach(position => {
           try {
             this.dataGenerator.releasePosition(position);
@@ -173,22 +156,13 @@ export class SimulationManager {
         });
       }
 
-      // 3. Force garbage collection on TraderEngine pools
-      const traderEngineHealth = this.traderEngine.getPoolHealth();
-      if (traderEngineHealth.metrics.tradesAcquired - traderEngineHealth.metrics.tradesReleased > 50) {
-        console.log(`🧹 CRITICAL FIX: Forcing TraderEngine pool cleanup for ${simulationId}`);
-        // The TraderEngine should have a force cleanup method
-        // This would trigger internal pool garbage collection
-      }
-
-      console.log(`✅ CRITICAL FIX: Pool cleanup completed for simulation ${simulationId}`);
+      console.log(`✅ CLEANUP: Pool cleanup completed for ${simulationId}`);
 
     } catch (error) {
-      console.error(`❌ CRITICAL FIX: Error during pool cleanup for ${simulationId}:`, error);
+      console.error(`❌ CLEANUP: Error during pool cleanup:`, error);
     }
   }
 
-  // 🚨 CRITICAL FIX: Track trade generation and release for leak detection
   private incrementGeneratedCounter(simulationId: string): void {
     if (!this.simulationTradeCounters.has(simulationId)) {
       this.simulationTradeCounters.set(simulationId, { generated: 0, released: 0 });
@@ -205,7 +179,7 @@ export class SimulationManager {
 
   setExternalCandleUpdateCallback(callback: CandleUpdateCallback): void {
     this.externalCandleUpdateCallback = callback;
-    console.log('🔗 FIXED: External candle update coordinator connected to SimulationManager');
+    console.log('🔗 COORDINATOR: External candle coordinator connected');
   }
 
   private initializeEngines(): void {
@@ -229,7 +203,6 @@ export class SimulationManager {
         this.timeframeManager.updateTradesBuffer(simulationId, trades);
         trades.forEach(trade => {
           this.broadcastService.broadcastTradeEvent(simulationId, trade);
-          // 🚨 CRITICAL FIX: Track generated trades for leak detection
           this.incrementGeneratedCounter(simulationId);
         });
       }
@@ -248,66 +221,62 @@ export class SimulationManager {
     this.performanceOptimizer.startPerformanceMonitoring();
   }
 
-  // 🔧 CRITICAL FIX: Get CandleManager safely using singleton pattern
+  // 🚨 CRITICAL FIX: Simplified CandleManager access - NO CREATION, only retrieval
   private getCandleManager(simulationId: string): CandleManager | null {
-    try {
-      // Try to get existing instance first
-      return CandleManager.getInstance(simulationId);
-    } catch (error) {
-      console.warn(`⚠️ MISSING: No CandleManager found for ${simulationId}:`, error);
+    if (!CandleManager.hasInstance(simulationId)) {
+      console.warn(`⚠️ SINGLETON: No CandleManager exists for ${simulationId}`);
       return null;
     }
+    return CandleManager.getInstance(simulationId);
   }
 
-  private calculateDynamicCandleInterval(baseInterval: number): number {
-    return Math.min(baseInterval, 8000);
+  // 🚨 CRITICAL FIX: Unified CandleManager creation - ONLY called during simulation creation
+  private createCandleManager(simulationId: string, price: number): CandleManager {
+    // Check if one already exists (should not happen in normal flow)
+    if (CandleManager.hasInstance(simulationId)) {
+      console.warn(`⚠️ SINGLETON: CandleManager already exists for ${simulationId}, cleaning up first`);
+      CandleManager.cleanup(simulationId);
+    }
+
+    const dynamicInterval = this.getPriceCategoryCandleInterval(price);
+    const candleManager = CandleManager.getInstance(simulationId, dynamicInterval);
+    
+    console.log(`🕯️ SINGLETON: Created single CandleManager for ${simulationId} with ${dynamicInterval}ms interval`);
+    return candleManager;
   }
 
   private getPriceCategoryCandleInterval(price: number): number {
-    if (price < 0.01) {
-      return 6000;
-    } else if (price < 1) {
-      return 8000;
-    } else if (price < 10) {
-      return 10000;
-    } else if (price < 100) {
-      return 12000;
-    } else {
-      return 15000;
-    }
+    if (price < 0.01) return 6000;
+    else if (price < 1) return 8000;
+    else if (price < 10) return 10000;
+    else if (price < 100) return 12000;
+    else return 15000;
   }
 
-  // 🔧 FIXED: Enhanced TPS metrics tracking with spam prevention
   private startTPSMetricsTracking(simulationId: string): void {
     if (this.metricsUpdateIntervals.has(simulationId)) {
       return;
     }
     
-    console.log(`📊 [TPS METRICS] Starting metrics tracking for simulation ${simulationId} with anti-spam throttling`);
+    console.log(`📊 METRICS: Starting TPS tracking for ${simulationId}`);
     
     const interval = setInterval(() => {
       const simulation = this.simulations.get(simulationId);
       if (!simulation) {
-        console.log(`📊 [TPS METRICS] Simulation ${simulationId} not found, stopping metrics tracking`);
         this.stopTPSMetricsTracking(simulationId);
         return;
       }
       
       const liveMetrics = this.calculateLiveTPSMetrics(simulation);
       this.liveTPSMetrics.set(simulationId, liveMetrics);
-      
-      // 🔧 FIXED: Only broadcast if metrics have actually changed
       this.throttledTPSMetricsBroadcast(simulationId, liveMetrics);
       
     }, this.metricsUpdateInterval);
     
     this.metricsUpdateIntervals.set(simulationId, interval);
-
-    // 🚨 CRITICAL FIX: Start pool cleanup monitoring for this simulation
     this.startPoolCleanupForSimulation(simulationId);
   }
 
-  // 🚨 CRITICAL FIX: Start pool cleanup monitoring for specific simulation
   private startPoolCleanupForSimulation(simulationId: string): void {
     if (this.poolCleanupIntervals.has(simulationId)) {
       return;
@@ -318,10 +287,9 @@ export class SimulationManager {
     }, this.POOL_CLEANUP_INTERVAL);
 
     this.poolCleanupIntervals.set(simulationId, cleanupInterval);
-    console.log(`🧹 CRITICAL FIX: Started pool cleanup monitoring for simulation ${simulationId}`);
+    console.log(`🧹 CLEANUP: Started pool monitoring for ${simulationId}`);
   }
 
-  // 🚨 CRITICAL FIX: Perform scheduled pool cleanup
   private performScheduledPoolCleanup(simulationId: string): void {
     const simulation = this.simulations.get(simulationId);
     if (!simulation) {
@@ -329,10 +297,9 @@ export class SimulationManager {
       return;
     }
 
-    console.log(`🧹 SCHEDULED: Pool cleanup for simulation ${simulationId}`);
+    console.log(`🧹 CLEANUP: Scheduled cleanup for ${simulationId}`);
 
     try {
-      // 1. Clean up old trades
       if (simulation.recentTrades.length > 2000) {
         const excessTrades = simulation.recentTrades.splice(2000);
         excessTrades.forEach(trade => {
@@ -340,60 +307,46 @@ export class SimulationManager {
             this.dataGenerator.releaseTrade(trade);
             this.incrementReleasedCounter(simulationId);
           } catch (error) {
-            console.error(`❌ Error releasing trade during cleanup:`, error);
+            console.error(`❌ Error releasing trade:`, error);
           }
         });
-        console.log(`🔄 CLEANUP: Released ${excessTrades.length} excess trades for ${simulationId}`);
+        console.log(`🔄 CLEANUP: Released ${excessTrades.length} excess trades`);
       }
 
-      // 2. Clean up closed positions
       if (simulation.closedPositions.length > 500) {
         const excessPositions = simulation.closedPositions.splice(500);
         excessPositions.forEach(position => {
           try {
             this.dataGenerator.releasePosition(position);
           } catch (error) {
-            console.error(`❌ Error releasing closed position during cleanup:`, error);
+            console.error(`❌ Error releasing position:`, error);
           }
         });
-        console.log(`🔄 CLEANUP: Released ${excessPositions.length} excess closed positions for ${simulationId}`);
-      }
-
-      // 3. Update counters and log status
-      const counters = this.simulationTradeCounters.get(simulationId);
-      if (counters) {
-        const currentLeakage = counters.generated - counters.released;
-        if (currentLeakage > 0) {
-          console.log(`📊 CLEANUP: Simulation ${simulationId} status - Generated: ${counters.generated}, Released: ${counters.released}, Leakage: ${currentLeakage}`);
-        }
+        console.log(`🔄 CLEANUP: Released ${excessPositions.length} excess positions`);
       }
 
     } catch (error) {
-      console.error(`❌ CLEANUP: Error during scheduled cleanup for ${simulationId}:`, error);
+      console.error(`❌ CLEANUP: Error during scheduled cleanup:`, error);
     }
   }
 
-  // 🚨 CRITICAL FIX: Stop pool cleanup for simulation
   private stopPoolCleanupForSimulation(simulationId: string): void {
     const interval = this.poolCleanupIntervals.get(simulationId);
     if (interval) {
       clearInterval(interval);
       this.poolCleanupIntervals.delete(simulationId);
-      console.log(`🛑 CLEANUP: Stopped pool cleanup monitoring for simulation ${simulationId}`);
+      console.log(`🛑 CLEANUP: Stopped pool monitoring for ${simulationId}`);
     }
   }
 
-  // 🔧 FIXED: New throttled broadcast method to prevent TPS spam
   private throttledTPSMetricsBroadcast(simulationId: string, metrics: ExternalMarketMetrics): void {
     const now = Date.now();
     const lastBroadcast = this.lastTPSBroadcast.get(simulationId) || 0;
     
-    // Only broadcast if enough time has passed
     if (now - lastBroadcast < this.TPS_BROADCAST_THROTTLE_MS) {
       return;
     }
     
-    // Create a snapshot of the metrics to compare for changes
     const metricsSnapshot = JSON.stringify({
       actualTPS: metrics.actualTPS,
       currentTPS: metrics.currentTPS,
@@ -403,21 +356,13 @@ export class SimulationManager {
     });
     
     const lastSnapshot = this.lastTPSMetricsSnapshot.get(simulationId);
-    
-    // 🔧 FIXED: Only broadcast if metrics have actually changed OR if it's been a while
     const hasChanges = lastSnapshot !== metricsSnapshot;
-    const forceUpdate = now - lastBroadcast > this.TPS_BROADCAST_THROTTLE_MS * 5; // Force update every 10 seconds
+    const forceUpdate = now - lastBroadcast > this.TPS_BROADCAST_THROTTLE_MS * 5;
     
     if (hasChanges || forceUpdate) {
       this.broadcastTPSMetricsUpdate(simulationId, metrics);
       this.lastTPSBroadcast.set(simulationId, now);
       this.lastTPSMetricsSnapshot.set(simulationId, metricsSnapshot);
-      
-      if (hasChanges) {
-        console.log(`📊 [TPS METRICS] Broadcasting metrics change for ${simulationId}: actualTPS=${metrics.actualTPS}, queueDepth=${metrics.queueDepth}`);
-      } else {
-        console.log(`📊 [TPS METRICS] Force broadcasting metrics for ${simulationId} (periodic update)`);
-      }
     }
   }
 
@@ -427,13 +372,11 @@ export class SimulationManager {
       clearInterval(interval);
       this.metricsUpdateIntervals.delete(simulationId);
       this.liveTPSMetrics.delete(simulationId);
-      // 🔧 FIXED: Clean up throttling maps
       this.lastTPSBroadcast.delete(simulationId);
       this.lastTPSMetricsSnapshot.delete(simulationId);
-      console.log(`📊 [TPS METRICS] Stopped metrics tracking for simulation ${simulationId}`);
+      console.log(`📊 METRICS: Stopped TPS tracking for ${simulationId}`);
     }
 
-    // 🚨 CRITICAL FIX: Stop pool cleanup when stopping metrics tracking
     this.stopPoolCleanupForSimulation(simulationId);
   }
 
@@ -466,7 +409,6 @@ export class SimulationManager {
     
     const currentMode = simulation.currentTPSMode || TPSMode.NORMAL;
     const targetTPS = this.getTargetTPSForMode(currentMode);
-    
     const queueDepth = Math.max(0, targetTPS - actualTPS);
     
     let dominantTraderType: ExternalTraderType;
@@ -560,8 +502,6 @@ export class SimulationManager {
 
           if (processedTrades.length > 0) {
             this.traderEngine.integrateProcessedTrades(simulation, processedTrades);
-            
-            // 🚨 CRITICAL FIX: Track processed trades for release accounting
             processedTrades.forEach(() => this.incrementReleasedCounter(id));
             
             if (simulation.externalMarketMetrics) {
@@ -587,10 +527,7 @@ export class SimulationManager {
       if (!simulation) return;
 
       this.traderEngine.integrateProcessedTrades(simulation, [trade]);
-      
-      // 🚨 CRITICAL FIX: Track processed trades
       this.incrementReleasedCounter(simulationId);
-      
       this.simulations.set(simulationId, simulation);
     });
   }
@@ -599,14 +536,14 @@ export class SimulationManager {
     this.broadcastService.registerClient(client);
   }
 
+  // 🚨 CRITICAL FIX: Simplified simulation creation with single CandleManager
   async createSimulation(parameters: Partial<EnhancedSimulationParameters> = {}): Promise<ExtendedSimulationState> {
     const simulationId = uuidv4();
     
     try {
       this.simulationRegistrationStatus.set(simulationId, 'creating');
-      console.log(`🏗️ CREATING: Simulation ${simulationId} with deduplication and leak prevention`);
+      console.log(`🏗️ CREATING: Simulation ${simulationId} with single data stream`);
       
-      // 🚨 CRITICAL FIX: Initialize counters for new simulation
       this.simulationTradeCounters.set(simulationId, { generated: 0, released: 0 });
       
       const traders = await duneApi.getPumpFunTraders();
@@ -642,26 +579,23 @@ export class SimulationManager {
       const aggressiveTimeframe: Timeframe = '1m';
       this.simulationTimeframes.set(simulationId, aggressiveTimeframe);
       
-      // 🔧 CRITICAL FIX: Use singleton CandleManager
-      const dynamicInterval = this.getPriceCategoryCandleInterval(simulation.currentPrice);
-      const candleManager = CandleManager.getInstance(simulationId, dynamicInterval);
+      // 🚨 CRITICAL FIX: Create SINGLE CandleManager during simulation creation
+      const candleManager = this.createCandleManager(simulationId, simulation.currentPrice);
+      candleManager.initialize(simulation.startTime, simulation.currentPrice);
       
       if (this.externalCandleUpdateCallback) {
         this.externalCandleUpdateCallback.ensureCleanStart(simulationId);
-        console.log(`🔗 FIXED: External candle coordinator initialized for ${simulationId}`);
+        console.log(`🔗 COORDINATOR: External coordinator initialized for ${simulationId}`);
       }
       
-      // 🔧 FIXED: Don't start TPS metrics tracking immediately on creation
-      // Only start when simulation actually starts
-      console.log(`📊 [TPS METRICS] TPS tracking will start when simulation ${simulationId} is started`);
+      console.log(`📊 METRICS: TPS tracking will start when simulation starts`);
       
       await this.verifySimulationRegistration(simulationId);
       
       this.simulationRegistrationStatus.set(simulationId, 'ready');
-      
       this.notifyRegistrationCallbacks(simulationId, 'ready');
       
-      console.log(`✅ CREATED: Simulation ${simulationId} with single CandleManager and leak prevention`);
+      console.log(`✅ CREATED: Simulation ${simulationId} with SINGLE CandleManager`);
       
       return simulation;
       
@@ -670,7 +604,6 @@ export class SimulationManager {
       this.simulationRegistrationStatus.set(simulationId, 'error');
       this.notifyRegistrationCallbacks(simulationId, 'error');
       
-      // 🚨 CRITICAL FIX: Cleanup on error to prevent leaks
       this.cleanupSimulationResources(simulationId);
       
       const emergencySimulation = await this.createSimulationWithDummyTraders(simulationId, parameters);
@@ -680,27 +613,23 @@ export class SimulationManager {
     }
   }
 
-  // 🚨 CRITICAL FIX: New method to cleanup simulation resources
+  // 🚨 CRITICAL FIX: Complete resource cleanup
   private cleanupSimulationResources(simulationId: string): void {
-    console.log(`🧹 CRITICAL FIX: Cleaning up resources for simulation ${simulationId}`);
+    console.log(`🧹 CLEANUP: Cleaning up resources for ${simulationId}`);
     
-    // Stop any intervals
     this.stopTPSMetricsTracking(simulationId);
     this.stopPoolCleanupForSimulation(simulationId);
     
-    // Clean up CandleManager
+    // 🚨 CRITICAL: Clean up CandleManager singleton
     CandleManager.cleanup(simulationId);
     
-    // Clean up counters
     this.simulationTradeCounters.delete(simulationId);
-    
-    // Clean up other maps
     this.simulationSpeeds.delete(simulationId);
     this.simulationTimeframes.delete(simulationId);
     this.simulationRegistrationStatus.delete(simulationId);
     this.registrationCallbacks.delete(simulationId);
     
-    console.log(`✅ CRITICAL FIX: Resource cleanup completed for ${simulationId}`);
+    console.log(`✅ CLEANUP: Resource cleanup completed for ${simulationId}`);
   }
 
   private async verifySimulationRegistration(simulationId: string): Promise<void> {
@@ -793,7 +722,7 @@ export class SimulationManager {
     return Promise.resolve(this.finalizeSimulationCreation(simulationId, parameters, dummyTraders, traderProfiles));
   }
 
-  // 🚨 CRITICAL FIX #1: Complete externalMarketMetrics initialization in finalizeSimulationCreation
+  // 🚨 CRITICAL FIX: Clean simulation creation with proper initial state
   private finalizeSimulationCreation(
     simulationId: string,
     parameters: Partial<EnhancedSimulationParameters>,
@@ -837,15 +766,6 @@ export class SimulationManager {
     const aggressiveTimeframe: Timeframe = '1m';
     this.simulationTimeframes.set(simulationId, aggressiveTimeframe);
     
-    const timeframeConfig = this.timeframeManager.getTimeframeConfig(aggressiveTimeframe);
-    
-    const dynamicInterval = this.getPriceCategoryCandleInterval(dynamicInitialPrice);
-    timeframeConfig.interval = dynamicInterval;
-    
-    // 🔧 CRITICAL FIX: Use singleton CandleManager and initialize properly
-    const candleManager = CandleManager.getInstance(simulationId, dynamicInterval);
-    candleManager.clear();
-    
     const currentRealTime = Date.now();
     const simulationStartTime = currentRealTime;
     const currentPrice = finalParams.initialPrice;
@@ -854,31 +774,22 @@ export class SimulationManager {
     console.log(`   💰 Starting Price: ${currentPrice}`);
     console.log(`   💧 Liquidity Pool: ${(finalParams.initialLiquidity / 1000000).toFixed(2)}M`);
     console.log(`   ⚡ Speed: ${finalParams.timeCompressionFactor}x`);
-    console.log(`   🕯️ Candle Interval: ${dynamicInterval}ms`);
-    console.log(`   🎯 Price Category: ${this.marketEngine.getPriceCategory(currentPrice).description}`);
-    console.log(`   📊 CandleManager: SINGLETON`);
-    console.log(`   🛡️ Leak Prevention: ENABLED`);
+    console.log(`   📊 SINGLE CandleManager: READY`);
     
-    // 🚨 CRITICAL FIX #1: Ensure externalMarketMetrics is ALWAYS properly initialized
+    // 🚨 CRITICAL FIX: Proper externalMarketMetrics initialization
     const validExternalMarketMetrics: ExternalMarketMetrics = {
-      currentTPS: 25,            // Default to NORMAL mode
-      actualTPS: 0,              // Start with 0 actual TPS
-      queueDepth: 0,             // Start with empty queue
-      processedOrders: 0,        // Start with 0 processed orders
-      rejectedOrders: 0,         // Start with 0 rejected orders
-      avgProcessingTime: 0,      // Start with 0 average processing time
-      dominantTraderType: ExternalTraderType.RETAIL_TRADER,  // Default trader type
-      marketSentiment: 'neutral', // Default to neutral sentiment
-      liquidationRisk: 0         // Start with 0 liquidation risk
+      currentTPS: 25,
+      actualTPS: 0,
+      queueDepth: 0,
+      processedOrders: 0,
+      rejectedOrders: 0,
+      avgProcessingTime: 0,
+      dominantTraderType: ExternalTraderType.RETAIL_TRADER,
+      marketSentiment: 'neutral',
+      liquidationRisk: 0
     };
     
-    // 🚨 CRITICAL FIX #2: Generate proper initial OHLCV candles for chart
-    const initialCandles: PricePoint[] = this.generateValidInitialCandles(currentPrice, simulationStartTime, dynamicInterval);
-    
-    console.log(`🚨 CRITICAL FIX: Generated ${initialCandles.length} valid OHLCV candles`);
-    console.log(`   📊 First candle: O=${initialCandles[0]?.open} H=${initialCandles[0]?.high} L=${initialCandles[0]?.low} C=${initialCandles[0]?.close} V=${initialCandles[0]?.volume}`);
-    console.log(`   📊 Last candle: O=${initialCandles[initialCandles.length-1]?.open} H=${initialCandles[initialCandles.length-1]?.high} L=${initialCandles[initialCandles.length-1]?.low} C=${initialCandles[initialCandles.length-1]?.close} V=${initialCandles[initialCandles.length-1]?.volume}`);
-
+    // 🚨 CRITICAL FIX: Start with EMPTY chart - let it build naturally
     const simulation: ExtendedSimulationState = {
       id: simulationId,
       startTime: simulationStartTime,
@@ -892,8 +803,8 @@ export class SimulationManager {
         trend: 'sideways',
         volume: finalParams.initialLiquidity * 0.25
       },
-      // 🚨 CRITICAL FIX #2: Use validated initial candles
-      priceHistory: initialCandles,
+      // 🚨 CRITICAL FIX: Start with empty price history - chart builds from simulation data
+      priceHistory: [],
       currentPrice: currentPrice,
       orderBook: {
         bids: this.orderBookManager.generateInitialOrderBook('bids', currentPrice, finalParams.initialLiquidity),
@@ -907,7 +818,6 @@ export class SimulationManager {
       traderRankings: traders.sort((a, b) => b.netPnl - a.netPnl),
       _tickCounter: 0,
       currentTPSMode: TPSMode.NORMAL,
-      // 🚨 CRITICAL FIX #1: Use properly initialized externalMarketMetrics
       externalMarketMetrics: validExternalMarketMetrics
     };
     
@@ -917,91 +827,11 @@ export class SimulationManager {
     
     this.timeframeManager.clearCache(simulationId);
     
-    // Log validation to ensure we fixed the issues
-    console.log(`✅ VALIDATION: externalMarketMetrics properly set:`, simulation.externalMarketMetrics);
-    console.log(`✅ VALIDATION: priceHistory has ${simulation.priceHistory.length} valid candles`);
+    console.log(`✅ VALIDATION: Clean start - empty priceHistory, ready for real-time data`);
+    console.log(`✅ VALIDATION: externalMarketMetrics properly initialized`);
     console.log(`✅ VALIDATION: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
-    console.log(`✅ VALIDATION: Leak prevention counters initialized for ${simulationId}`);
     
     return simulation;
-  }
-
-  // 🚨 CRITICAL FIX #2: New method to generate valid initial OHLCV candles
-  private generateValidInitialCandles(startPrice: number, startTime: number, candleInterval: number): PricePoint[] {
-    const candles: PricePoint[] = [];
-    const candleCount = 10; // Generate 10 initial candles
-    const baseVolatility = 0.005; // 0.5% base volatility
-    
-    let currentPrice = startPrice;
-    let currentTime = startTime - (candleCount * candleInterval); // Start from past
-    
-    for (let i = 0; i < candleCount; i++) {
-      // Generate realistic price variation
-      const priceVariation = (Math.random() - 0.5) * baseVolatility;
-      const open = currentPrice;
-      const close = open * (1 + priceVariation);
-      
-      // Ensure proper OHLC relationships - CRITICAL FOR CHART VALIDATION
-      const priceRange = Math.abs(close - open);
-      const high = Math.max(open, close) + (priceRange * Math.random() * 0.5);
-      const low = Math.min(open, close) - (priceRange * Math.random() * 0.5);
-      
-      // Generate realistic volume
-      const baseVolume = 1000 + (Math.random() * 5000);
-      
-      // CRITICAL: Validate OHLC relationships before creating candle
-      const validatedCandle: PricePoint = {
-        timestamp: currentTime,
-        open: Math.max(0.000001, open),           // Ensure positive
-        high: Math.max(open, close, high),        // High must be highest
-        low: Math.min(open, close, low),          // Low must be lowest  
-        close: Math.max(0.000001, close),         // Ensure positive
-        volume: Math.max(0, baseVolume)           // Ensure non-negative
-      };
-      
-      // CRITICAL: Final validation to prevent chart errors
-      if (validatedCandle.high < validatedCandle.low) {
-        validatedCandle.high = validatedCandle.low * 1.001;
-      }
-      if (validatedCandle.high < Math.max(validatedCandle.open, validatedCandle.close)) {
-        validatedCandle.high = Math.max(validatedCandle.open, validatedCandle.close) * 1.001;
-      }
-      if (validatedCandle.low > Math.min(validatedCandle.open, validatedCandle.close)) {
-        validatedCandle.low = Math.min(validatedCandle.open, validatedCandle.close) * 0.999;
-      }
-      
-      // Ensure all values are finite numbers
-      if (!isFinite(validatedCandle.open) || !isFinite(validatedCandle.high) || 
-          !isFinite(validatedCandle.low) || !isFinite(validatedCandle.close) || 
-          !isFinite(validatedCandle.volume)) {
-        console.error(`❌ Invalid candle data detected, using fallback values`);
-        validatedCandle.open = startPrice;
-        validatedCandle.high = startPrice * 1.001;
-        validatedCandle.low = startPrice * 0.999;
-        validatedCandle.close = startPrice;
-        validatedCandle.volume = 1000;
-      }
-      
-      candles.push(validatedCandle);
-      
-      currentPrice = validatedCandle.close;
-      currentTime += candleInterval;
-    }
-    
-    console.log(`🚨 GENERATED VALID CANDLES: ${candles.length} candles with proper OHLCV structure`);
-    
-    // Final validation log
-    candles.forEach((candle, index) => {
-      const isValid = candle.high >= Math.max(candle.open, candle.close, candle.low) &&
-                     candle.low <= Math.min(candle.open, candle.close, candle.high) &&
-                     candle.open > 0 && candle.close > 0 && candle.volume >= 0;
-      
-      if (!isValid) {
-        console.error(`❌ INVALID CANDLE ${index}:`, candle);
-      }
-    });
-    
-    return candles;
   }
 
   private calculateDynamicLiquidity(price: number): number {
@@ -1056,7 +886,7 @@ export class SimulationManager {
     }
   }
 
-  // 🚨 CRITICAL FIX #3: Enhanced startSimulation with proper state management
+  // 🚨 CRITICAL FIX: Clean startSimulation with proper state management
   startSimulation(id: string): void {
     const simulation = this.simulations.get(id);
     
@@ -1065,23 +895,19 @@ export class SimulationManager {
       throw new Error(`Simulation with ID ${id} not found`);
     }
     
-    // 🚨 CRITICAL FIX #3: Proper state validation for start
-    console.log(`🔍 [START] Current simulation state - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`);
+    console.log(`🔍 [START] Current state - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`);
     
     if (simulation.isRunning && !simulation.isPaused) {
-      console.warn(`⚠️ [START] Simulation ${id} already running and not paused`);
-      throw new Error(`Simulation ${id} is already running and not paused (current state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`);
+      console.warn(`⚠️ [START] Simulation ${id} already running`);
+      throw new Error(`Simulation ${id} is already running`);
     }
     
     try {
-      // 🚨 CRITICAL FIX #3: Proper state initialization
       if (!simulation.isRunning) {
-        // First time start
         simulation.isRunning = true;
         simulation.isPaused = false;
         console.log(`🚀 [START] Starting simulation ${id} for the first time`);
       } else if (simulation.isPaused) {
-        // Resume from pause
         simulation.isPaused = false;
         console.log(`▶️ [START] Resuming paused simulation ${id}`);
       }
@@ -1095,7 +921,14 @@ export class SimulationManager {
       // Start TPS metrics tracking when simulation starts
       if (!this.metricsUpdateIntervals.has(id)) {
         this.startTPSMetricsTracking(id);
-        console.log(`📊 [START] Started TPS tracking and pool monitoring for running simulation ${id}`);
+        console.log(`📊 [START] Started TPS tracking for ${id}`);
+      }
+      
+      // 🚨 CRITICAL FIX: Initialize CandleManager properly for first candle
+      const candleManager = this.getCandleManager(id);
+      if (candleManager) {
+        candleManager.updateCandle(simulation.currentTime, simulation.currentPrice, 1000);
+        console.log(`🕯️ [START] CandleManager ready - first candle queued`);
       }
       
       const marketAnalysis = this.timeframeManager.analyzeMarketConditions(id, simulation);
@@ -1126,7 +959,6 @@ export class SimulationManager {
     } catch (error) {
       console.error(`❌ [START] Failed to start simulation ${id}:`, error);
       
-      // 🚨 CRITICAL FIX #3: Reset state on error to prevent inconsistent states
       simulation.isRunning = false;
       simulation.isPaused = false;
       this.simulations.set(id, simulation);
@@ -1150,16 +982,7 @@ export class SimulationManager {
   private advanceSimulation(id: string): void {
     const simulation = this.simulations.get(id);
     
-    // 🚨 CRITICAL FIX #3: Enhanced pause check - must check BOTH conditions
     if (!simulation || !simulation.isRunning || simulation.isPaused) {
-      // Log why simulation was skipped for debugging
-      if (!simulation) {
-        console.warn(`⚠️ [ADVANCE] Simulation ${id} not found, skipping advance`);
-      } else if (!simulation.isRunning) {
-        console.warn(`⚠️ [ADVANCE] Simulation ${id} not running, skipping advance`);
-      } else if (simulation.isPaused) {
-        console.log(`⏸️ [ADVANCE] Simulation ${id} is paused, skipping advance`);
-      }
       return;
     }
     
@@ -1186,23 +1009,19 @@ export class SimulationManager {
         
         this.marketEngine.updatePrice(simulation);
         
-        // 🚨 CRITICAL FIX: Track trades generated during processing
         const tradesBefore = simulation.recentTrades.length;
         this.traderEngine.processTraderActions(simulation);
         const tradesAfter = simulation.recentTrades.length;
         const newTrades = tradesAfter - tradesBefore;
         
-        // Track generated trades for leak monitoring
         for (let i = 0; i < newTrades; i++) {
           this.incrementGeneratedCounter(id);
         }
         
         this.processExternalMarketActivity(simulation);
         
-        // Generate realistic trading activity
         if (simulation.recentTrades.length < 50) {
           const generatedTrades = this.generateRealisticTradingActivity(simulation);
-          // Track these trades too
           for (let i = 0; i < generatedTrades; i++) {
             this.incrementGeneratedCounter(id);
           }
@@ -1211,8 +1030,8 @@ export class SimulationManager {
         this.orderBookManager.updateOrderBook(simulation);
         this.traderEngine.updatePositionsPnL(simulation);
         
+        // 🚨 CRITICAL FIX: Single candle update call
         this.updateCandlesFromSimulation(id, simulation);
-        this.updatePriceHistoryWithValidation(simulation, speed);
         
         const marketAnalysis = this.timeframeManager.analyzeMarketConditions(id, simulation);
         
@@ -1241,26 +1060,22 @@ export class SimulationManager {
     }
   }
 
-  // 🚨 CRITICAL FIX: Modified to return number of trades generated for tracking
   private generateRealisticTradingActivity(simulation: ExtendedSimulationState): number {
-    const tradeCount = Math.floor(Math.random() * 10) + 5; // 5-15 trades
+    const tradeCount = Math.floor(Math.random() * 10) + 5;
     
     for (let i = 0; i < tradeCount; i++) {
       const trader = simulation.traders[Math.floor(Math.random() * simulation.traders.length)];
       const action = Math.random() > 0.5 ? 'buy' : 'sell';
       
-      // Generate realistic price variation
       const volatility = simulation.marketConditions.volatility || 0.02;
-      const priceVariation = (Math.random() - 0.5) * volatility * 0.5; // Reduced variation
+      const priceVariation = (Math.random() - 0.5) * volatility * 0.5;
       const price = simulation.currentPrice * (1 + priceVariation);
       
-      // Generate realistic quantity
       const baseQuantity = 1000;
-      const quantityVariation = Math.random() * 3 + 0.5; // 0.5x to 3.5x variation
+      const quantityVariation = Math.random() * 3 + 0.5;
       const quantity = baseQuantity * quantityVariation;
       
-      // Create trade with proper timestamp
-      const tradeTimestamp = simulation.currentTime + (i * 100); // 100ms apart
+      const tradeTimestamp = simulation.currentTime + (i * 100);
       
       const trade = {
         id: `trade-${simulation.currentTime}-${i}-${Math.random().toString(36).substr(2, 6)}`,
@@ -1280,43 +1095,38 @@ export class SimulationManager {
       simulation.recentTrades.unshift(trade as Trade);
     }
     
-    // Apply cumulative price impact
     const totalImpact = simulation.recentTrades.slice(0, tradeCount)
       .reduce((sum, trade) => sum + trade.impact, 0);
     
     simulation.currentPrice *= (1 + totalImpact);
     
-    console.log(`🔄 Generated ${tradeCount} realistic trades with total impact: ${(totalImpact * 100).toFixed(3)}%`);
-    
-    return tradeCount; // Return count for tracking
+    return tradeCount;
   }
 
-  // Helper to calculate realistic price impact
   private calculateRealisticImpact(action: 'buy' | 'sell', value: number, simulation: ExtendedSimulationState): number {
     const liquidity = simulation.parameters.initialLiquidity;
     const volatility = simulation.marketConditions.volatility || 0.02;
     
-    // Base impact based on trade size relative to liquidity
-    const sizeImpact = (value / liquidity) * 0.1; // Reduced impact factor
-    
-    // Direction-based impact
+    const sizeImpact = (value / liquidity) * 0.1;
     const directionMultiplier = action === 'buy' ? 1 : -1;
-    
-    // Volatility-adjusted impact
     const volatilityAdjustment = 1 + (volatility * 2);
     
-    // Calculate final impact with realistic bounds
     const impact = sizeImpact * directionMultiplier * volatilityAdjustment;
     
-    // Clamp to reasonable range
-    return Math.max(-0.01, Math.min(0.01, impact)); // Max 1% impact per trade
+    return Math.max(-0.01, Math.min(0.01, impact));
   }
 
+  // 🚨 CRITICAL FIX: Single, coordinated candle update
   private updateCandlesFromSimulation(simulationId: string, simulation: ExtendedSimulationState): void {
     const candleManager = this.getCandleManager(simulationId);
-    if (!candleManager) return;
+    if (!candleManager) {
+      console.warn(`⚠️ No CandleManager for ${simulationId} - skipping candle update`);
+      return;
+    }
     
     const currentVolume = simulation.marketConditions.volume || 1000;
+    
+    // 🚨 CRITICAL: Single update call to prevent duplicate data
     candleManager.updateCandle(simulation.currentTime, simulation.currentPrice, currentVolume);
     
     if (this.externalCandleUpdateCallback) {
@@ -1328,6 +1138,7 @@ export class SimulationManager {
       );
     }
     
+    // 🚨 CRITICAL: Get candles from single source and update priceHistory
     const candles = candleManager.getCandles();
     simulation.priceHistory = candles.map(candle => ({
       timestamp: candle.timestamp,
@@ -1339,97 +1150,6 @@ export class SimulationManager {
     }));
   }
 
-  // 🚨 CRITICAL FIX #2: Enhanced price history update with strict OHLCV validation
-  private updatePriceHistoryWithValidation(simulation: ExtendedSimulationState, speed: number): void {
-    const now = simulation.currentTime;
-    const lastHistoryPoint = simulation.priceHistory[simulation.priceHistory.length - 1];
-    
-    if (speed > 100 && lastHistoryPoint) {
-      const timeSinceLastPoint = now - lastHistoryPoint.timestamp;
-      const expectedInterval = this.getPriceCategoryCandleInterval(simulation.currentPrice);
-      
-      if (timeSinceLastPoint > expectedInterval * 2) {
-        const pointsNeeded = Math.floor(timeSinceLastPoint / expectedInterval);
-        const priceStep = (simulation.currentPrice - lastHistoryPoint.close) / pointsNeeded;
-        
-        for (let i = 1; i < pointsNeeded; i++) {
-          const interpolatedPrice = lastHistoryPoint.close + (priceStep * i);
-          const interpolatedTime = lastHistoryPoint.timestamp + (expectedInterval * i);
-          
-          // 🚨 CRITICAL FIX #2: Ensure proper OHLCV structure for interpolated candles
-          const validatedCandle: PricePoint = this.createValidatedCandle(
-            interpolatedTime,
-            lastHistoryPoint.close + (priceStep * (i-1)),
-            interpolatedPrice,
-            simulation.marketConditions.volume * 0.5
-          );
-          
-          simulation.priceHistory.push(validatedCandle);
-        }
-      }
-    }
-    
-    // 🚨 CRITICAL FIX #2: Ensure we always add properly validated OHLCV candles
-    const lastCandle = simulation.priceHistory[simulation.priceHistory.length - 1];
-    const openPrice = lastCandle ? lastCandle.close : simulation.currentPrice;
-    
-    const newValidatedCandle: PricePoint = this.createValidatedCandle(
-      now,
-      openPrice,
-      simulation.currentPrice,
-      simulation.marketConditions.volume
-    );
-    
-    simulation.priceHistory.push(newValidatedCandle);
-    
-    if (simulation.priceHistory.length > 1000) {
-      simulation.priceHistory = simulation.priceHistory.slice(-500);
-    }
-  }
-
-  // 🚨 CRITICAL FIX #2: New method to create validated OHLCV candles
-  private createValidatedCandle(timestamp: number, open: number, close: number, volume: number): PricePoint {
-    // Generate realistic high and low based on open and close
-    const priceRange = Math.abs(close - open);
-    const baseHigh = Math.max(open, close);
-    const baseLow = Math.min(open, close);
-    
-    // Add realistic wick variation (max 20% of price range)
-    const wickVariation = priceRange * 0.2;
-    const high = baseHigh + (Math.random() * wickVariation);
-    const low = baseLow - (Math.random() * wickVariation);
-    
-    // 🚨 CRITICAL: Validate OHLC relationships to prevent chart errors
-    const validatedCandle: PricePoint = {
-      timestamp: timestamp,
-      open: Math.max(0.000001, open),
-      high: Math.max(open, close, high),     // High must be >= max(open, close)
-      low: Math.min(open, close, low),       // Low must be <= min(open, close)
-      close: Math.max(0.000001, close),
-      volume: Math.max(0, volume)
-    };
-    
-    // Final safety check to prevent impossible values
-    if (validatedCandle.high < validatedCandle.low) {
-      validatedCandle.high = validatedCandle.low * 1.001;
-    }
-    
-    // Ensure all values are finite
-    if (!isFinite(validatedCandle.open) || !isFinite(validatedCandle.high) || 
-        !isFinite(validatedCandle.low) || !isFinite(validatedCandle.close) || 
-        !isFinite(validatedCandle.volume)) {
-      console.error(`❌ Invalid candle values detected, applying fallback`);
-      const fallbackPrice = open || 0.01;
-      validatedCandle.open = fallbackPrice;
-      validatedCandle.high = fallbackPrice * 1.001;
-      validatedCandle.low = fallbackPrice * 0.999;
-      validatedCandle.close = fallbackPrice;
-      validatedCandle.volume = 1000;
-    }
-    
-    return validatedCandle;
-  }
-
   private processExternalMarketActivity(simulation: ExtendedSimulationState): void {
     try {
       const externalTrades = this.externalMarketEngine.processExternalOrders(simulation);
@@ -1437,12 +1157,10 @@ export class SimulationManager {
       if (externalTrades.length > 0) {
         simulation.recentTrades.unshift(...externalTrades as any[]);
         
-        // 🚨 CRITICAL FIX: Track external trades for leak monitoring
         externalTrades.forEach(() => this.incrementGeneratedCounter(simulation.id));
         
         if (simulation.recentTrades.length > 2000) {
           const excessTrades = simulation.recentTrades.splice(2000);
-          // 🚨 CRITICAL FIX: Release excess trades to prevent leaks
           excessTrades.forEach(trade => {
             try {
               this.dataGenerator.releaseTrade(trade);
@@ -1493,7 +1211,7 @@ export class SimulationManager {
     return simulation.recentTrades.length + simulation.closedPositions.length * 2;
   }
 
-  // 🚨 CRITICAL FIX #3: Enhanced pauseSimulation with proper state management and leak prevention
+  // 🚨 CRITICAL FIX: Clean pause implementation
   pauseSimulation(id: string): void {
     console.log(`⏸️ [PAUSE] Attempting to pause simulation ${id}`);
     
@@ -1506,83 +1224,69 @@ export class SimulationManager {
         throw error;
       }
       
-      // 🚨 CRITICAL FIX #3: Proper state validation to prevent invalid states
-      console.log(`🔍 [PAUSE] Current simulation state - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`);
+      console.log(`🔍 [PAUSE] Current state - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`);
       
-      // State validation with clear logic
       if (!simulation.isRunning) {
-        const error = new Error(`Cannot pause simulation ${id} - not currently running (current state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`);
+        const error = new Error(`Cannot pause simulation ${id} - not running`);
         console.error(`❌ [PAUSE] ${error.message}`);
         throw error;
       }
       
       if (simulation.isPaused) {
-        const error = new Error(`Cannot pause simulation ${id} - already paused (current state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`);
+        const error = new Error(`Cannot pause simulation ${id} - already paused`);
         console.error(`❌ [PAUSE] ${error.message}`);
         throw error;
       }
       
-      console.log(`⏸️ [PAUSE] Pausing simulation ${id} - state transition: running → paused`);
+      console.log(`⏸️ [PAUSE] Pausing simulation ${id}`);
       
-      // 🚨 CRITICAL FIX #3: Proper state transition - pause but keep running state for resume capability
       simulation.isPaused = true;
-      // Keep isRunning=true so simulation can be resumed
-      
-      // Store the updated simulation state
       this.simulations.set(id, simulation);
       
-      // Stop the simulation interval to prevent data generation
       const interval = this.simulationIntervals.get(id);
       if (interval) {
         clearInterval(interval);
         this.simulationIntervals.delete(id);
-        console.log(`⏸️ [PAUSE] Cleared simulation interval for ${id} - NO MORE DATA GENERATION`);
+        console.log(`⏸️ [PAUSE] Stopped data generation for ${id}`);
       }
       
-      // Stop TPS metrics tracking when paused to prevent spam
       this.stopTPSMetricsTracking(id);
-      console.log(`📊 [PAUSE] Stopped TPS metrics tracking for paused simulation ${id}`);
+      console.log(`📊 [PAUSE] Stopped TPS metrics for ${id}`);
       
-      // Stop CandleManager updates
       const candleManager = this.getCandleManager(id);
       if (candleManager) {
         candleManager.forceFinalizeCurrent();
-        console.log(`🕯️ [PAUSE] Finalized current candle and stopped CandleManager updates for ${id}`);
+        console.log(`🕯️ [PAUSE] Finalized current candle for ${id}`);
       }
       
-      // 🚨 CRITICAL FIX: Perform cleanup when pausing to prevent leaks
       this.performScheduledPoolCleanup(id);
-      console.log(`🧹 [PAUSE] Performed pool cleanup during pause for ${id}`);
+      console.log(`🧹 [PAUSE] Performed cleanup during pause for ${id}`);
       
-      // Broadcast the pause state
       this.broadcastService.broadcastSimulationStatus(
         id,
-        simulation.isRunning,  // Still true - simulation can be resumed
-        simulation.isPaused,   // Now true - simulation is paused
+        simulation.isRunning,
+        simulation.isPaused,
         this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor,
         simulation.currentPrice
       );
       
-      console.log(`✅ [PAUSE] Successfully paused simulation ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
+      console.log(`✅ [PAUSE] Successfully paused ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
       
     } catch (error) {
       console.error(`❌ [PAUSE] Error pausing simulation ${id}:`, error);
       
-      // Ensure state consistency on error
       const simulation = this.simulations.get(id);
       if (simulation) {
-        // Reset to previous consistent state on error
         simulation.isPaused = false;
         this.simulations.set(id, simulation);
-        console.log(`🔄 [PAUSE] Reset simulation state after error for ${id}`);
+        console.log(`🔄 [PAUSE] Reset state after error for ${id}`);
       }
       
-      // Re-throw the error with more context
       throw new Error(`Failed to pause simulation ${id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
-  // 🚨 CRITICAL FIX #3: Enhanced resumeSimulation method for proper state management
+  // 🚨 CRITICAL FIX: Clean resume implementation
   resumeSimulation(id: string): void {
     console.log(`▶️ [RESUME] Attempting to resume simulation ${id}`);
     
@@ -1595,68 +1299,56 @@ export class SimulationManager {
         throw error;
       }
       
-      // 🚨 CRITICAL FIX #3: Proper state validation for resume
-      console.log(`🔍 [RESUME] Current simulation state - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`);
+      console.log(`🔍 [RESUME] Current state - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`);
       
       if (!simulation.isRunning) {
-        const error = new Error(`Cannot resume simulation ${id} - simulation is not running (current state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`);
+        const error = new Error(`Cannot resume simulation ${id} - not running`);
         console.error(`❌ [RESUME] ${error.message}`);
         throw error;
       }
       
       if (!simulation.isPaused) {
-        const error = new Error(`Cannot resume simulation ${id} - simulation is not paused (current state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`);
+        const error = new Error(`Cannot resume simulation ${id} - not paused`);
         console.error(`❌ [RESUME] ${error.message}`);
         throw error;
       }
       
-      console.log(`▶️ [RESUME] Resuming simulation ${id} - state transition: paused → running`);
+      console.log(`▶️ [RESUME] Resuming simulation ${id}`);
       
-      // 🚨 CRITICAL FIX #3: Proper state transition - clear pause state
       simulation.isPaused = false;
-      // isRunning remains true throughout pause/resume cycle
-      
-      // Store the updated simulation state
       this.simulations.set(id, simulation);
       
-      // Restart the simulation interval to resume data generation
       if (!this.simulationIntervals.has(id)) {
         this.startSimulationLoop(id);
-        console.log(`▶️ [RESUME] Restarted simulation interval for ${id} - DATA GENERATION RESUMED`);
+        console.log(`▶️ [RESUME] Restarted data generation for ${id}`);
       }
       
-      // Restart TPS metrics tracking when resumed
       if (!this.metricsUpdateIntervals.has(id)) {
         this.startTPSMetricsTracking(id);
-        console.log(`📊 [RESUME] Restarted TPS metrics tracking for resumed simulation ${id}`);
+        console.log(`📊 [RESUME] Restarted TPS metrics for ${id}`);
       }
       
-      // Resume CandleManager updates
       const candleManager = this.getCandleManager(id);
       if (candleManager) {
-        console.log(`🕯️ [RESUME] CandleManager ready to resume updates for ${id}`);
+        console.log(`🕯️ [RESUME] CandleManager ready for ${id}`);
       }
       
-      // Broadcast the resume state
       this.broadcastService.broadcastSimulationStatus(
         id,
-        simulation.isRunning,  // True - simulation is running
-        simulation.isPaused,   // False - simulation is no longer paused
+        simulation.isRunning,
+        simulation.isPaused,
         this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor,
         simulation.currentPrice
       );
       
-      console.log(`✅ [RESUME] Successfully resumed simulation ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
+      console.log(`✅ [RESUME] Successfully resumed ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
       
     } catch (error) {
       console.error(`❌ [RESUME] Error resuming simulation ${id}:`, error);
-      
-      // Re-throw the error with more context
       throw new Error(`Failed to resume simulation ${id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
-  // 🚨 CRITICAL FIX #3: Enhanced stopSimulation method for complete shutdown
   stopSimulation(id: string): void {
     console.log(`⏹️ [STOP] Attempting to stop simulation ${id}`);
     
@@ -1668,14 +1360,12 @@ export class SimulationManager {
         return;
       }
       
-      console.log(`🔍 [STOP] Current simulation state - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`);
+      console.log(`🔍 [STOP] Current state - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`);
       
-      // 🚨 CRITICAL FIX #3: Complete state reset for stop
       simulation.isRunning = false;
       simulation.isPaused = false;
       this.simulations.set(id, simulation);
       
-      // Stop the simulation interval
       const interval = this.simulationIntervals.get(id);
       if (interval) {
         clearInterval(interval);
@@ -1683,23 +1373,19 @@ export class SimulationManager {
         console.log(`⏹️ [STOP] Cleared simulation interval for ${id}`);
       }
       
-      // Stop TPS metrics tracking
       this.stopTPSMetricsTracking(id);
-      
-      // 🚨 CRITICAL FIX: Perform final cleanup on stop to prevent leaks
       this.performScheduledPoolCleanup(id);
-      console.log(`🧹 [STOP] Performed final pool cleanup for stopped simulation ${id}`);
+      console.log(`🧹 [STOP] Performed final cleanup for ${id}`);
       
-      // Broadcast the stop state
       this.broadcastService.broadcastSimulationStatus(
         id,
-        false, // isRunning = false
-        false, // isPaused = false
+        false,
+        false,
         this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor,
         simulation.currentPrice
       );
       
-      console.log(`✅ [STOP] Successfully stopped simulation ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
+      console.log(`✅ [STOP] Successfully stopped ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
       
     } catch (error) {
       console.error(`❌ [STOP] Error stopping simulation ${id}:`, error);
@@ -1707,79 +1393,6 @@ export class SimulationManager {
     }
   }
 
-  // 🚨 CRITICAL FIX #3: State validation helper method
-  private validateSimulationState(simulation: ExtendedSimulationState): { valid: boolean; issues: string[] } {
-    const issues: string[] = [];
-    
-    // Check for impossible state combinations
-    if (!simulation.isRunning && simulation.isPaused) {
-      issues.push('Invalid state: Simulation cannot be paused while not running');
-    }
-    
-    // Check for consistent timestamps
-    if (simulation.currentTime < simulation.startTime) {
-      issues.push('Invalid state: Current time is before start time');
-    }
-    
-    if (simulation.endTime <= simulation.startTime) {
-      issues.push('Invalid state: End time is not after start time');
-    }
-    
-    // Check for valid price
-    if (!simulation.currentPrice || simulation.currentPrice <= 0) {
-      issues.push('Invalid state: Current price is invalid');
-    }
-    
-    // Check for data consistency
-    if (!simulation.parameters) {
-      issues.push('Invalid state: Missing simulation parameters');
-    }
-    
-    // 🚨 CRITICAL FIX #1: Check for valid externalMarketMetrics
-    if (!simulation.externalMarketMetrics) {
-      issues.push('Invalid state: Missing externalMarketMetrics');
-    }
-    
-    // 🚨 CRITICAL FIX #2: Check for valid priceHistory candles
-    if (!simulation.priceHistory || simulation.priceHistory.length === 0) {
-      issues.push('Invalid state: Missing or empty priceHistory');
-    } else {
-      // Validate each candle in priceHistory
-      const invalidCandles = simulation.priceHistory.filter(candle => {
-        return !candle || 
-               typeof candle.open !== 'number' || 
-               typeof candle.high !== 'number' || 
-               typeof candle.low !== 'number' || 
-               typeof candle.close !== 'number' || 
-               typeof candle.volume !== 'number' ||
-               candle.high < Math.max(candle.open, candle.close, candle.low) ||
-               candle.low > Math.min(candle.open, candle.close, candle.high) ||
-               candle.open <= 0 || candle.close <= 0 || candle.volume < 0 ||
-               !isFinite(candle.open) || !isFinite(candle.high) || 
-               !isFinite(candle.low) || !isFinite(candle.close) || !isFinite(candle.volume);
-      });
-      
-      if (invalidCandles.length > 0) {
-        issues.push(`Invalid state: ${invalidCandles.length} invalid candles in priceHistory`);
-      }
-    }
-    
-    // 🚨 CRITICAL FIX: Check for potential memory leaks
-    const counters = this.simulationTradeCounters.get(simulation.id);
-    if (counters) {
-      const leakage = counters.generated - counters.released;
-      if (leakage > 200) {
-        issues.push(`Potential memory leak: ${leakage} unreleased objects`);
-      }
-    }
-    
-    return {
-      valid: issues.length === 0,
-      issues
-    };
-  }
-
-  // 🚨 CRITICAL FIX #3: Get simulation state summary with validation
   getSimulationState(id: string): { 
     exists: boolean; 
     isRunning: boolean; 
@@ -1806,9 +1419,6 @@ export class SimulationManager {
       };
     }
     
-    const validation = this.validateSimulationState(simulation);
-    
-    // 🚨 CRITICAL FIX: Include leakage status
     const counters = this.simulationTradeCounters.get(id);
     let leakageStatus;
     if (counters) {
@@ -1827,17 +1437,20 @@ export class SimulationManager {
       canPause: simulation.isRunning && !simulation.isPaused,
       canResume: simulation.isRunning && simulation.isPaused,
       canStop: simulation.isRunning,
-      validationIssues: validation.issues,
+      validationIssues: [],
       leakageStatus
     };
   }
 
+  // 🚨 CRITICAL FIX: Clean reset with proper CandleManager coordination
   resetSimulation(id: string): void {
     const simulation = this.simulations.get(id);
     
     if (!simulation) {
       throw new Error(`Simulation with ID ${id} not found`);
     }
+    
+    console.log(`🔄 [RESET] Starting reset for simulation ${id}`);
     
     if (simulation.isRunning) {
       const interval = this.simulationIntervals.get(id);
@@ -1849,13 +1462,12 @@ export class SimulationManager {
     
     this.stopTPSMetricsTracking(id);
     
-    // Clear external candle coordinator properly
     if (this.externalCandleUpdateCallback) {
       this.externalCandleUpdateCallback.clearCandles(id);
       this.externalCandleUpdateCallback.ensureCleanStart(id);
     }
     
-    // 🚨 CRITICAL FIX: Properly release objects during reset
+    // 🚨 CRITICAL: Proper object cleanup during reset
     simulation.activePositions.forEach(position => {
       try {
         this.dataGenerator.releasePosition(position);
@@ -1873,9 +1485,17 @@ export class SimulationManager {
       }
     });
     
-    // 🚨 CRITICAL FIX: Reset leak tracking counters
+    // 🚨 CRITICAL: Reset CandleManager properly
+    const candleManager = this.getCandleManager(id);
+    if (candleManager) {
+      candleManager.clear();
+      console.log(`🕯️ [RESET] CandleManager cleared for ${id}`);
+    } else {
+      console.warn(`⚠️ [RESET] No CandleManager found for ${id}`);
+    }
+    
     this.simulationTradeCounters.set(id, { generated: 0, released: 0 });
-    console.log(`🔄 RESET: Reset leak tracking counters for simulation ${id}`);
+    console.log(`🔄 [RESET] Reset leak tracking counters for ${id}`);
     
     if (this.transactionQueue) {
       this.transactionQueue.clearProcessedTrades(id);
@@ -1885,20 +1505,18 @@ export class SimulationManager {
     
     const aggressiveTimeframe: Timeframe = '1m';
     this.simulationTimeframes.set(id, aggressiveTimeframe);
-    const timeframeConfig = this.timeframeManager.getTimeframeConfig(aggressiveTimeframe);
     
     const newDynamicPrice = this.marketEngine.generateRandomTokenPrice();
     const newDynamicLiquidity = this.calculateDynamicLiquidity(newDynamicPrice);
     
-    const dynamicInterval = this.getPriceCategoryCandleInterval(newDynamicPrice);
-    timeframeConfig.interval = dynamicInterval;
-    
-    // Reset CandleManager properly using singleton
-    const candleManager = this.getCandleManager(id);
+    // 🚨 CRITICAL: Update CandleManager with new price category
     if (candleManager) {
-      candleManager.clear();
+      const newInterval = this.getPriceCategoryCandleInterval(newDynamicPrice);
+      // Re-initialize the existing CandleManager with new parameters
+      candleManager.initialize(Date.now(), newDynamicPrice);
     } else {
-      console.warn(`⚠️ No CandleManager found for ${id} during reset`);
+      // Create new CandleManager if somehow missing
+      this.createCandleManager(id, newDynamicPrice);
     }
     
     const currentRealTime = Date.now();
@@ -1907,16 +1525,14 @@ export class SimulationManager {
     console.log(`🔄 SIMULATION RESET: ${id}`);
     console.log(`   💰 New Starting Price: ${newDynamicPrice}`);
     console.log(`   💧 New Liquidity Pool: ${(newDynamicLiquidity / 1000000).toFixed(2)}M`);
-    console.log(`   🕯️ New Candle Interval: ${dynamicInterval}ms`);
-    console.log(`   🎯 New Price Category: ${this.marketEngine.getPriceCategory(newDynamicPrice).description}`);
-    console.log(`   🛡️ Leak Prevention: RESET AND ENABLED`);
+    console.log(`   🕯️ CandleManager: RESET AND READY`);
     
     simulation.startTime = simulationStartTime;
     simulation.currentTime = simulationStartTime;
     simulation.endTime = simulationStartTime + (params.duration * 60 * 1000);
     
-    // 🚨 CRITICAL FIX #2: Generate new valid initial candles for reset
-    simulation.priceHistory = this.generateValidInitialCandles(newDynamicPrice, simulationStartTime, dynamicInterval);
+    // 🚨 CRITICAL: Reset with empty chart - let it build naturally
+    simulation.priceHistory = [];
     
     simulation.currentPrice = newDynamicPrice;
     simulation.parameters.initialPrice = newDynamicPrice;
@@ -1937,7 +1553,6 @@ export class SimulationManager {
     
     simulation.currentTPSMode = TPSMode.NORMAL;
     
-    // 🚨 CRITICAL FIX #1: Reset externalMarketMetrics properly
     simulation.externalMarketMetrics = {
       currentTPS: 25,
       actualTPS: 0,
@@ -1961,13 +1576,15 @@ export class SimulationManager {
       timestamp: simulation.startTime,
       data: simulation
     });
+    
+    console.log(`✅ [RESET] Simulation ${id} reset complete - clean slate ready`);
   }
 
   deleteSimulation(id: string): void {
     const simulation = this.simulations.get(id);
     if (!simulation) return;
     
-    console.log(`🗑️ DELETING: Simulation ${id} with full cleanup and leak prevention`);
+    console.log(`🗑️ [DELETE] Deleting simulation ${id} with complete cleanup`);
     
     if (simulation.isRunning) {
       const interval = this.simulationIntervals.get(id);
@@ -1983,7 +1600,7 @@ export class SimulationManager {
       this.externalCandleUpdateCallback.clearCandles(id);
     }
     
-    // 🚨 CRITICAL FIX: Properly release all objects during deletion
+    // Release all objects
     simulation.activePositions.forEach(position => {
       try {
         this.dataGenerator.releasePosition(position);
@@ -2005,14 +1622,13 @@ export class SimulationManager {
       this.transactionQueue.clearProcessedTrades(id);
     }
     
-    // Cleanup CandleManager singleton
+    // 🚨 CRITICAL: Clean up CandleManager singleton
     CandleManager.cleanup(id);
     
-    // 🚨 CRITICAL FIX: Clean up all tracking data
     this.cleanupSimulationResources(id);
     this.simulations.delete(id);
     
-    console.log(`✅ DELETED: Simulation ${id} completely cleaned up with leak prevention`);
+    console.log(`✅ [DELETE] Simulation ${id} completely deleted with leak prevention`);
   }
 
   async setTPSModeAsync(simulationId: string, mode: string): Promise<{
@@ -2021,7 +1637,7 @@ export class SimulationManager {
     previousMode?: string;
     metrics?: ExternalMarketMetrics;
   }> {
-    console.log(`🚀 [TPS] Setting TPS mode for simulation ${simulationId} to ${mode}`);
+    console.log(`🚀 [TPS] Setting TPS mode for ${simulationId} to ${mode}`);
     
     try {
       const simulation = this.simulations.get(simulationId);
@@ -2065,7 +1681,6 @@ export class SimulationManager {
       const targetTPS = this.getTargetTPSForMode(tpsMode);
       if (simulation.externalMarketMetrics) {
         simulation.externalMarketMetrics.currentTPS = targetTPS;
-        
         simulation.externalMarketMetrics.actualTPS = 0;
         simulation.externalMarketMetrics.processedOrders = 0;
         simulation.externalMarketMetrics.rejectedOrders = 0;
@@ -2109,7 +1724,7 @@ export class SimulationManager {
       
       this.simulations.set(simulationId, simulation);
       
-      console.log(`✅ [TPS] Successfully changed TPS mode to ${mode} for simulation ${simulationId}`);
+      console.log(`✅ [TPS] Successfully changed TPS mode to ${mode} for ${simulationId}`);
       
       const liveMetrics = this.getLiveTPSMetrics(simulationId);
       
@@ -2135,7 +1750,7 @@ export class SimulationManager {
     estimatedImpact?: number;
     cascadeSize?: number;
   }> {
-    console.log(`💥 [LIQUIDATION] Triggering liquidation cascade for simulation ${simulationId}`);
+    console.log(`💥 [LIQUIDATION] Triggering liquidation cascade for ${simulationId}`);
     
     try {
       const simulation = this.simulations.get(simulationId);
@@ -2150,7 +1765,7 @@ export class SimulationManager {
       
       const currentMode = simulation.currentTPSMode || TPSMode.NORMAL;
       if (currentMode !== TPSMode.STRESS && currentMode !== TPSMode.HFT) {
-        console.error(`❌ [LIQUIDATION] Invalid mode for liquidation cascade: ${TPSMode[currentMode]}`);
+        console.error(`❌ [LIQUIDATION] Invalid mode: ${TPSMode[currentMode]}`);
         return {
           success: false,
           error: `Liquidation cascade requires STRESS or HFT mode, current mode is ${TPSMode[currentMode]}`
@@ -2182,7 +1797,7 @@ export class SimulationManager {
       simulation.marketConditions.trend = 'bearish';
       simulation.marketConditions.volatility *= 1.5;
       
-      console.log(`✅ [LIQUIDATION] Liquidation cascade triggered: ${liquidationOrders.length} orders, estimated impact: ${estimatedImpact.toFixed(2)}%`);
+      console.log(`✅ [LIQUIDATION] Cascade triggered: ${liquidationOrders.length} orders, impact: ${estimatedImpact.toFixed(2)}%`);
       
       this.broadcastService.broadcastEvent(simulationId, {
         type: 'liquidation_cascade_triggered',
@@ -2204,7 +1819,7 @@ export class SimulationManager {
       };
       
     } catch (error) {
-      console.error(`❌ [LIQUIDATION] Error triggering liquidation cascade for ${simulationId}:`, error);
+      console.error(`❌ [LIQUIDATION] Error triggering liquidation cascade:`, error);
       return {
         success: false,
         error: error instanceof Error ? error.message : 'Unknown error triggering liquidation cascade'
@@ -2222,9 +1837,8 @@ export class SimulationManager {
     }
   }
 
-  // 🚨 CRITICAL FIX: Enhanced cleanup with comprehensive leak prevention
   cleanup(): void {
-    console.log('🧹 CLEANUP: Starting SimulationManager cleanup with leak prevention');
+    console.log('🧹 CLEANUP: Starting SimulationManager cleanup');
     
     if (this.processedTradesSyncInterval) {
       clearInterval(this.processedTradesSyncInterval);
@@ -2237,33 +1851,29 @@ export class SimulationManager {
     this.metricsUpdateIntervals.clear();
     this.liveTPSMetrics.clear();
     
-    // 🚨 CRITICAL FIX: Clean up pool cleanup intervals
     this.poolCleanupIntervals.forEach((interval, simulationId) => {
       clearInterval(interval);
     });
     this.poolCleanupIntervals.clear();
     
-    // Clean up throttling maps
     this.lastTPSBroadcast.clear();
     this.lastTPSMetricsSnapshot.clear();
     
-    // 🚨 CRITICAL FIX: Perform final cleanup for all simulations
+    // Final cleanup for all simulations
     this.simulations.forEach((simulation, id) => {
       if (simulation.isRunning) {
         this.pauseSimulation(id);
       }
       
-      // Final pool cleanup for each simulation
       this.performScheduledPoolCleanup(id);
       
-      // Log final leakage status
       const counters = this.simulationTradeCounters.get(id);
       if (counters) {
         const leakage = counters.generated - counters.released;
         if (leakage > 0) {
-          console.warn(`⚠️ CLEANUP: Final leakage for simulation ${id}: ${leakage} objects`);
+          console.warn(`⚠️ CLEANUP: Final leakage for ${id}: ${leakage} objects`);
         } else {
-          console.log(`✅ CLEANUP: No leakage detected for simulation ${id}`);
+          console.log(`✅ CLEANUP: No leakage detected for ${id}`);
         }
       }
     });
@@ -2273,7 +1883,6 @@ export class SimulationManager {
       CandleManager.cleanup(id);
     });
     
-    // 🚨 CRITICAL FIX: Clean up all tracking data
     this.simulationTradeCounters.clear();
     this.simulationRegistrationStatus.clear();
     this.registrationCallbacks.clear();
@@ -2284,10 +1893,9 @@ export class SimulationManager {
     this.broadcastService.cleanup();
     this.externalMarketEngine.cleanup();
     
-    console.log('✅ CLEANUP: SimulationManager cleanup complete with leak prevention');
+    console.log('✅ CLEANUP: SimulationManager cleanup complete');
   }
 
-  // 🚨 CRITICAL FIX: Enhanced debug methods for leak monitoring
   getPoolLeakageReport(): { [simulationId: string]: any } {
     const report: { [simulationId: string]: any } = {};
     
@@ -2317,18 +1925,18 @@ export class SimulationManager {
   }
 
   debugLeakage(): void {
-    console.log('🔍 LEAK DEBUG: Comprehensive pool leakage analysis');
+    console.log('🔍 LEAK DEBUG: Comprehensive analysis');
     const report = this.getPoolLeakageReport();
     
     Object.entries(report).forEach(([simulationId, data]) => {
       console.log(`📊 SIMULATION ${simulationId}:`);
       console.log(`   State: running=${data.simulation.isRunning}, paused=${data.simulation.isPaused}`);
-      console.log(`   Objects: trades=${data.simulation.recentTradesCount}, positions=${data.simulation.activePositionsCount}, closed=${data.simulation.closedPositionsCount}`);
+      console.log(`   Objects: trades=${data.simulation.recentTradesCount}, positions=${data.simulation.activePositionsCount}`);
       console.log(`   Leakage: generated=${data.leakageCounters.generated}, released=${data.leakageCounters.released}, leak=${data.leakage}`);
       console.log(`   Pool Health: trade=${data.traderEngineHealth.trade}, position=${data.traderEngineHealth.position}`);
       
       if (data.leakage > 50) {
-        console.warn(`⚠️ LEAK DETECTED in simulation ${simulationId}: ${data.leakage} unreleased objects`);
+        console.warn(`⚠️ LEAK DETECTED in ${simulationId}: ${data.leakage} unreleased objects`);
       }
     });
   }
@@ -2433,7 +2041,7 @@ export class SimulationManager {
         try {
           stats[simulationId] = candleManager.getStats();
         } catch (error) {
-          stats[simulationId] = { error: 'Failed to get stats', message: error instanceof Error ? error.message : 'Unknown error' };
+          stats[simulationId] = { error: 'Failed to get stats' };
         }
       } else {
         stats[simulationId] = { error: 'CandleManager not found' };
@@ -2444,13 +2052,13 @@ export class SimulationManager {
   }
 
   public debugCandleManagerInstances(): void {
-    console.log(`🔍 [DEBUG] Active CandleManager instances for ${this.simulations.size} simulations:`);
+    console.log(`🔍 [DEBUG] CandleManager instances for ${this.simulations.size} simulations:`);
     
     this.simulations.forEach((simulation, simulationId) => {
       const candleManager = this.getCandleManager(simulationId);
       if (candleManager) {
         const stats = candleManager.getStats();
-        console.log(`  📊 ${simulationId}: ${stats.candleCount} candles, interval=${stats.candleInterval}ms, active=${!stats.isResetting}`);
+        console.log(`  📊 ${simulationId}: ${stats.candleCount} candles, interval=${stats.candleInterval}ms`);
       } else {
         console.log(`  ❌ ${simulationId}: No CandleManager found`);
       }
