@@ -332,6 +332,21 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
   
   const simulationLocks = globalOperationLocks.get(simulationId)!;
   
+  // 🚨 CRITICAL FIX: Check for DUPLICATE PAUSE REQUESTS from same client
+  const existingRequest = clientState.pauseStateRequests.get(simulationId);
+  if (existingRequest && Date.now() - existingRequest.timestamp < 1000) {
+    console.warn(`⚠️ [PAUSE STATE] Duplicate request prevented: ${clientId} already requested pause state for ${simulationId} within 1 second`);
+    ws.send(JSON.stringify({
+      type: 'setPauseState_response',
+      timestamp: Date.now(),
+      simulationId: simulationId,
+      success: false,
+      error: 'Duplicate pause state request - please wait before retrying',
+      data: null
+    }), { binary: false, compress: false, fin: true });
+    return;
+  }
+  
   // Check for conflicting operations
   const hasPendingPause = Array.from(simulationLocks).some(lock => lock.startsWith('pause_'));
   if (hasPendingPause) {
@@ -397,7 +412,7 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
         // Simulation is running and not paused - can pause it
         try {
           console.log(`⏸️ [PAUSE STATE] Executing pause for ${simulationId}`);
-          simulationManager.pauseSimulation(simulationId);
+          await simulationManager.pauseSimulation(simulationId);
           
           // Get updated state
           const updatedSimulation = simulationManager.getSimulation(simulationId);
@@ -425,7 +440,7 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
         // Simulation is not running - start it
         try {
           console.log(`🚀 [PAUSE STATE] Executing start for ${simulationId}`);
-          simulationManager.startSimulation(simulationId);
+          await simulationManager.startSimulation(simulationId);
           
           // Get updated state
           const updatedSimulation = simulationManager.getSimulation(simulationId);
@@ -450,7 +465,7 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
         // Simulation is running but paused - resume it
         try {
           console.log(`▶️ [PAUSE STATE] Executing resume for ${simulationId}`);
-          simulationManager.resumeSimulation(simulationId);
+          await simulationManager.resumeSimulation(simulationId);
           
           // Get updated state
           const updatedSimulation = simulationManager.getSimulation(simulationId);
@@ -480,7 +495,7 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
       }
     }
     
-    // 🚨 CRITICAL FIX: Send comprehensive response back to client
+    // 🚨 CRITICAL FIX: Send SINGLE response back to client (prevent duplicates)
     if (result.success) {
       // Send success response with updated state
       ws.send(JSON.stringify({
@@ -495,9 +510,9 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
       
       console.log(`📡 [PAUSE STATE] Sent success response to ${clientId}: action=${result.action}, newState=${JSON.stringify(result.newState)}`);
       
-      // 🚨 CRITICAL FIX: Broadcast state change to all connected clients for this simulation
+      // 🚨 CRITICAL FIX: Broadcast state change to OTHER clients for this simulation (not sender)
       const simulationClients = simulationClientMapping.get(simulationId);
-      if (simulationClients) {
+      if (simulationClients && simulationClients.size > 1) {
         const stateChangeEvent = {
           type: 'pause_state_changed',
           simulationId: simulationId,
@@ -508,17 +523,19 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
           triggeredBy: clientId
         };
         
+        let broadcastCount = 0;
         simulationClients.forEach(client => {
           if (client !== ws && client.readyState === WebSocket.OPEN) {
             try {
               client.send(JSON.stringify(stateChangeEvent), { binary: false, compress: false, fin: true });
+              broadcastCount++;
             } catch (broadcastError) {
               console.error(`❌ [PAUSE STATE] Error broadcasting to client:`, broadcastError);
             }
           }
         });
         
-        console.log(`📡 [PAUSE STATE] Broadcasted state change to ${simulationClients.size - 1} other clients`);
+        console.log(`📡 [PAUSE STATE] Broadcasted state change to ${broadcastCount} other clients`);
       }
       
     } else {
@@ -897,7 +914,7 @@ function getTargetTPSForMode(mode: string): number {
   }
 }
 
-// 🚨 CRITICAL FIX: Enhanced subscription with race condition prevention
+// 🚨 CRITICAL FIX: Enhanced subscription with race condition prevention and attempts variable fix
 async function handleSubscriptionWithRetry(
   ws: WebSocket, 
   message: WebSocketMessage, 
@@ -968,8 +985,11 @@ async function handleSubscriptionWithRetry(
       if (existingSubscription) {
         existingSubscription.subscriptionAttempts++;
         
+        // 🚨 CRITICAL FIX: Define attempts variable properly
+        const attempts = existingSubscription.subscriptionAttempts;
+        
         // Limit retry attempts
-        if (existingSubscription.subscriptionAttempts > 10) {
+        if (attempts > 10) {
           console.error(`❌ [WS SUB] Max retry attempts reached for ${simulationId} and ${clientId}`);
           clientState.subscriptionStatus = 'none';
           ws.send(JSON.stringify({
