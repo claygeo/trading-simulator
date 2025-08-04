@@ -1,4 +1,4 @@
-// backend/src/services/simulation/SimulationManager.ts - FIXED: Single Data Stream Architecture
+// backend/src/services/simulation/SimulationManager.ts - FIXED: Prevent Multiple Simultaneous Simulations
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import {
@@ -59,6 +59,11 @@ export class SimulationManager {
   private simulationRegistrationStatus: Map<string, 'creating' | 'registering' | 'ready' | 'starting' | 'running'> = new Map();
   private registrationCallbacks: Map<string, ((status: string) => void)[]> = new Map();
   
+  // 🚨 CRITICAL FIX: Prevent multiple simulations
+  private static globalSimulationLock = false;
+  private static activeSimulationId: string | null = null;
+  private static simulationCreationInProgress = false;
+  
   // 🚨 CRITICAL FIX: Remove static CandleManager handling - use singleton pattern only
   private externalCandleUpdateCallback?: CandleUpdateCallback;
 
@@ -79,7 +84,7 @@ export class SimulationManager {
   private readonly processedTradesSyncIntervalTime: number = 25;
   private readonly metricsUpdateInterval: number = 2000;
 
-  // 🚨 CRITICAL FIX: Pool cleanup tracking
+  // 🚨 CRITICAL FIX: Enhanced pool cleanup tracking
   private poolCleanupIntervals: Map<string, NodeJS.Timeout> = new Map();
   private readonly POOL_CLEANUP_INTERVAL = 60000;
   private simulationTradeCounters: Map<string, { generated: number; released: number }> = new Map();
@@ -88,6 +93,31 @@ export class SimulationManager {
     this.initializeEngines();
     this.startProcessedTradesSync();
     this.startGlobalPoolMonitoring();
+    
+    // 🚨 CRITICAL FIX: Global cleanup on process exit
+    process.on('SIGTERM', () => this.emergencyCleanup());
+    process.on('SIGINT', () => this.emergencyCleanup());
+  }
+
+  private emergencyCleanup(): void {
+    console.log('🚨 EMERGENCY: Cleaning up all simulations');
+    
+    // Stop all simulations immediately
+    this.simulations.forEach((simulation, id) => {
+      try {
+        this.stopSimulation(id);
+        CandleManager.cleanup(id);
+      } catch (error) {
+        console.error(`Error in emergency cleanup for ${id}:`, error);
+      }
+    });
+    
+    // Reset global state
+    SimulationManager.globalSimulationLock = false;
+    SimulationManager.activeSimulationId = null;
+    SimulationManager.simulationCreationInProgress = false;
+    
+    this.cleanup();
   }
 
   private startGlobalPoolMonitoring(): void {
@@ -126,6 +156,7 @@ export class SimulationManager {
     }
   }
 
+  // 🚨 CRITICAL FIX: Enhanced pool cleanup with proper object tracking
   private forceSimulationPoolCleanup(simulationId: string): void {
     console.log(`🧹 CLEANUP: Force cleaning pools for ${simulationId}`);
     
@@ -133,27 +164,50 @@ export class SimulationManager {
     if (!simulation) return;
 
     try {
+      // Clean up recent trades with proper pool release
       if (simulation.recentTrades.length > 1000) {
         const tradesToRelease = simulation.recentTrades.splice(1000);
         tradesToRelease.forEach(trade => {
           try {
-            this.dataGenerator.releaseTrade(trade);
-            this.incrementReleasedCounter(simulationId);
+            // 🚨 CRITICAL FIX: Use the correct pool for the correct object type
+            if (trade && typeof trade.id === 'string') {
+              this.dataGenerator.releaseTrade(trade);
+              this.incrementReleasedCounter(simulationId);
+            }
           } catch (error) {
-            console.error(`❌ Error releasing trade:`, error);
+            console.error(`❌ Error releasing trade ${trade?.id}:`, error);
           }
         });
+        console.log(`🔄 CLEANUP: Released ${tradesToRelease.length} trades`);
       }
 
+      // Clean up positions with proper pool release
       if (simulation.activePositions.length > 100) {
         const positionsToClose = simulation.activePositions.splice(100);
         positionsToClose.forEach(position => {
           try {
-            this.dataGenerator.releasePosition(position);
+            // 🚨 CRITICAL FIX: Use the correct pool for the correct object type
+            if (position && typeof position.entryTime === 'number') {
+              this.dataGenerator.releasePosition(position);
+            }
           } catch (error) {
             console.error(`❌ Error releasing position:`, error);
           }
         });
+        console.log(`🔄 CLEANUP: Released ${positionsToClose.length} positions`);
+      }
+
+      // Clean up closed positions
+      if (simulation.closedPositions.length > 500) {
+        const excessClosed = simulation.closedPositions.splice(500);
+        excessClosed.forEach(position => {
+          try {
+            this.dataGenerator.releasePosition(position);
+          } catch (error) {
+            console.error(`❌ Error releasing closed position:`, error);
+          }
+        });
+        console.log(`🔄 CLEANUP: Released ${excessClosed.length} closed positions`);
       }
 
       console.log(`✅ CLEANUP: Pool cleanup completed for ${simulationId}`);
@@ -290,6 +344,7 @@ export class SimulationManager {
     console.log(`🧹 CLEANUP: Started pool monitoring for ${simulationId}`);
   }
 
+  // 🚨 CRITICAL FIX: Enhanced scheduled cleanup with cross-pool prevention
   private performScheduledPoolCleanup(simulationId: string): void {
     const simulation = this.simulations.get(simulationId);
     if (!simulation) {
@@ -300,14 +355,23 @@ export class SimulationManager {
     console.log(`🧹 CLEANUP: Scheduled cleanup for ${simulationId}`);
 
     try {
+      // 🚨 CRITICAL FIX: Proper object type checking before release
       if (simulation.recentTrades.length > 2000) {
         const excessTrades = simulation.recentTrades.splice(2000);
         excessTrades.forEach(trade => {
           try {
-            this.dataGenerator.releaseTrade(trade);
-            this.incrementReleasedCounter(simulationId);
+            // Verify it's actually a trade object before releasing
+            if (trade && 
+                typeof trade.id === 'string' && 
+                typeof trade.timestamp === 'number' &&
+                typeof trade.price === 'number') {
+              this.dataGenerator.releaseTrade(trade);
+              this.incrementReleasedCounter(simulationId);
+            } else {
+              console.warn(`⚠️ CLEANUP: Invalid trade object skipped`, Object.keys(trade || {}));
+            }
           } catch (error) {
-            console.error(`❌ Error releasing trade:`, error);
+            console.error(`❌ Error releasing trade during cleanup:`, error);
           }
         });
         console.log(`🔄 CLEANUP: Released ${excessTrades.length} excess trades`);
@@ -317,9 +381,17 @@ export class SimulationManager {
         const excessPositions = simulation.closedPositions.splice(500);
         excessPositions.forEach(position => {
           try {
-            this.dataGenerator.releasePosition(position);
+            // Verify it's actually a position object before releasing
+            if (position && 
+                typeof position.entryTime === 'number' && 
+                typeof position.entryPrice === 'number' &&
+                typeof position.quantity === 'number') {
+              this.dataGenerator.releasePosition(position);
+            } else {
+              console.warn(`⚠️ CLEANUP: Invalid position object skipped`, Object.keys(position || {}));
+            }
           } catch (error) {
-            console.error(`❌ Error releasing position:`, error);
+            console.error(`❌ Error releasing position during cleanup:`, error);
           }
         });
         console.log(`🔄 CLEANUP: Released ${excessPositions.length} excess positions`);
@@ -536,14 +608,39 @@ export class SimulationManager {
     this.broadcastService.registerClient(client);
   }
 
-  // 🚨 CRITICAL FIX: Simplified simulation creation with single CandleManager
+  // 🚨 CRITICAL FIX: Prevent multiple simultaneous simulations
   async createSimulation(parameters: Partial<EnhancedSimulationParameters> = {}): Promise<ExtendedSimulationState> {
-    const simulationId = uuidv4();
+    // 🚨 CRITICAL: Global lock to prevent multiple simulations
+    if (SimulationManager.globalSimulationLock || SimulationManager.simulationCreationInProgress) {
+      console.warn(`🔒 PREVENTED: Simulation creation blocked - lock: ${SimulationManager.globalSimulationLock}, inProgress: ${SimulationManager.simulationCreationInProgress}`);
+      
+      if (SimulationManager.activeSimulationId) {
+        const existingSimulation = this.simulations.get(SimulationManager.activeSimulationId);
+        if (existingSimulation) {
+          console.log(`✅ REUSE: Returning existing simulation ${SimulationManager.activeSimulationId}`);
+          return existingSimulation;
+        }
+      }
+      
+      throw new Error('Simulation creation is locked - only one simulation allowed at a time');
+    }
+    
+    // 🚨 CRITICAL: Lock creation process immediately
+    SimulationManager.simulationCreationInProgress = true;
     
     try {
-      this.simulationRegistrationStatus.set(simulationId, 'creating');
-      console.log(`🏗️ CREATING: Simulation ${simulationId} with single data stream`);
+      // 🚨 CRITICAL: If there's already an active simulation, clean it up first
+      if (SimulationManager.activeSimulationId) {
+        console.log(`🧹 CLEANUP: Removing existing simulation ${SimulationManager.activeSimulationId}`);
+        await this.deleteSimulation(SimulationManager.activeSimulationId);
+        SimulationManager.activeSimulationId = null;
+      }
       
+      const simulationId = uuidv4();
+      
+      console.log(`🏗️ CREATING: Single simulation ${simulationId} with global lock`);
+      
+      this.simulationRegistrationStatus.set(simulationId, 'creating');
       this.simulationTradeCounters.set(simulationId, { generated: 0, released: 0 });
       
       const traders = await duneApi.getPumpFunTraders();
@@ -595,25 +692,33 @@ export class SimulationManager {
       this.simulationRegistrationStatus.set(simulationId, 'ready');
       this.notifyRegistrationCallbacks(simulationId, 'ready');
       
-      console.log(`✅ CREATED: Simulation ${simulationId} with SINGLE CandleManager`);
+      // 🚨 CRITICAL: Set as active simulation and lock globally
+      SimulationManager.activeSimulationId = simulationId;
+      SimulationManager.globalSimulationLock = true;
+      
+      console.log(`✅ CREATED: Single simulation ${simulationId} with global lock enabled`);
+      console.log(`🔒 GLOBAL STATE: activeId=${SimulationManager.activeSimulationId}, locked=${SimulationManager.globalSimulationLock}`);
       
       return simulation;
       
     } catch (error) {
-      console.error(`❌ Error creating simulation ${simulationId}:`, error);
-      this.simulationRegistrationStatus.set(simulationId, 'error');
-      this.notifyRegistrationCallbacks(simulationId, 'error');
+      console.error(`❌ Error creating simulation:`, error);
       
-      this.cleanupSimulationResources(simulationId);
+      // 🚨 CRITICAL: Reset global state on error
+      SimulationManager.globalSimulationLock = false;
+      SimulationManager.activeSimulationId = null;
       
-      const emergencySimulation = await this.createSimulationWithDummyTraders(simulationId, parameters);
-      this.simulationRegistrationStatus.set(simulationId, 'ready');
+      const emergencySimulation = await this.createSimulationWithDummyTraders(uuidv4(), parameters);
+      SimulationManager.activeSimulationId = emergencySimulation.id;
+      SimulationManager.globalSimulationLock = true;
       
       return emergencySimulation;
+    } finally {
+      SimulationManager.simulationCreationInProgress = false;
     }
   }
 
-  // 🚨 CRITICAL FIX: Complete resource cleanup
+  // 🚨 CRITICAL FIX: Complete resource cleanup with global state management
   private cleanupSimulationResources(simulationId: string): void {
     console.log(`🧹 CLEANUP: Cleaning up resources for ${simulationId}`);
     
@@ -628,6 +733,13 @@ export class SimulationManager {
     this.simulationTimeframes.delete(simulationId);
     this.simulationRegistrationStatus.delete(simulationId);
     this.registrationCallbacks.delete(simulationId);
+    
+    // 🚨 CRITICAL: Reset global state if this was the active simulation
+    if (SimulationManager.activeSimulationId === simulationId) {
+      SimulationManager.activeSimulationId = null;
+      SimulationManager.globalSimulationLock = false;
+      console.log(`🔓 UNLOCKED: Global simulation lock released for ${simulationId}`);
+    }
     
     console.log(`✅ CLEANUP: Resource cleanup completed for ${simulationId}`);
   }
@@ -1163,8 +1275,11 @@ export class SimulationManager {
           const excessTrades = simulation.recentTrades.splice(2000);
           excessTrades.forEach(trade => {
             try {
-              this.dataGenerator.releaseTrade(trade);
-              this.incrementReleasedCounter(simulation.id);
+              // 🚨 CRITICAL FIX: Proper type checking before release
+              if (trade && typeof trade.id === 'string') {
+                this.dataGenerator.releaseTrade(trade);
+                this.incrementReleasedCounter(simulation.id);
+              }
             } catch (error) {
               console.error(`❌ Error releasing excess external trade:`, error);
             }
@@ -1211,7 +1326,7 @@ export class SimulationManager {
     return simulation.recentTrades.length + simulation.closedPositions.length * 2;
   }
 
-  // 🚨 CRITICAL FIX: Clean pause implementation
+  // 🚨 CRITICAL FIX: Enhanced pause implementation with race condition prevention
   pauseSimulation(id: string): void {
     console.log(`⏸️ [PAUSE] Attempting to pause simulation ${id}`);
     
@@ -1240,9 +1355,11 @@ export class SimulationManager {
       
       console.log(`⏸️ [PAUSE] Pausing simulation ${id}`);
       
+      // 🚨 CRITICAL FIX: Set pause state BEFORE stopping intervals to prevent race conditions
       simulation.isPaused = true;
       this.simulations.set(id, simulation);
       
+      // Stop simulation loop immediately
       const interval = this.simulationIntervals.get(id);
       if (interval) {
         clearInterval(interval);
@@ -1250,18 +1367,22 @@ export class SimulationManager {
         console.log(`⏸️ [PAUSE] Stopped data generation for ${id}`);
       }
       
+      // Stop TPS metrics to prevent further updates
       this.stopTPSMetricsTracking(id);
       console.log(`📊 [PAUSE] Stopped TPS metrics for ${id}`);
       
+      // Finalize current candle
       const candleManager = this.getCandleManager(id);
       if (candleManager) {
         candleManager.forceFinalizeCurrent();
         console.log(`🕯️ [PAUSE] Finalized current candle for ${id}`);
       }
       
+      // Immediate cleanup
       this.performScheduledPoolCleanup(id);
       console.log(`🧹 [PAUSE] Performed cleanup during pause for ${id}`);
       
+      // Broadcast pause state
       this.broadcastService.broadcastSimulationStatus(
         id,
         simulation.isRunning,
@@ -1275,6 +1396,7 @@ export class SimulationManager {
     } catch (error) {
       console.error(`❌ [PAUSE] Error pausing simulation ${id}:`, error);
       
+      // 🚨 CRITICAL FIX: Reset pause state on error to prevent stuck state
       const simulation = this.simulations.get(id);
       if (simulation) {
         simulation.isPaused = false;
@@ -1286,7 +1408,7 @@ export class SimulationManager {
     }
   }
 
-  // 🚨 CRITICAL FIX: Clean resume implementation
+  // 🚨 CRITICAL FIX: Enhanced resume implementation with race condition prevention
   resumeSimulation(id: string): void {
     console.log(`▶️ [RESUME] Attempting to resume simulation ${id}`);
     
@@ -1315,24 +1437,29 @@ export class SimulationManager {
       
       console.log(`▶️ [RESUME] Resuming simulation ${id}`);
       
+      // 🚨 CRITICAL FIX: Set resume state BEFORE starting intervals to prevent race conditions
       simulation.isPaused = false;
       this.simulations.set(id, simulation);
       
+      // Restart simulation loop
       if (!this.simulationIntervals.has(id)) {
         this.startSimulationLoop(id);
         console.log(`▶️ [RESUME] Restarted data generation for ${id}`);
       }
       
+      // Restart TPS metrics
       if (!this.metricsUpdateIntervals.has(id)) {
         this.startTPSMetricsTracking(id);
         console.log(`📊 [RESUME] Restarted TPS metrics for ${id}`);
       }
       
+      // Ensure candle manager is ready
       const candleManager = this.getCandleManager(id);
       if (candleManager) {
         console.log(`🕯️ [RESUME] CandleManager ready for ${id}`);
       }
       
+      // Broadcast resume state
       this.broadcastService.broadcastSimulationStatus(
         id,
         simulation.isRunning,
@@ -1467,10 +1594,12 @@ export class SimulationManager {
       this.externalCandleUpdateCallback.ensureCleanStart(id);
     }
     
-    // 🚨 CRITICAL: Proper object cleanup during reset
+    // 🚨 CRITICAL: Proper object cleanup during reset with type checking
     simulation.activePositions.forEach(position => {
       try {
-        this.dataGenerator.releasePosition(position);
+        if (position && typeof position.entryTime === 'number') {
+          this.dataGenerator.releasePosition(position);
+        }
       } catch (error) {
         console.error(`❌ Error releasing position during reset:`, error);
       }
@@ -1478,8 +1607,10 @@ export class SimulationManager {
     
     simulation.recentTrades.forEach(trade => {
       try {
-        this.dataGenerator.releaseTrade(trade);
-        this.incrementReleasedCounter(id);
+        if (trade && typeof trade.id === 'string') {
+          this.dataGenerator.releaseTrade(trade);
+          this.incrementReleasedCounter(id);
+        }
       } catch (error) {
         console.error(`❌ Error releasing trade during reset:`, error);
       }
@@ -1580,6 +1711,7 @@ export class SimulationManager {
     console.log(`✅ [RESET] Simulation ${id} reset complete - clean slate ready`);
   }
 
+  // 🚨 CRITICAL FIX: Enhanced delete with global state management
   deleteSimulation(id: string): void {
     const simulation = this.simulations.get(id);
     if (!simulation) return;
@@ -1600,10 +1732,12 @@ export class SimulationManager {
       this.externalCandleUpdateCallback.clearCandles(id);
     }
     
-    // Release all objects
+    // 🚨 CRITICAL FIX: Proper object type checking during deletion
     simulation.activePositions.forEach(position => {
       try {
-        this.dataGenerator.releasePosition(position);
+        if (position && typeof position.entryTime === 'number') {
+          this.dataGenerator.releasePosition(position);
+        }
       } catch (error) {
         console.error(`❌ Error releasing position during deletion:`, error);
       }
@@ -1611,8 +1745,10 @@ export class SimulationManager {
     
     simulation.recentTrades.forEach(trade => {
       try {
-        this.dataGenerator.releaseTrade(trade);
-        this.incrementReleasedCounter(id);
+        if (trade && typeof trade.id === 'string') {
+          this.dataGenerator.releaseTrade(trade);
+          this.incrementReleasedCounter(id);
+        }
       } catch (error) {
         console.error(`❌ Error releasing trade during deletion:`, error);
       }
@@ -1628,7 +1764,14 @@ export class SimulationManager {
     this.cleanupSimulationResources(id);
     this.simulations.delete(id);
     
-    console.log(`✅ [DELETE] Simulation ${id} completely deleted with leak prevention`);
+    // 🚨 CRITICAL FIX: Reset global state if this was the active simulation
+    if (SimulationManager.activeSimulationId === id) {
+      SimulationManager.activeSimulationId = null;
+      SimulationManager.globalSimulationLock = false;
+      console.log(`🔓 UNLOCKED: Global simulation lock released during deletion of ${id}`);
+    }
+    
+    console.log(`✅ [DELETE] Simulation ${id} completely deleted with leak prevention and global state reset`);
   }
 
   async setTPSModeAsync(simulationId: string, mode: string): Promise<{
@@ -1859,7 +2002,7 @@ export class SimulationManager {
     this.lastTPSBroadcast.clear();
     this.lastTPSMetricsSnapshot.clear();
     
-    // Final cleanup for all simulations
+    // Final cleanup for all simulations with proper object release
     this.simulations.forEach((simulation, id) => {
       if (simulation.isRunning) {
         this.pauseSimulation(id);
@@ -1887,13 +2030,18 @@ export class SimulationManager {
     this.simulationRegistrationStatus.clear();
     this.registrationCallbacks.clear();
     
+    // 🚨 CRITICAL FIX: Reset global state during cleanup
+    SimulationManager.globalSimulationLock = false;
+    SimulationManager.activeSimulationId = null;
+    SimulationManager.simulationCreationInProgress = false;
+    
     this.performanceOptimizer.cleanup();
     this.traderEngine.cleanup();
     this.dataGenerator.cleanup();
     this.broadcastService.cleanup();
     this.externalMarketEngine.cleanup();
     
-    console.log('✅ CLEANUP: SimulationManager cleanup complete');
+    console.log('✅ CLEANUP: SimulationManager cleanup complete with global state reset');
   }
 
   getPoolLeakageReport(): { [simulationId: string]: any } {
@@ -1915,8 +2063,7 @@ export class SimulationManager {
         leakage: counters ? counters.generated - counters.released : 0,
         traderEngineHealth: {
           trade: traderEngineHealth.trade.healthy ? 'healthy' : 'unhealthy',
-          position: traderEngineHealth.position.healthy ? 'healthy' : 'unhealthy',
-          metrics: traderEngineHealth.metrics
+          position: traderEngineHealth.position.healthy ? 'healthy' : 'unhealthy'
         }
       };
     });
@@ -1939,6 +2086,8 @@ export class SimulationManager {
         console.warn(`⚠️ LEAK DETECTED in ${simulationId}: ${data.leakage} unreleased objects`);
       }
     });
+    
+    console.log(`🔒 GLOBAL STATE: activeId=${SimulationManager.activeSimulationId}, locked=${SimulationManager.globalSimulationLock}, inProgress=${SimulationManager.simulationCreationInProgress}`);
   }
 
   applyTraderBehaviorModifiers(simulationId: string, modifiers: any): void {
@@ -2063,6 +2212,26 @@ export class SimulationManager {
         console.log(`  ❌ ${simulationId}: No CandleManager found`);
       }
     });
+  }
+
+  // 🚨 CRITICAL FIX: Public methods to check global state
+  public static getGlobalState(): {
+    locked: boolean;
+    activeSimulationId: string | null;
+    creationInProgress: boolean;
+  } {
+    return {
+      locked: SimulationManager.globalSimulationLock,
+      activeSimulationId: SimulationManager.activeSimulationId,
+      creationInProgress: SimulationManager.simulationCreationInProgress
+    };
+  }
+
+  public static forceUnlock(): void {
+    console.log('🔓 FORCE UNLOCK: Resetting global simulation state');
+    SimulationManager.globalSimulationLock = false;
+    SimulationManager.activeSimulationId = null;
+    SimulationManager.simulationCreationInProgress = false;
   }
 }
 

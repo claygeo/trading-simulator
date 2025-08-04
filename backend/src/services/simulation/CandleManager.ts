@@ -1,8 +1,10 @@
-// backend/src/services/simulation/CandleManager.ts - FIXED: Clean Singleton Pattern
+// backend/src/services/simulation/CandleManager.ts - CRITICAL FIX: True Singleton with Race Condition Prevention
 import { PricePoint } from './types';
 
 export class CandleManager {
+  // 🚨 CRITICAL FIX: Use Promise-based singleton to prevent race conditions
   private static instances = new Map<string, CandleManager>();
+  private static pendingInstances = new Map<string, Promise<CandleManager>>();
   private static globalInstanceCounter = 0;
   
   private candles: PricePoint[] = [];
@@ -12,6 +14,7 @@ export class CandleManager {
   private simulationStartTime: number = 0;
   private simulationId: string;
   private instanceId: string;
+  private isDestroyed: boolean = false;
   
   private timestampCoordinator: TimestampCoordinator;
   private isResetting: boolean = false;
@@ -40,13 +43,81 @@ export class CandleManager {
     console.log(`🕯️ SINGLETON: CandleManager CREATED: ${this.instanceId} with ${this.candleInterval/1000}s intervals`);
   }
   
-  // 🚨 CRITICAL FIX: Singleton getInstance method with strict checking
-  static getInstance(simulationId: string, candleInterval: number = 10000): CandleManager {
+  // 🚨 CRITICAL FIX: Async singleton getInstance with race condition prevention
+  static async getInstance(simulationId: string, candleInterval: number = 10000): Promise<CandleManager> {
+    // CRITICAL: Check if instance already exists
+    if (CandleManager.instances.has(simulationId)) {
+      const existing = CandleManager.instances.get(simulationId)!;
+      
+      // Verify instance is not destroyed
+      if (!existing.isDestroyed) {
+        console.log(`🔄 SINGLETON: Reusing EXISTING CandleManager for ${simulationId} (instance: ${existing.instanceId})`);
+        return existing;
+      } else {
+        // Clean up destroyed instance
+        console.log(`🧹 SINGLETON: Cleaning up destroyed instance for ${simulationId}`);
+        CandleManager.instances.delete(simulationId);
+      }
+    }
+    
+    // CRITICAL: Check if instance creation is already in progress (prevents race condition)
+    if (CandleManager.pendingInstances.has(simulationId)) {
+      console.log(`⏳ SINGLETON: Waiting for pending CandleManager creation for ${simulationId}`);
+      return await CandleManager.pendingInstances.get(simulationId)!;
+    }
+    
+    // CRITICAL: Create promise for instance creation to prevent race conditions
+    const creationPromise = CandleManager.createInstance(simulationId, candleInterval);
+    CandleManager.pendingInstances.set(simulationId, creationPromise);
+    
+    try {
+      const instance = await creationPromise;
+      
+      // Store the created instance
+      CandleManager.instances.set(simulationId, instance);
+      
+      console.log(`🆕 SINGLETON: Created NEW CandleManager for ${simulationId} (instance: ${instance.instanceId})`);
+      console.log(`📊 SINGLETON: Total active instances: ${CandleManager.instances.size}`);
+      
+      return instance;
+    } finally {
+      // Clean up the pending promise
+      CandleManager.pendingInstances.delete(simulationId);
+    }
+  }
+  
+  // 🚨 CRITICAL FIX: Separate instance creation method
+  private static async createInstance(simulationId: string, candleInterval: number): Promise<CandleManager> {
+    // Small delay to ensure any cleanup operations complete
+    await new Promise(resolve => setTimeout(resolve, 10));
+    
+    // Double-check that no instance was created during the delay
+    if (CandleManager.instances.has(simulationId)) {
+      const existing = CandleManager.instances.get(simulationId)!;
+      if (!existing.isDestroyed) {
+        console.log(`🔄 SINGLETON: Found existing during creation for ${simulationId}`);
+        return existing;
+      } else {
+        CandleManager.instances.delete(simulationId);
+      }
+    }
+    
+    return new CandleManager(simulationId, candleInterval);
+  }
+  
+  // 🚨 CRITICAL FIX: Synchronous getInstance for backward compatibility (DEPRECATED)
+  static getInstanceSync(simulationId: string, candleInterval: number = 10000): CandleManager {
+    console.warn(`⚠️ DEPRECATED: Using synchronous getInstance for ${simulationId}. Use async version to prevent race conditions.`);
+    
     // Check if instance already exists
     if (CandleManager.instances.has(simulationId)) {
       const existing = CandleManager.instances.get(simulationId)!;
-      console.log(`🔄 SINGLETON: Reusing CandleManager for ${simulationId} (instance: ${existing.instanceId})`);
-      return existing;
+      if (!existing.isDestroyed) {
+        console.log(`🔄 SINGLETON: Reusing CandleManager for ${simulationId} (instance: ${existing.instanceId})`);
+        return existing;
+      } else {
+        CandleManager.instances.delete(simulationId);
+      }
     }
     
     // Create new instance only if none exists
@@ -59,22 +130,81 @@ export class CandleManager {
     return instance;
   }
   
-  // 🚨 CRITICAL FIX: Force cleanup method to remove instance
-  static cleanup(simulationId: string): void {
+  // 🚨 CRITICAL FIX: Enhanced cleanup method with proper destruction
+  static async cleanup(simulationId: string): Promise<void> {
+    console.log(`🧹 SINGLETON: Starting cleanup for ${simulationId}`);
+    
+    // Wait for any pending creation to complete
+    if (CandleManager.pendingInstances.has(simulationId)) {
+      console.log(`⏳ SINGLETON: Waiting for pending creation to complete before cleanup`);
+      try {
+        await CandleManager.pendingInstances.get(simulationId);
+      } catch (error) {
+        console.warn(`⚠️ SINGLETON: Error waiting for pending creation:`, error);
+      }
+    }
+    
     const instance = CandleManager.instances.get(simulationId);
     if (instance) {
       console.log(`🧹 SINGLETON: Cleaning up CandleManager for ${simulationId} (instance: ${instance.instanceId})`);
-      instance.shutdown();
+      
+      // Mark as destroyed first to prevent reuse
+      instance.isDestroyed = true;
+      
+      // Shutdown the instance
+      await instance.shutdown();
+      
+      // Remove from instances map
       CandleManager.instances.delete(simulationId);
-      console.log(`📊 SINGLETON: Remaining instances: ${CandleManager.instances.size}`);
+      
+      console.log(`✅ SINGLETON: Cleanup complete for ${simulationId}. Remaining instances: ${CandleManager.instances.size}`);
     } else {
       console.warn(`⚠️ SINGLETON: No CandleManager found for cleanup: ${simulationId}`);
     }
+    
+    // Clean up any orphaned pending instances
+    if (CandleManager.pendingInstances.has(simulationId)) {
+      console.log(`🧹 SINGLETON: Cleaning up orphaned pending instance for ${simulationId}`);
+      CandleManager.pendingInstances.delete(simulationId);
+    }
+  }
+  
+  // 🚨 CRITICAL FIX: Force cleanup all instances (for system reset)
+  static async cleanupAll(): Promise<void> {
+    console.log(`🧹 SINGLETON: Starting cleanup of ALL instances (${CandleManager.instances.size} active)`);
+    
+    // Wait for all pending creations
+    const pendingPromises = Array.from(CandleManager.pendingInstances.values());
+    if (pendingPromises.length > 0) {
+      console.log(`⏳ SINGLETON: Waiting for ${pendingPromises.length} pending creations`);
+      await Promise.allSettled(pendingPromises);
+    }
+    
+    // Cleanup all instances
+    const cleanupPromises = Array.from(CandleManager.instances.keys()).map(simId => 
+      CandleManager.cleanup(simId)
+    );
+    
+    await Promise.allSettled(cleanupPromises);
+    
+    // Clear maps
+    CandleManager.instances.clear();
+    CandleManager.pendingInstances.clear();
+    
+    console.log(`✅ SINGLETON: All instances cleaned up. Total remaining: ${CandleManager.instances.size}`);
   }
   
   // 🚨 CRITICAL FIX: Check if instance exists
   static hasInstance(simulationId: string): boolean {
-    return CandleManager.instances.has(simulationId);
+    const exists = CandleManager.instances.has(simulationId);
+    const pending = CandleManager.pendingInstances.has(simulationId);
+    
+    if (exists) {
+      const instance = CandleManager.instances.get(simulationId)!;
+      return !instance.isDestroyed;
+    }
+    
+    return pending;
   }
   
   // 🚨 CRITICAL FIX: Get debug info about all instances
@@ -84,18 +214,33 @@ export class CandleManager {
       instanceId: instance.instanceId,
       candleCount: instance.candles.length,
       isResetting: instance.isResetting,
+      isDestroyed: instance.isDestroyed,
       lastUpdate: instance.lastPriceUpdate,
       interval: instance.candleInterval
     }));
     
+    const pending = Array.from(CandleManager.pendingInstances.keys());
+    
     return {
       totalInstances: CandleManager.instances.size,
+      pendingInstances: CandleManager.pendingInstances.size,
       globalCounter: CandleManager.globalInstanceCounter,
-      instances
+      instances,
+      pendingSimulations: pending
     };
   }
   
+  // 🚨 CRITICAL FIX: Check if this instance is destroyed
+  isInstanceDestroyed(): boolean {
+    return this.isDestroyed;
+  }
+  
   initialize(simulationStartTime: number, initialPrice?: number): void {
+    if (this.isDestroyed) {
+      console.error(`❌ ${this.instanceId}: Cannot initialize destroyed instance`);
+      return;
+    }
+    
     console.log(`🔧 SINGLETON: Initializing ${this.instanceId} at ${new Date(simulationStartTime).toISOString()}`);
     
     this.simulationStartTime = simulationStartTime;
@@ -120,6 +265,8 @@ export class CandleManager {
   }
   
   private updatePriceCategory(price: number): void {
+    if (this.isDestroyed) return;
+    
     const oldCategory = this.priceCategory;
     
     if (price < 0.01) {
@@ -141,6 +288,8 @@ export class CandleManager {
   }
   
   private adjustIntervalForPriceCategory(): void {
+    if (this.isDestroyed) return;
+    
     const oldInterval = this.candleInterval;
     
     switch (this.priceCategory) {
@@ -168,6 +317,11 @@ export class CandleManager {
   }
   
   updateCandle(timestamp: number, price: number, volume: number = 0): void {
+    if (this.isDestroyed) {
+      console.warn(`⚠️ ${this.instanceId}: Cannot update destroyed instance`);
+      return;
+    }
+    
     if (this.isResetting) {
       console.warn(`⚠️ ${this.instanceId}: Skipping update during reset`);
       return;
@@ -221,6 +375,8 @@ export class CandleManager {
   }
   
   private _updateCandleInternal(timestamp: number, price: number, volume: number): void {
+    if (this.isDestroyed) return;
+    
     // Ensure sequential timestamps
     if (this.lastCandleTime > 0 && timestamp <= this.lastCandleTime) {
       timestamp = this.lastCandleTime + this.candleInterval;
@@ -254,6 +410,8 @@ export class CandleManager {
   }
   
   private _createNewCandle(candleTime: number, price: number, volume: number): void {
+    if (this.isDestroyed) return;
+    
     const lastCandle = this.candles[this.candles.length - 1];
     let openPrice = price;
     
@@ -289,7 +447,7 @@ export class CandleManager {
   }
   
   private _updateExistingCandle(price: number, volume: number): void {
-    if (!this.currentCandle || !this.isValidPrice(price)) return;
+    if (!this.currentCandle || !this.isValidPrice(price) || this.isDestroyed) return;
     
     this.currentCandle.high = Math.max(this.currentCandle.high, price);
     this.currentCandle.low = Math.min(this.currentCandle.low, price);
@@ -331,7 +489,7 @@ export class CandleManager {
   }
   
   private _finalizeCurrentCandle(): void {
-    if (!this.currentCandle) return;
+    if (!this.currentCandle || this.isDestroyed) return;
     
     const candle = { ...this.currentCandle };
     
@@ -355,6 +513,11 @@ export class CandleManager {
   }
   
   getCandles(limit?: number): PricePoint[] {
+    if (this.isDestroyed) {
+      console.warn(`⚠️ ${this.instanceId}: Cannot get candles from destroyed instance`);
+      return [];
+    }
+    
     const allCandles = [...this.candles];
     
     if (this.currentCandle) {
@@ -366,6 +529,11 @@ export class CandleManager {
   }
   
   setCandles(candles: PricePoint[]): void {
+    if (this.isDestroyed) {
+      console.warn(`⚠️ ${this.instanceId}: Cannot set candles on destroyed instance`);
+      return;
+    }
+    
     if (this.isResetting) {
       console.warn(`⚠️ ${this.instanceId}: Cannot set candles during reset`);
       return;
@@ -419,6 +587,11 @@ export class CandleManager {
   }
   
   async reset(): Promise<void> {
+    if (this.isDestroyed) {
+      console.warn(`⚠️ ${this.instanceId}: Cannot reset destroyed instance`);
+      return;
+    }
+    
     if (this.isResetting) {
       return this.resetPromise || Promise.resolve();
     }
@@ -461,6 +634,7 @@ export class CandleManager {
   }
   
   clear(): void {
+    if (this.isDestroyed) return;
     if (this.isResetting) return;
     
     this.candles = [];
@@ -481,12 +655,39 @@ export class CandleManager {
     console.log(`🧹 ${this.instanceId}: Cleared`);
   }
   
-  shutdown(): void {
+  // 🚨 CRITICAL FIX: Async shutdown method with proper cleanup
+  async shutdown(): Promise<void> {
     console.log(`🔌 ${this.instanceId}: Shutting down`);
+    
+    // Mark as destroyed to prevent new operations
+    this.isDestroyed = true;
+    
+    // Wait for any reset operations to complete
+    if (this.resetPromise) {
+      try {
+        await this.resetPromise;
+      } catch (error) {
+        console.warn(`⚠️ ${this.instanceId}: Error during reset completion:`, error);
+      }
+    }
+    
+    // Clear all data
     this.clear();
+    
+    console.log(`✅ ${this.instanceId}: Shutdown complete`);
   }
   
   getStats(): any {
+    if (this.isDestroyed) {
+      return {
+        instanceId: this.instanceId,
+        simulationId: this.simulationId,
+        isDestroyed: true,
+        candleCount: 0,
+        error: 'Instance is destroyed'
+      };
+    }
+    
     const candleCount = this.candles.length + (this.currentCandle ? 1 : 0);
     const lastCandle = this.candles[this.candles.length - 1];
     
@@ -497,6 +698,7 @@ export class CandleManager {
       lastCandleTime: this.lastCandleTime,
       currentCandle: !!this.currentCandle,
       isResetting: this.isResetting,
+      isDestroyed: this.isDestroyed,
       priceCategory: this.priceCategory,
       candleInterval: this.candleInterval,
       lastPrice: lastCandle ? lastCandle.close : 0,
@@ -510,6 +712,8 @@ export class CandleManager {
   }
   
   forceFinalizeCurrent(): boolean {
+    if (this.isDestroyed) return false;
+    
     if (this.currentCandle) {
       this._finalizeCurrentCandle();
       return true;

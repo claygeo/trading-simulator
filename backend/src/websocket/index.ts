@@ -1,4 +1,4 @@
-// backend/src/websocket/index.ts - FIXED: Pause State Handling & Enhanced TPS Support
+// backend/src/websocket/index.ts - FIXED: Race Condition Prevention & Complete setPauseState Handler
 import { WebSocket, WebSocketServer } from 'ws';
 import { BroadcastManager } from '../services/broadcastManager';
 import { PerformanceMonitor } from '../monitoring/performanceMonitor';
@@ -23,12 +23,30 @@ interface ClientSubscription {
   };
 }
 
+// 🚨 CRITICAL FIX: Enhanced client state tracking for race condition prevention
+interface ClientState {
+  id: string;
+  currentSimulation: string | null;
+  subscriptionStatus: 'none' | 'subscribing' | 'subscribed' | 'unsubscribing';
+  lastMessageTime: number;
+  messageCount: number;
+  pauseStateRequests: Map<string, { timestamp: number; isPaused: boolean }>;
+  pendingOperations: Set<string>;
+}
+
 // Track client subscriptions with enhanced metadata
 const clientSubscriptions = new WeakMap<WebSocket, Set<ClientSubscription>>();
 const clientIds = new WeakMap<WebSocket, string>();
 const clientRetryTimers = new WeakMap<WebSocket, Map<string, NodeJS.Timeout>>();
 
+// 🚨 CRITICAL FIX: Enhanced client state tracking
+const clientStates = new WeakMap<WebSocket, ClientState>();
+const simulationClientMapping = new Map<string, Set<WebSocket>>();
+
 let clientCounter = 0;
+
+// 🚨 CRITICAL FIX: Global operation locks to prevent race conditions
+const globalOperationLocks = new Map<string, Set<string>>(); // simulationId -> Set of operation types
 
 // CRITICAL FIX: Accept simulationManager as parameter instead of importing
 export function setupWebSocketServer(
@@ -37,7 +55,7 @@ export function setupWebSocketServer(
   broadcastManager?: BroadcastManager,
   performanceMonitor?: PerformanceMonitor
 ) {
-  console.log('🔧 Setting up WebSocket server with SHARED SimulationManager instance and enhanced pause handling...');
+  console.log('🔧 Setting up WebSocket server with RACE CONDITION PREVENTION and enhanced pause handling...');
   
   // Log server status
   setInterval(() => {
@@ -55,6 +73,18 @@ export function setupWebSocketServer(
   wss.on('connection', (ws: WebSocket, req) => {
     const clientId = `client-${++clientCounter}`;
     clientIds.set(ws, clientId);
+    
+    // 🚨 CRITICAL FIX: Initialize enhanced client state
+    const clientState: ClientState = {
+      id: clientId,
+      currentSimulation: null,
+      subscriptionStatus: 'none',
+      lastMessageTime: Date.now(),
+      messageCount: 0,
+      pauseStateRequests: new Map(),
+      pendingOperations: new Set()
+    };
+    clientStates.set(ws, clientState);
     
     console.log(`New WebSocket connection established: ${clientId}`);
     console.log(`Total clients: ${wss.clients.size}`);
@@ -102,9 +132,10 @@ export function setupWebSocketServer(
           tpsModeSupport: true,      // TPS mode support
           stressTestSupport: true,   // Stress test support
           initialCandleJumpPrevention: true, // Fixed initial candle jump
-          pauseResumeSupport: true   // CRITICAL FIX: Enhanced pause/resume support
+          pauseResumeSupport: true,  // 🚨 CRITICAL FIX: Enhanced pause/resume support
+          enhancedStateManagement: true // NEW: Enhanced state management
         },
-        version: '2.4.0' // Version bump for pause handling fix
+        version: '2.5.0' // Version bump for race condition prevention
       }), { binary: false, compress: false, fin: true });
     } catch (error) {
       console.error('Error sending welcome message:', error);
@@ -113,6 +144,13 @@ export function setupWebSocketServer(
     ws.on('message', (data: Buffer) => {
       try {
         const message: WebSocketMessage = JSON.parse(data.toString());
+        const clientState = clientStates.get(ws);
+        
+        if (clientState) {
+          clientState.lastMessageTime = Date.now();
+          clientState.messageCount++;
+        }
+        
         console.log(`${clientId} message:`, message.type, message.simulationId || '', message.mode || '', message.isPaused !== undefined ? `paused=${message.isPaused}` : '');
         
         switch (message.type) {
@@ -128,9 +166,9 @@ export function setupWebSocketServer(
             handleMarketAnalysisRequest(ws, message, simulationManager);
             break;
             
-          // CRITICAL FIX: Enhanced pause state handling
+          // 🚨 CRITICAL FIX: Enhanced pause state handling with race condition prevention
           case 'setPauseState':
-            handlePauseStateChange(ws, message, clientId, simulationManager);
+            handlePauseStateChangeWithRaceConditionPrevention(ws, message, clientId, simulationManager);
             break;
             
           case 'setPreferences':
@@ -160,7 +198,13 @@ export function setupWebSocketServer(
             ws.send(JSON.stringify({
               type: 'pong',
               timestamp: Date.now(),
-              latency: message.timestamp ? Date.now() - message.timestamp : undefined
+              latency: message.timestamp ? Date.now() - message.timestamp : undefined,
+              clientState: clientState ? {
+                currentSimulation: clientState.currentSimulation,
+                subscriptionStatus: clientState.subscriptionStatus,
+                messageCount: clientState.messageCount,
+                pendingOperations: Array.from(clientState.pendingOperations)
+              } : null
             }), { binary: false, compress: false, fin: true });
             break;
             
@@ -189,12 +233,34 @@ export function setupWebSocketServer(
     
     ws.on('close', (code, reason) => {
       const clientId = clientIds.get(ws) || 'unknown';
+      const clientState = clientStates.get(ws);
+      
       console.log(`WebSocket connection closed: ${clientId}, code: ${code}, reason: ${reason}`);
       console.log(`Remaining clients: ${wss.clients.size - 1}`);
+      
+      // 🚨 CRITICAL FIX: Enhanced cleanup with race condition prevention
+      if (clientState) {
+        // Clear any pending operations for this client
+        clientState.pendingOperations.forEach(operationId => {
+          console.log(`🧹 CLEANUP: Clearing pending operation ${operationId} for disconnected client ${clientId}`);
+        });
+        
+        // Remove from simulation mapping
+        if (clientState.currentSimulation) {
+          const simulationClients = simulationClientMapping.get(clientState.currentSimulation);
+          if (simulationClients) {
+            simulationClients.delete(ws);
+            if (simulationClients.size === 0) {
+              simulationClientMapping.delete(clientState.currentSimulation);
+            }
+          }
+        }
+      }
       
       // Clean up subscriptions and timers
       clientSubscriptions.delete(ws);
       clientIds.delete(ws);
+      clientStates.delete(ws);
       
       // Clear any retry timers
       const retryTimers = clientRetryTimers.get(ws);
@@ -218,11 +284,11 @@ export function setupWebSocketServer(
     console.error('WebSocket server error:', error);
   });
   
-  console.log('✅ WebSocket server setup complete with SHARED SimulationManager instance and enhanced pause handling');
+  console.log('✅ WebSocket server setup complete with RACE CONDITION PREVENTION and enhanced pause handling');
 }
 
-// CRITICAL FIX: New pause state change handler
-async function handlePauseStateChange(
+// 🚨 CRITICAL FIX: Enhanced pause state change handler with race condition prevention
+async function handlePauseStateChangeWithRaceConditionPrevention(
   ws: WebSocket,
   message: WebSocketMessage,
   clientId: string,
@@ -232,23 +298,66 @@ async function handlePauseStateChange(
   
   if (!simulationId) {
     ws.send(JSON.stringify({
-      type: 'error',
-      message: 'simulationId required for pause state change',
-      timestamp: Date.now()
+      type: 'setPauseState_response',
+      timestamp: Date.now(),
+      success: false,
+      error: 'simulationId required for pause state change'
     }), { binary: false, compress: false, fin: true });
     return;
   }
   
   if (isPaused === undefined) {
     ws.send(JSON.stringify({
-      type: 'error',
-      message: 'isPaused boolean value required for pause state change',
-      timestamp: Date.now()
+      type: 'setPauseState_response',
+      timestamp: Date.now(),
+      success: false,
+      error: 'isPaused boolean value required for pause state change'
     }), { binary: false, compress: false, fin: true });
     return;
   }
   
-  console.log(`⏸️▶️ [PAUSE STATE] ${clientId} requesting pause state change for ${simulationId}: isPaused=${isPaused}`);
+  const clientState = clientStates.get(ws);
+  if (!clientState) {
+    console.error(`❌ [PAUSE STATE] No client state found for ${clientId}`);
+    return;
+  }
+  
+  // 🚨 CRITICAL FIX: Race condition prevention - check for pending operations
+  const operationId = `pause_${simulationId}_${Date.now()}`;
+  
+  // Check if there's already a pending pause operation for this simulation
+  if (!globalOperationLocks.has(simulationId)) {
+    globalOperationLocks.set(simulationId, new Set());
+  }
+  
+  const simulationLocks = globalOperationLocks.get(simulationId)!;
+  
+  // Check for conflicting operations
+  const hasPendingPause = Array.from(simulationLocks).some(lock => lock.startsWith('pause_'));
+  if (hasPendingPause) {
+    console.warn(`⚠️ [PAUSE STATE] Race condition prevented: existing pause operation for ${simulationId}`);
+    ws.send(JSON.stringify({
+      type: 'setPauseState_response',
+      timestamp: Date.now(),
+      simulationId: simulationId,
+      success: false,
+      error: 'Another pause state change is already in progress',
+      data: null
+    }), { binary: false, compress: false, fin: true });
+    return;
+  }
+  
+  // 🚨 CRITICAL FIX: Lock this operation
+  simulationLocks.add(operationId);
+  clientState.pendingOperations.add(operationId);
+  
+  // Track this pause request
+  clientState.pauseStateRequests.set(simulationId, {
+    timestamp: Date.now(),
+    isPaused: isPaused
+  });
+  
+  console.log(`⏸️▶️ [PAUSE STATE] ${clientId} requesting pause state change for ${simulationId}: isPaused=${isPaused} (operation: ${operationId})`);
   
   try {
     // Get the simulation to check current state
@@ -257,18 +366,21 @@ async function handlePauseStateChange(
     if (!simulation) {
       console.error(`❌ [PAUSE STATE] Simulation ${simulationId} not found for pause state change`);
       ws.send(JSON.stringify({
-        type: 'error',
-        message: `Simulation ${simulationId} not found`,
-        timestamp: Date.now()
+        type: 'setPauseState_response',
+        timestamp: Date.now(),
+        simulationId: simulationId,
+        success: false,
+        error: `Simulation ${simulationId} not found`,
+        data: null
       }), { binary: false, compress: false, fin: true });
       return;
     }
     
     console.log(`🔍 [PAUSE STATE] Current simulation state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
     
-    let result: { success: boolean; error?: string; action?: string };
+    let result: { success: boolean; error?: string; action?: string; newState?: any };
     
-    // CRITICAL FIX: Proper pause/resume logic based on desired state
+    // 🚨 CRITICAL FIX: Enhanced pause/resume logic with race condition awareness
     if (isPaused) {
       // Client wants to pause the simulation
       if (!simulation.isRunning) {
@@ -284,10 +396,19 @@ async function handlePauseStateChange(
       } else {
         // Simulation is running and not paused - can pause it
         try {
+          console.log(`⏸️ [PAUSE STATE] Executing pause for ${simulationId}`);
           simulationManager.pauseSimulation(simulationId);
+          
+          // Get updated state
+          const updatedSimulation = simulationManager.getSimulation(simulationId);
+          
           result = {
             success: true,
-            action: 'paused'
+            action: 'paused',
+            newState: {
+              isRunning: updatedSimulation?.isRunning || false,
+              isPaused: updatedSimulation?.isPaused || true
+            }
           };
           console.log(`✅ [PAUSE STATE] Successfully paused simulation ${simulationId}`);
         } catch (error) {
@@ -303,10 +424,19 @@ async function handlePauseStateChange(
       if (!simulation.isRunning) {
         // Simulation is not running - start it
         try {
+          console.log(`🚀 [PAUSE STATE] Executing start for ${simulationId}`);
           simulationManager.startSimulation(simulationId);
+          
+          // Get updated state
+          const updatedSimulation = simulationManager.getSimulation(simulationId);
+          
           result = {
             success: true,
-            action: 'started'
+            action: 'started',
+            newState: {
+              isRunning: updatedSimulation?.isRunning || true,
+              isPaused: updatedSimulation?.isPaused || false
+            }
           };
           console.log(`✅ [PAUSE STATE] Successfully started simulation ${simulationId}`);
         } catch (error) {
@@ -319,10 +449,19 @@ async function handlePauseStateChange(
       } else if (simulation.isPaused) {
         // Simulation is running but paused - resume it
         try {
+          console.log(`▶️ [PAUSE STATE] Executing resume for ${simulationId}`);
           simulationManager.resumeSimulation(simulationId);
+          
+          // Get updated state
+          const updatedSimulation = simulationManager.getSimulation(simulationId);
+          
           result = {
             success: true,
-            action: 'resumed'
+            action: 'resumed',
+            newState: {
+              isRunning: updatedSimulation?.isRunning || true,
+              isPaused: updatedSimulation?.isPaused || false
+            }
           };
           console.log(`✅ [PAUSE STATE] Successfully resumed simulation ${simulationId}`);
         } catch (error) {
@@ -341,32 +480,56 @@ async function handlePauseStateChange(
       }
     }
     
-    // Send response back to client
+    // 🚨 CRITICAL FIX: Send comprehensive response back to client
     if (result.success) {
-      // Get updated simulation state
-      const updatedSimulation = simulationManager.getSimulation(simulationId);
-      
+      // Send success response with updated state
       ws.send(JSON.stringify({
-        type: 'pause_state_changed',
+        type: 'setPauseState_response',
         simulationId: simulationId,
         timestamp: Date.now(),
         success: true,
         action: result.action,
-        newState: {
-          isRunning: updatedSimulation?.isRunning || false,
-          isPaused: updatedSimulation?.isPaused || false
-        },
+        data: result.newState,
         message: `Simulation ${result.action} successfully`
       }), { binary: false, compress: false, fin: true });
       
-      console.log(`📡 [PAUSE STATE] Sent success response to ${clientId}: action=${result.action}, newState={isRunning=${updatedSimulation?.isRunning}, isPaused=${updatedSimulation?.isPaused}}`);
+      console.log(`📡 [PAUSE STATE] Sent success response to ${clientId}: action=${result.action}, newState=${JSON.stringify(result.newState)}`);
+      
+      // 🚨 CRITICAL FIX: Broadcast state change to all connected clients for this simulation
+      const simulationClients = simulationClientMapping.get(simulationId);
+      if (simulationClients) {
+        const stateChangeEvent = {
+          type: 'pause_state_changed',
+          simulationId: simulationId,
+          timestamp: Date.now(),
+          success: true,
+          action: result.action,
+          newState: result.newState,
+          triggeredBy: clientId
+        };
+        
+        simulationClients.forEach(client => {
+          if (client !== ws && client.readyState === WebSocket.OPEN) {
+            try {
+              client.send(JSON.stringify(stateChangeEvent), { binary: false, compress: false, fin: true });
+            } catch (broadcastError) {
+              console.error(`❌ [PAUSE STATE] Error broadcasting to client:`, broadcastError);
+            }
+          }
+        });
+        
+        console.log(`📡 [PAUSE STATE] Broadcasted state change to ${simulationClients.size - 1} other clients`);
+      }
       
     } else {
+      // Send error response
       ws.send(JSON.stringify({
-        type: 'error',
-        message: result.error || 'Unknown error changing pause state',
+        type: 'setPauseState_response',
+        simulationId: simulationId,
         timestamp: Date.now(),
-        context: 'pause_state_change'
+        success: false,
+        error: result.error || 'Unknown error changing pause state',
+        data: null
       }), { binary: false, compress: false, fin: true });
       
       console.error(`❌ [PAUSE STATE] Sent error response to ${clientId}: ${result.error}`);
@@ -375,11 +538,24 @@ async function handlePauseStateChange(
   } catch (error) {
     console.error(`❌ [PAUSE STATE] Unexpected error handling pause state change:`, error);
     ws.send(JSON.stringify({
-      type: 'error',
-      message: 'Internal error handling pause state change',
+      type: 'setPauseState_response',
+      simulationId: simulationId,
       timestamp: Date.now(),
-      context: 'pause_state_change'
+      success: false,
+      error: 'Internal error handling pause state change',
+      data: null
     }), { binary: false, compress: false, fin: true });
+  } finally {
+    // 🚨 CRITICAL FIX: Always clean up locks and pending operations
+    simulationLocks.delete(operationId);
+    clientState.pendingOperations.delete(operationId);
+    
+    // Clean up empty lock sets
+    if (simulationLocks.size === 0) {
+      globalOperationLocks.delete(simulationId);
+    }
+    
+    console.log(`🔓 [PAUSE STATE] Released operation lock ${operationId} for ${simulationId}`);
   }
 }
 
@@ -721,7 +897,7 @@ function getTargetTPSForMode(mode: string): number {
   }
 }
 
-// 🔧 CRITICAL FIX: Enhanced subscription with NO initial candle data to prevent jump
+// 🚨 CRITICAL FIX: Enhanced subscription with race condition prevention
 async function handleSubscriptionWithRetry(
   ws: WebSocket, 
   message: WebSocketMessage, 
@@ -739,6 +915,20 @@ async function handleSubscriptionWithRetry(
     return;
   }
   
+  const clientState = clientStates.get(ws);
+  if (!clientState) {
+    console.error(`❌ [WS SUB] No client state found for ${clientId}`);
+    return;
+  }
+  
+  // 🚨 CRITICAL FIX: Race condition prevention
+  if (clientState.subscriptionStatus === 'subscribing') {
+    console.warn(`⚠️ [WS SUB] Race condition prevented: ${clientId} already subscribing to ${simulationId}`);
+    return;
+  }
+  
+  clientState.subscriptionStatus = 'subscribing';
+  
   console.log(`🔔 [WS SUB] ${clientId} attempting to subscribe to simulation: ${simulationId}`);
   
   // STEP 1: Check if simulation exists in the CORRECT instance
@@ -751,6 +941,8 @@ async function handleSubscriptionWithRetry(
     // Debug: List all available simulations
     const allSimulations = simulationManager.getAllSimulations();
     console.log(`🔍 [WS SUB] Available simulations in manager:`, allSimulations.map(s => s.id));
+    
+    clientState.subscriptionStatus = 'none';
     
     ws.send(JSON.stringify({
       type: 'error',
@@ -779,6 +971,7 @@ async function handleSubscriptionWithRetry(
         // Limit retry attempts
         if (existingSubscription.subscriptionAttempts > 10) {
           console.error(`❌ [WS SUB] Max retry attempts reached for ${simulationId} and ${clientId}`);
+          clientState.subscriptionStatus = 'none';
           ws.send(JSON.stringify({
             type: 'error',
             message: `Simulation ${simulationId} failed to become ready after multiple attempts`,
@@ -837,6 +1030,16 @@ async function handleSubscriptionWithRetry(
   
   // STEP 3: Simulation is ready - proceed with subscription
   console.log(`✅ [WS SUB] Simulation ${simulationId} is ready, proceeding with subscription for ${clientId}`);
+  
+  // 🚨 CRITICAL FIX: Update client state and mapping
+  clientState.currentSimulation = simulationId;
+  clientState.subscriptionStatus = 'subscribed';
+  
+  // Add to simulation mapping
+  if (!simulationClientMapping.has(simulationId)) {
+    simulationClientMapping.set(simulationId, new Set());
+  }
+  simulationClientMapping.get(simulationId)!.add(ws);
   
   // Track subscription
   const subscriptions = clientSubscriptions.get(ws);
@@ -907,11 +1110,12 @@ async function handleSubscriptionWithRetry(
     // 🔧 CRITICAL FIX: Add flag to indicate if this is a fresh connection
     initialCandleJumpPrevented: true,
     actuallyRunning: isSimulationActuallyRunning,
-    // CRITICAL FIX: Enhanced pause state information
+    // 🚨 CRITICAL FIX: Enhanced pause state information with race condition prevention
     canStart: !simulation.isRunning || simulation.isPaused,
     canPause: simulation.isRunning && !simulation.isPaused,
     canResume: simulation.isRunning && simulation.isPaused,
-    canStop: simulation.isRunning
+    canStop: simulation.isRunning,
+    raceConditionPrevention: true
   };
   
   ws.send(JSON.stringify({
@@ -936,11 +1140,12 @@ async function handleSubscriptionWithRetry(
     initialCandleJumpPrevented: true,
     actuallyRunning: isSimulationActuallyRunning,
     candleDataIncluded: isSimulationActuallyRunning,
-    pauseResumeSupport: true, // CRITICAL FIX: Indicate pause/resume support
-    message: `Successfully subscribed to simulation ${simulationId} using SHARED SimulationManager with enhanced pause/resume support`
+    pauseResumeSupport: true, // 🚨 CRITICAL FIX: Indicate pause/resume support
+    raceConditionPrevention: true, // NEW: Indicate race condition prevention
+    message: `Successfully subscribed to simulation ${simulationId} using SHARED SimulationManager with enhanced pause/resume support and race condition prevention`
   }), { binary: false, compress: false, fin: true });
   
-  console.log(`🎉 [WS SUB] SUBSCRIPTION SUCCESS! ${clientId} subscribed to ${simulationId} using SHARED manager, trades: ${enhancedState.recentTrades.length}, candles: ${enhancedState.candleCount}, TPS mode: ${enhancedState.currentTPSMode}, actuallyRunning: ${isSimulationActuallyRunning}, pauseResumeEnabled: true`);
+  console.log(`🎉 [WS SUB] SUBSCRIPTION SUCCESS! ${clientId} subscribed to ${simulationId} using SHARED manager, trades: ${enhancedState.recentTrades.length}, candles: ${enhancedState.candleCount}, TPS mode: ${enhancedState.currentTPSMode}, actuallyRunning: ${isSimulationActuallyRunning}, pauseResumeEnabled: true, raceConditionPrevention: true`);
 }
 
 // Handle subscription with preferences (original function, modified to be race-condition aware)
@@ -960,6 +1165,26 @@ function handleUnsubscription(ws: WebSocket, message: WebSocketMessage, clientId
       timestamp: Date.now()
     }), { binary: false, compress: false, fin: true });
     return;
+  }
+  
+  const clientState = clientStates.get(ws);
+  if (clientState) {
+    clientState.subscriptionStatus = 'unsubscribing';
+    
+    // Remove from simulation mapping
+    const simulationClients = simulationClientMapping.get(simulationId);
+    if (simulationClients) {
+      simulationClients.delete(ws);
+      if (simulationClients.size === 0) {
+        simulationClientMapping.delete(simulationId);
+      }
+    }
+    
+    if (clientState.currentSimulation === simulationId) {
+      clientState.currentSimulation = null;
+    }
+    
+    clientState.subscriptionStatus = 'none';
   }
   
   const subscriptions = clientSubscriptions.get(ws);
@@ -1065,6 +1290,7 @@ function handlePreferencesUpdate(ws: WebSocket, message: WebSocketMessage) {
 function handleDebugRequest(ws: WebSocket, clientId: string, broadcastManager?: BroadcastManager) {
   const subscriptions = clientSubscriptions.get(ws);
   const retryTimers = clientRetryTimers.get(ws);
+  const clientState = clientStates.get(ws);
   
   const debugInfo = {
     type: 'debug_info',
@@ -1077,15 +1303,31 @@ function handleDebugRequest(ws: WebSocket, clientId: string, broadcastManager?: 
       preferences: s.preferences
     })) : [],
     retryTimers: retryTimers ? Array.from(retryTimers.keys()) : [],
+    clientState: clientState ? {
+      currentSimulation: clientState.currentSimulation,
+      subscriptionStatus: clientState.subscriptionStatus,
+      messageCount: clientState.messageCount,
+      pendingOperations: Array.from(clientState.pendingOperations),
+      pauseStateRequests: Array.from(clientState.pauseStateRequests.entries())
+    } : null,
     serverStats: {
       totalClients: ws.readyState === WebSocket.OPEN ? 
         Array.from((ws as any)._server?.clients || []).length : 0,
+      simulationClientMapping: Array.from(simulationClientMapping.entries()).map(([simId, clients]) => ({
+        simulationId: simId,
+        clientCount: clients.size
+      })),
+      globalOperationLocks: Array.from(globalOperationLocks.entries()).map(([simId, locks]) => ({
+        simulationId: simId,
+        locks: Array.from(locks)
+      })),
       raceConditionPrevention: true,
       sharedSimulationManager: true,
       tpsSupport: true,
       stressTestSupport: true,
       initialCandleJumpPrevention: true,
-      pauseResumeSupport: true // CRITICAL FIX: Include pause/resume support in debug info
+      pauseResumeSupport: true, // 🚨 CRITICAL FIX: Include pause/resume support in debug info
+      enhancedStateManagement: true
     }
   };
   
@@ -1218,12 +1460,16 @@ export function getSubscriptionStats(wss: WebSocketServer): {
   totalSubscriptions: number;
   pendingSubscriptions: number;
   subscriptionsBySimulation: Map<string, { confirmed: number; pending: number }>;
+  raceConditionPrevention: boolean;
+  globalOperationLocks: number;
 } {
   const stats = {
     totalConnections: wss.clients.size,
     totalSubscriptions: 0,
     pendingSubscriptions: 0,
-    subscriptionsBySimulation: new Map<string, { confirmed: number; pending: number }>()
+    subscriptionsBySimulation: new Map<string, { confirmed: number; pending: number }>(),
+    raceConditionPrevention: true,
+    globalOperationLocks: globalOperationLocks.size
   };
   
   wss.clients.forEach((client) => {
