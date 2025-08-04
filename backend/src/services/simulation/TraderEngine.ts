@@ -1,4 +1,4 @@
-// backend/src/services/simulation/TraderEngine.ts - COMPLETE FILE WITH CRITICAL POOL LEAK FIXES + TRADER DATA FLOW FIX
+// backend/src/services/simulation/TraderEngine.ts - COMPLETE FILE WITH CRITICAL POOL LEAK FIXES
 import { v4 as uuidv4 } from 'uuid';
 import { 
   SimulationState, 
@@ -194,37 +194,22 @@ export class TraderEngine implements ITraderEngine {
     console.log('✅ POOL: Transaction queue connected to MAXIMUM ACTIVITY TraderEngine');
   }
 
-  // 🚨 CRITICAL FIX: Enhanced processTraderActions with PROPER TRADER COUNT TRACKING
+  // CRITICAL FIX: Enhanced processTraderActions with proper pool management
   processTraderActions(simulation: ExtendedSimulationState): void {
-    // 🚨 CRITICAL FIX: Ensure we have the correct trader count
-    const allTraders = simulation.traders || []; // All 118 real Dune Analytics traders
-    const traderCount = allTraders.length;
+    const traders = simulation.traders; // All 118 real Dune Analytics traders
     const speed = simulation.parameters.timeCompressionFactor;
-    
-    // 🚨 CRITICAL FIX: Log the ACTUAL trader count to verify data flow
-    console.log(`🔥 [TRADER COUNT VERIFICATION] Processing ${traderCount} traders from simulation.traders array`);
-    
-    if (traderCount === 0) {
-      console.error('❌ [TRADER DATA FLOW] No traders found in simulation! This indicates a data flow problem.');
-      return;
-    }
     
     // MAXIMUM ACTIVITY MODE: Calculate ultra-aggressive simulation mode
     const simulationMode = this.getMaximumActivityMode(speed);
-    
-    // 🚨 CRITICAL FIX: Calculate active participants with proper trader count
-    const baseActiveCount = Math.max(10, Math.floor(traderCount * simulationMode.participantActivityRate));
-    const activeTraderCount = Math.min(traderCount, baseActiveCount); // Don't exceed available traders
-    
-    console.log(`🔥 [ALL PARTICIPANTS] Activating ${activeTraderCount}/${traderCount} real Dune Analytics traders (${((activeTraderCount/traderCount)*100).toFixed(1)}%)`);
+    console.log(`🔥 [MAXIMUM ACTIVITY] ${simulationMode.name}: Targeting ${simulationMode.tradesPerTick} trades/tick from ALL ${traders.length} participants with pool leak prevention`);
     
     // FORCE MAXIMUM TRADING ACTIVITY
     const tradesGenerated: Trade[] = [];
     let poolErrors = 0;
     
     try {
-      // 1. FORCE MAXIMUM PARTICIPANT ACTIVITY with correct trader data
-      this.forceMaximumParticipantActivity(simulation, tradesGenerated, simulationMode, activeTraderCount);
+      // 1. FORCE ALL 118 PARTICIPANTS TO BE HYPER-ACTIVE
+      this.forceMaximumParticipantActivity(simulation, tradesGenerated, simulationMode);
       
       // 2. GENERATE MASSIVE MARKET MAKER ACTIVITY
       this.generateMaximumMarketMakerActivity(simulation, tradesGenerated, simulationMode);
@@ -334,7 +319,7 @@ export class TraderEngine implements ITraderEngine {
       return {
         name: "MAXIMUM_NORMAL",
         tradesPerTick: 100, // MUCH higher than before (was 25)
-        participantActivityRate: 0.80, // 80% of available participants active per tick
+        participantActivityRate: 0.80, // 80% of 118 participants active per tick
         positionActivityRate: 0.40,
         marketMakerMultiplier: 3
       };
@@ -357,36 +342,23 @@ export class TraderEngine implements ITraderEngine {
     }
   }
 
-  // 🚨 CRITICAL FIX: Force MAXIMUM participant activity with CORRECT trader count tracking
+  // MAXIMUM ACTIVITY: Force ALL 118 participants to be hyper-active
   private forceMaximumParticipantActivity(
     simulation: ExtendedSimulationState, 
     tradesGenerated: Trade[], 
-    mode: any,
-    activeTraderCount: number // Pass the calculated active count
+    mode: any
   ): void {
-    const { traders } = simulation; // All real Dune Analytics traders
-    const totalTraderCount = traders.length;
+    const { traders } = simulation; // All 118 real Dune Analytics traders
+    const activeCount = Math.max(50, Math.floor(traders.length * mode.participantActivityRate));
     
-    // 🚨 CRITICAL FIX: Use the passed activeTraderCount instead of recalculating
-    const finalActiveCount = activeTraderCount;
-    
-    // 🚨 CRITICAL FIX: Validate we have traders to work with
-    if (totalTraderCount === 0) {
-      console.error('❌ [PARTICIPANT ACTIVITY] No traders available in simulation.traders array!');
-      return;
-    }
+    // MAXIMUM MODE: Ensure we use ALL traders in fast mode
+    const finalActiveCount = mode.participantActivityRate >= 1.0 ? traders.length : activeCount;
     
     // Shuffle traders but ensure high activity
     const shuffledTraders = [...traders].sort(() => 0.5 - Math.random());
     const activeTraders = shuffledTraders.slice(0, finalActiveCount);
     
-    console.log(`🔥 [ALL PARTICIPANTS] Activating ${finalActiveCount}/${totalTraderCount} real Dune Analytics traders (${(finalActiveCount/totalTraderCount*100).toFixed(1)}%)`);
-    
-    // 🚨 CRITICAL FIX: Validate that we actually have active traders
-    if (activeTraders.length === 0) {
-      console.error('❌ [PARTICIPANT ACTIVITY] No active traders selected! Check trader data flow.');
-      return;
-    }
+    console.log(`🔥 [ALL PARTICIPANTS] Activating ${finalActiveCount}/${traders.length} real Dune Analytics traders (${(finalActiveCount/traders.length*100).toFixed(1)}%)`);
     
     // Generate multiple trades per active trader for maximum activity
     activeTraders.forEach((trader, index) => {
