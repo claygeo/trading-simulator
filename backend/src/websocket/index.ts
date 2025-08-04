@@ -1,4 +1,4 @@
-// backend/src/websocket/index.ts - FIXED: Race Condition Prevention & Complete setPauseState Handler + ATTEMPTS VARIABLE FIX
+// backend/src/websocket/index.ts - FIXED: Race Condition Prevention & Complete setPauseState Handler
 import { WebSocket, WebSocketServer } from 'ws';
 import { BroadcastManager } from '../services/broadcastManager';
 import { PerformanceMonitor } from '../monitoring/performanceMonitor';
@@ -135,7 +135,7 @@ export function setupWebSocketServer(
           pauseResumeSupport: true,  // 🚨 CRITICAL FIX: Enhanced pause/resume support
           enhancedStateManagement: true // NEW: Enhanced state management
         },
-        version: '2.5.1' // Version bump for attempts variable fix
+        version: '2.5.0' // Version bump for race condition prevention
       }), { binary: false, compress: false, fin: true });
     } catch (error) {
       console.error('Error sending welcome message:', error);
@@ -914,7 +914,7 @@ function getTargetTPSForMode(mode: string): number {
   }
 }
 
-// 🚨 CRITICAL FIX: Enhanced subscription with race condition prevention and ATTEMPTS VARIABLE FIX
+// 🚨 CRITICAL FIX: Enhanced subscription with race condition prevention and attempts variable fix
 async function handleSubscriptionWithRetry(
   ws: WebSocket, 
   message: WebSocketMessage, 
@@ -978,18 +978,18 @@ async function handleSubscriptionWithRetry(
   if (!isReady) {
     console.log(`⏳ [WS SUB] Simulation ${simulationId} not ready yet, will retry for ${clientId}`);
     
-    // 🚨 CRITICAL FIX: Properly get attempts count without undefined variable error
+    // Track subscription attempt
     const subscriptions = clientSubscriptions.get(ws);
-    let currentAttempts = 1;
-    
     if (subscriptions) {
       const existingSubscription = Array.from(subscriptions).find(sub => sub.simulationId === simulationId);
       if (existingSubscription) {
         existingSubscription.subscriptionAttempts++;
-        currentAttempts = existingSubscription.subscriptionAttempts;
+        
+        // 🚨 CRITICAL FIX: Define attempts variable properly
+        const attempts = existingSubscription.subscriptionAttempts;
         
         // Limit retry attempts
-        if (currentAttempts > 10) {
+        if (attempts > 10) {
           console.error(`❌ [WS SUB] Max retry attempts reached for ${simulationId} and ${clientId}`);
           clientState.subscriptionStatus = 'none';
           ws.send(JSON.stringify({
@@ -1009,7 +1009,6 @@ async function handleSubscriptionWithRetry(
             includeTimeframeChanges: true
           }
         });
-        currentAttempts = 1;
       }
     }
     
@@ -1023,12 +1022,13 @@ async function handleSubscriptionWithRetry(
       }
       
       // Set new retry timer with exponential backoff
-      const retryDelay = Math.min(5000, 500 * Math.pow(2, currentAttempts - 1)); // Cap at 5 seconds
+      const attempts = Array.from(subscriptions || []).find(s => s.simulationId === simulationId)?.subscriptionAttempts || 1;
+      const retryDelay = Math.min(5000, 500 * Math.pow(2, attempts - 1)); // Cap at 5 seconds
       
-      console.log(`⏰ [WS SUB] Scheduling retry for ${simulationId} in ${retryDelay}ms (attempt ${currentAttempts})`);
+      console.log(`⏰ [WS SUB] Scheduling retry for ${simulationId} in ${retryDelay}ms (attempt ${attempts})`);
       
       const retryTimer = setTimeout(() => {
-        console.log(`🔄 [WS SUB] Retrying subscription for ${simulationId} (attempt ${currentAttempts + 1})`);
+        console.log(`🔄 [WS SUB] Retrying subscription for ${simulationId} (attempt ${attempts + 1})`);
         handleSubscriptionWithRetry(ws, message, clientId, simulationManager);
       }, retryDelay);
       
@@ -1040,7 +1040,7 @@ async function handleSubscriptionWithRetry(
       type: 'subscription_pending',
       simulationId: simulationId,
       message: 'Simulation still registering, will retry automatically',
-      retryAttempt: currentAttempts,
+      retryAttempt: attempts,
       retryDelay: retryDelay,
       timestamp: Date.now()
     }), { binary: false, compress: false, fin: true });
@@ -1162,11 +1162,10 @@ async function handleSubscriptionWithRetry(
     candleDataIncluded: isSimulationActuallyRunning,
     pauseResumeSupport: true, // 🚨 CRITICAL FIX: Indicate pause/resume support
     raceConditionPrevention: true, // NEW: Indicate race condition prevention
-    attemptsVariableFixed: true, // 🚨 NEW: Indicate attempts variable is fixed
     message: `Successfully subscribed to simulation ${simulationId} using SHARED SimulationManager with enhanced pause/resume support and race condition prevention`
   }), { binary: false, compress: false, fin: true });
   
-  console.log(`🎉 [WS SUB] SUBSCRIPTION SUCCESS! ${clientId} subscribed to ${simulationId} using SHARED manager, trades: ${enhancedState.recentTrades.length}, candles: ${enhancedState.candleCount}, TPS mode: ${enhancedState.currentTPSMode}, actuallyRunning: ${isSimulationActuallyRunning}, pauseResumeEnabled: true, raceConditionPrevention: true, attemptsVariableFixed: true`);
+  console.log(`🎉 [WS SUB] SUBSCRIPTION SUCCESS! ${clientId} subscribed to ${simulationId} using SHARED manager, trades: ${enhancedState.recentTrades.length}, candles: ${enhancedState.candleCount}, TPS mode: ${enhancedState.currentTPSMode}, actuallyRunning: ${isSimulationActuallyRunning}, pauseResumeEnabled: true, raceConditionPrevention: true`);
 }
 
 // Handle subscription with preferences (original function, modified to be race-condition aware)
@@ -1348,8 +1347,7 @@ function handleDebugRequest(ws: WebSocket, clientId: string, broadcastManager?: 
       stressTestSupport: true,
       initialCandleJumpPrevention: true,
       pauseResumeSupport: true, // 🚨 CRITICAL FIX: Include pause/resume support in debug info
-      enhancedStateManagement: true,
-      attemptsVariableFixed: true // 🚨 NEW: Include attempts variable fix status
+      enhancedStateManagement: true
     }
   };
   
@@ -1484,7 +1482,6 @@ export function getSubscriptionStats(wss: WebSocketServer): {
   subscriptionsBySimulation: Map<string, { confirmed: number; pending: number }>;
   raceConditionPrevention: boolean;
   globalOperationLocks: number;
-  attemptsVariableFixed: boolean;
 } {
   const stats = {
     totalConnections: wss.clients.size,
@@ -1492,8 +1489,7 @@ export function getSubscriptionStats(wss: WebSocketServer): {
     pendingSubscriptions: 0,
     subscriptionsBySimulation: new Map<string, { confirmed: number; pending: number }>(),
     raceConditionPrevention: true,
-    globalOperationLocks: globalOperationLocks.size,
-    attemptsVariableFixed: true // 🚨 NEW: Indicate attempts variable is fixed
+    globalOperationLocks: globalOperationLocks.size
   };
   
   wss.clients.forEach((client) => {
