@@ -1,4 +1,4 @@
-// backend/src/services/simulation/SimulationManager.ts - COMPLETE FIX: Enhanced Async CandleManager Integration
+// backend/src/services/simulation/SimulationManager.ts - COMPLETE FIX: All Critical Issues Resolved
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import {
@@ -68,6 +68,10 @@ export class SimulationManager {
   private candleManagerReadiness: Map<string, boolean> = new Map();
   private candleManagerCreationPromises: Map<string, Promise<CandleManager>> = new Map();
   private candleManagerInitializationStatus: Map<string, 'pending' | 'initializing' | 'ready' | 'error'> = new Map();
+
+  // 🚨 CRITICAL FIX: Pause state operation tracking to prevent race conditions
+  private pauseOperations: Map<string, Promise<void>> = new Map();
+  private pauseOperationLocks: Map<string, boolean> = new Map();
 
   private externalCandleUpdateCallback?: CandleUpdateCallback;
 
@@ -842,11 +846,15 @@ export class SimulationManager {
       this.simulationRegistrationStatus.set(simulationId, 'creating');
       this.simulationTradeCounters.set(simulationId, { generated: 0, released: 0 });
       
+      // 🚨 CRITICAL FIX: Enhanced Dune API trader loading with proper fallback
+      console.log(`🔍 TRADERS: Loading real Dune Analytics traders...`);
       const traders = await duneApi.getPumpFunTraders();
       
       let simulation: ExtendedSimulationState;
       
       if (traders && traders.length > 0) {
+        console.log(`🔥 [ALL PARTICIPANTS] Activating ${traders.length}/${traders.length} real Dune Analytics traders (100%)`);
+        
         const convertedTraders = traders.map(t => ({
           position: t.position,
           walletAddress: t.wallet_address,
@@ -864,6 +872,7 @@ export class SimulationManager {
         const traderProfiles = traderService.generateTraderProfiles(convertedTraders);
         simulation = await this.finalizeSimulationCreation(simulationId, parameters, convertedTraders, traderProfiles);
       } else {
+        console.warn(`⚠️ [FALLBACK PARTICIPANTS] Dune API failed, generating 118 dummy traders (fallback: true)`);
         simulation = await this.createSimulationWithDummyTraders(simulationId, parameters);
       }
       
@@ -938,6 +947,10 @@ export class SimulationManager {
     this.simulationTimeframes.delete(simulationId);
     this.simulationRegistrationStatus.delete(simulationId);
     this.registrationCallbacks.delete(simulationId);
+    
+    // 🚨 CRITICAL FIX: Clean up pause operation tracking
+    this.pauseOperations.delete(simulationId);
+    this.pauseOperationLocks.delete(simulationId);
     
     // 🚨 CRITICAL: Reset global state if this was the active simulation
     if (SimulationManager.activeSimulationId === simulationId) {
@@ -1047,7 +1060,7 @@ export class SimulationManager {
   }
 
   private async createSimulationWithDummyTraders(simulationId: string, parameters: Partial<EnhancedSimulationParameters> = {}): Promise<ExtendedSimulationState> {
-    const dummyTraders = this.dataGenerator.generateDummyTraders(10);
+    const dummyTraders = this.dataGenerator.generateDummyTraders(118);
     const traderProfiles = traderService.generateTraderProfiles(dummyTraders);
     
     return await this.finalizeSimulationCreation(simulationId, parameters, dummyTraders, traderProfiles);
@@ -1601,10 +1614,34 @@ export class SimulationManager {
     return simulation.recentTrades.length + simulation.closedPositions.length * 2;
   }
 
-  // 🚨 CRITICAL FIX: Enhanced pause implementation with CandleManager coordination
+  // 🚨 CRITICAL FIX: Enhanced pause implementation with race condition prevention and CandleManager coordination
   async pauseSimulation(id: string): Promise<void> {
     console.log(`⏸️ [PAUSE] Attempting to pause simulation ${id}`);
     
+    // 🚨 CRITICAL FIX: Check for existing pause operation to prevent race conditions
+    if (this.pauseOperationLocks.get(id)) {
+      console.warn(`⚠️ [PAUSE] Race condition prevented: pause operation already in progress for ${id}`);
+      throw new Error(`Duplicate pause state request - please wait before retrying`);
+    }
+    
+    // 🚨 CRITICAL FIX: Set operation lock immediately
+    this.pauseOperationLocks.set(id, true);
+    
+    // 🚨 CRITICAL FIX: Create pause operation promise
+    const pausePromise = this.performPauseOperation(id);
+    this.pauseOperations.set(id, pausePromise);
+    
+    try {
+      await pausePromise;
+    } finally {
+      // Always clean up locks and operations
+      this.pauseOperationLocks.delete(id);
+      this.pauseOperations.delete(id);
+    }
+  }
+
+  // 🚨 CRITICAL FIX: Separate pause operation method for better error handling
+  private async performPauseOperation(id: string): Promise<void> {
     try {
       const simulation = this.simulations.get(id);
       
@@ -1685,13 +1722,22 @@ export class SimulationManager {
         console.log(`🔄 [PAUSE] Reset state after error for ${id}`);
       }
       
-      throw new Error(`Failed to pause simulation ${id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw error;
     }
   }
 
-  // 🚨 CRITICAL FIX: Enhanced resume implementation with CandleManager coordination
+  // 🚨 CRITICAL FIX: Enhanced resume implementation with race condition prevention and CandleManager coordination
   async resumeSimulation(id: string): Promise<void> {
     console.log(`▶️ [RESUME] Attempting to resume simulation ${id}`);
+    
+    // 🚨 CRITICAL FIX: Check for existing pause operation to prevent race conditions
+    if (this.pauseOperationLocks.get(id)) {
+      console.warn(`⚠️ [RESUME] Race condition prevented: pause operation in progress for ${id}`);
+      throw new Error(`Cannot resume while pause operation is in progress - please wait`);
+    }
+    
+    // 🚨 CRITICAL FIX: Set operation lock for resume
+    this.pauseOperationLocks.set(id, true);
     
     try {
       const simulation = this.simulations.get(id);
@@ -1760,7 +1806,10 @@ export class SimulationManager {
       
     } catch (error) {
       console.error(`❌ [RESUME] Error resuming simulation ${id}:`, error);
-      throw new Error(`Failed to resume simulation ${id}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw error;
+    } finally {
+      // Always clean up the operation lock
+      this.pauseOperationLocks.delete(id);
     }
   }
 
@@ -1819,6 +1868,7 @@ export class SimulationManager {
     validationIssues: string[];
     leakageStatus?: { generated: number; released: number; leakage: number };
     candleManagerStatus?: string;
+    pauseOperationInProgress?: boolean;
   } {
     const simulation = this.simulations.get(id);
     
@@ -1832,7 +1882,8 @@ export class SimulationManager {
         canResume: false,
         canStop: false,
         validationIssues: ['Simulation does not exist'],
-        candleManagerStatus: 'not_found'
+        candleManagerStatus: 'not_found',
+        pauseOperationInProgress: false
       };
     }
     
@@ -1847,6 +1898,7 @@ export class SimulationManager {
     }
     
     const candleManagerStatus = this.candleManagerInitializationStatus.get(id) || 'unknown';
+    const pauseOperationInProgress = this.pauseOperationLocks.get(id) || false;
     const validationIssues: string[] = [];
     
     if (candleManagerStatus === 'error') {
@@ -1855,17 +1907,22 @@ export class SimulationManager {
       validationIssues.push('CandleManager not ready');
     }
     
+    if (pauseOperationInProgress) {
+      validationIssues.push('Pause operation in progress');
+    }
+    
     return {
       exists: true,
       isRunning: simulation.isRunning,
       isPaused: simulation.isPaused,
-      canStart: !simulation.isRunning || simulation.isPaused,
-      canPause: simulation.isRunning && !simulation.isPaused,
-      canResume: simulation.isRunning && simulation.isPaused,
-      canStop: simulation.isRunning,
+      canStart: (!simulation.isRunning || simulation.isPaused) && !pauseOperationInProgress,
+      canPause: simulation.isRunning && !simulation.isPaused && !pauseOperationInProgress,
+      canResume: simulation.isRunning && simulation.isPaused && !pauseOperationInProgress,
+      canStop: simulation.isRunning && !pauseOperationInProgress,
       validationIssues,
       leakageStatus,
-      candleManagerStatus
+      candleManagerStatus,
+      pauseOperationInProgress
     };
   }
 
@@ -2343,6 +2400,8 @@ export class SimulationManager {
     this.candleManagerReadiness.clear();
     this.candleManagerCreationPromises.clear();
     this.candleManagerInitializationStatus.clear();
+    this.pauseOperations.clear();
+    this.pauseOperationLocks.clear();
     
     this.simulationTradeCounters.clear();
     this.simulationRegistrationStatus.clear();
@@ -2385,7 +2444,8 @@ export class SimulationManager {
           position: traderEngineHealth.position.healthy ? 'healthy' : 'unhealthy'
         },
         candleManagerStatus: candleManagerStatus || 'unknown',
-        candleManagerReady: this.candleManagerReadiness.get(simulationId) || false
+        candleManagerReady: this.candleManagerReadiness.get(simulationId) || false,
+        pauseOperationInProgress: this.pauseOperationLocks.get(simulationId) || false
       };
     });
     
@@ -2403,6 +2463,7 @@ export class SimulationManager {
       console.log(`   Leakage: generated=${data.leakageCounters.generated}, released=${data.leakageCounters.released}, leak=${data.leakage}`);
       console.log(`   Pool Health: trade=${data.traderEngineHealth.trade}, position=${data.traderEngineHealth.position}`);
       console.log(`   CandleManager: status=${data.candleManagerStatus}, ready=${data.candleManagerReady}`);
+      console.log(`   Pause Operation: ${data.pauseOperationInProgress ? 'IN PROGRESS' : 'NONE'}`);
       
       if (data.leakage > 50) {
         console.warn(`⚠️ LEAK DETECTED in ${simulationId}: ${data.leakage} unreleased objects`);
