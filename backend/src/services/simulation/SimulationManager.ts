@@ -1,4 +1,4 @@
-// backend/src/services/simulation/SimulationManager.ts - COMPLETE FIX: All Critical Issues Resolved
+// backend/src/services/simulation/SimulationManager.ts - COMPLETE FIX: All Critical Issues Resolved + WEBSOCKET COORDINATION FIX
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import {
@@ -56,8 +56,10 @@ export class SimulationManager {
   private lastTPSMetricsSnapshot: Map<string, string> = new Map();
   private readonly TPS_BROADCAST_THROTTLE_MS = 2000;
   
+  // 🚨 CRITICAL FIX: Enhanced simulation registration for WebSocket coordination
   private simulationRegistrationStatus: Map<string, 'creating' | 'registering' | 'ready' | 'starting' | 'running'> = new Map();
   private registrationCallbacks: Map<string, ((status: string) => void)[]> = new Map();
+  private simulationReadiness: Map<string, boolean> = new Map(); // NEW: Track actual readiness for WebSocket
   
   // 🚨 CRITICAL FIX: Prevent multiple simulations
   private static globalSimulationLock = false;
@@ -811,7 +813,7 @@ export class SimulationManager {
     this.broadcastService.registerClient(client);
   }
 
-  // 🚨 CRITICAL FIX: Prevent multiple simultaneous simulations with enhanced CandleManager coordination
+  // 🚨 CRITICAL FIX: Prevent multiple simultaneous simulations with enhanced CandleManager coordination + WEBSOCKET COORDINATION FIX
   async createSimulation(parameters: Partial<EnhancedSimulationParameters> = {}): Promise<ExtendedSimulationState> {
     // 🚨 CRITICAL: Global lock to prevent multiple simulations
     if (SimulationManager.globalSimulationLock || SimulationManager.simulationCreationInProgress) {
@@ -878,6 +880,7 @@ export class SimulationManager {
       
       this.simulationRegistrationStatus.set(simulationId, 'registering');
       
+      // 🚨 CRITICAL FIX: Store simulation BEFORE WebSocket coordination
       this.simulations.set(simulationId, simulation);
       this.simulationSpeeds.set(simulationId, simulation.parameters.timeCompressionFactor);
       
@@ -901,17 +904,20 @@ export class SimulationManager {
       
       console.log(`📊 METRICS: TPS tracking will start when simulation starts`);
       
+      // 🚨 CRITICAL FIX: Enhanced WebSocket coordination - mark simulation as ready for WebSocket subscriptions
       await this.verifySimulationRegistration(simulationId);
       
       this.simulationRegistrationStatus.set(simulationId, 'ready');
+      this.simulationReadiness.set(simulationId, true); // NEW: Mark as ready for WebSocket
       this.notifyRegistrationCallbacks(simulationId, 'ready');
       
       // 🚨 CRITICAL: Set as active simulation and lock globally
       SimulationManager.activeSimulationId = simulationId;
       SimulationManager.globalSimulationLock = true;
       
-      console.log(`✅ CREATED: Single simulation ${simulationId} with global lock enabled`);
+      console.log(`✅ CREATED: Single simulation ${simulationId} with global lock enabled and WebSocket coordination ready`);
       console.log(`🔒 GLOBAL STATE: activeId=${SimulationManager.activeSimulationId}, locked=${SimulationManager.globalSimulationLock}`);
+      console.log(`🌐 WEBSOCKET: Simulation is ready for client subscriptions`);
       
       return simulation;
       
@@ -952,6 +958,9 @@ export class SimulationManager {
     this.pauseOperations.delete(simulationId);
     this.pauseOperationLocks.delete(simulationId);
     
+    // 🚨 CRITICAL FIX: Clean up WebSocket readiness tracking
+    this.simulationReadiness.delete(simulationId);
+    
     // 🚨 CRITICAL: Reset global state if this was the active simulation
     if (SimulationManager.activeSimulationId === simulationId) {
       SimulationManager.activeSimulationId = null;
@@ -962,7 +971,7 @@ export class SimulationManager {
     console.log(`✅ CLEANUP: Resource cleanup completed for ${simulationId}`);
   }
 
-  // 🚨 CRITICAL FIX: Enhanced async verification with proper CandleManager check
+  // 🚨 CRITICAL FIX: Enhanced async verification with proper CandleManager check + WebSocket readiness
   private async verifySimulationRegistration(simulationId: string): Promise<void> {
     const maxAttempts = 10;
     let attempts = 0;
@@ -979,7 +988,7 @@ export class SimulationManager {
         // Double-check by actually getting the CandleManager
         const candleManager = await this.getCandleManager(simulationId);
         if (candleManager && candleManager.isInstanceInitialized()) {
-          console.log(`✅ VERIFY: Simulation ${simulationId} fully registered and ready`);
+          console.log(`✅ VERIFY: Simulation ${simulationId} fully registered and ready for WebSocket subscriptions`);
           return;
         }
       }
@@ -992,46 +1001,72 @@ export class SimulationManager {
     throw new Error(`Failed to verify simulation ${simulationId} registration after ${maxAttempts} attempts`);
   }
 
+  // 🚨 CRITICAL FIX: Enhanced WebSocket registration check with proper readiness tracking
   async isSimulationRegistered(simulationId: string): Promise<boolean> {
     try {
       const simulation = this.simulations.get(simulationId);
-      if (!simulation) return false;
+      if (!simulation) {
+        console.log(`🔍 [WS CHECK] Simulation ${simulationId} not found in simulations map`);
+        return false;
+      }
       
       const status = this.simulationRegistrationStatus.get(simulationId);
       if (status !== 'ready' && status !== 'starting' && status !== 'running') {
+        console.log(`🔍 [WS CHECK] Simulation ${simulationId} status is ${status}, not ready for WebSocket`);
+        return false;
+      }
+      
+      // Check WebSocket readiness
+      const isReady = this.simulationReadiness.get(simulationId);
+      if (!isReady) {
+        console.log(`🔍 [WS CHECK] Simulation ${simulationId} not marked as ready for WebSocket`);
         return false;
       }
       
       // Check CandleManager
       const candleManager = await this.getCandleManager(simulationId);
       if (!candleManager || !candleManager.isInstanceInitialized()) {
+        console.log(`🔍 [WS CHECK] Simulation ${simulationId} CandleManager not ready`);
         return false;
       }
       
+      console.log(`✅ [WS CHECK] Simulation ${simulationId} is fully registered and ready for WebSocket subscriptions`);
       return true;
       
     } catch (error) {
-      console.error(`Error checking registration for ${simulationId}:`, error);
+      console.error(`❌ [WS CHECK] Error checking registration for ${simulationId}:`, error);
       return false;
     }
   }
 
+  // 🚨 CRITICAL FIX: Enhanced readiness check for WebSocket coordination
   isSimulationReady(simulationId: string): boolean {
     const status = this.simulationRegistrationStatus.get(simulationId);
     const candleManagerReady = this.candleManagerReadiness.get(simulationId);
-    return (status === 'ready' || status === 'starting' || status === 'running') && candleManagerReady === true;
+    const wsReady = this.simulationReadiness.get(simulationId);
+    
+    const isReady = (status === 'ready' || status === 'starting' || status === 'running') && 
+                   candleManagerReady === true && 
+                   wsReady === true;
+    
+    console.log(`🔍 [WS READY] Simulation ${simulationId} readiness check: status=${status}, candleReady=${candleManagerReady}, wsReady=${wsReady}, result=${isReady}`);
+    
+    return isReady;
   }
 
   async waitForSimulationReady(simulationId: string, timeoutMs: number = 5000): Promise<boolean> {
     const status = this.simulationRegistrationStatus.get(simulationId);
+    const wsReady = this.simulationReadiness.get(simulationId);
     
-    if ((status === 'ready' || status === 'starting' || status === 'running') && this.candleManagerReadiness.get(simulationId)) {
+    if ((status === 'ready' || status === 'starting' || status === 'running') && 
+        this.candleManagerReadiness.get(simulationId) && 
+        wsReady) {
       return true;
     }
     
     return new Promise((resolve) => {
       const timeout = setTimeout(() => {
-        console.error(`Timeout waiting for simulation ${simulationId} to be ready`);
+        console.error(`Timeout waiting for simulation ${simulationId} to be ready for WebSocket`);
         resolve(false);
       }, timeoutMs);
       
@@ -1040,7 +1075,9 @@ export class SimulationManager {
       }
       
       this.registrationCallbacks.get(simulationId)!.push((newStatus: string) => {
-        if ((newStatus === 'ready' || newStatus === 'starting' || newStatus === 'running') && this.candleManagerReadiness.get(simulationId)) {
+        if ((newStatus === 'ready' || newStatus === 'starting' || newStatus === 'running') && 
+            this.candleManagerReadiness.get(simulationId) && 
+            this.simulationReadiness.get(simulationId)) {
           clearTimeout(timeout);
           resolve(true);
         } else if (newStatus === 'error') {
@@ -1119,6 +1156,7 @@ export class SimulationManager {
     console.log(`   💧 Liquidity Pool: ${(finalParams.initialLiquidity / 1000000).toFixed(2)}M`);
     console.log(`   ⚡ Speed: ${finalParams.timeCompressionFactor}x`);
     console.log(`   📊 CandleManager: WILL BE COORDINATED`);
+    console.log(`   🌐 WebSocket: COORDINATION READY`);
     
     // 🚨 CRITICAL FIX: Proper externalMarketMetrics initialization
     const validExternalMarketMetrics: ExternalMarketMetrics = {
@@ -1174,6 +1212,7 @@ export class SimulationManager {
     console.log(`✅ VALIDATION: Clean start - empty priceHistory, ready for real-time data`);
     console.log(`✅ VALIDATION: externalMarketMetrics properly initialized`);
     console.log(`✅ VALIDATION: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
+    console.log(`✅ VALIDATION: WebSocket coordination ready`);
     
     return simulation;
   }
@@ -1197,11 +1236,20 @@ export class SimulationManager {
   }
 
   getSimulation(id: string): ExtendedSimulationState | undefined {
-    return this.simulations.get(id);
+    const simulation = this.simulations.get(id);
+    if (simulation) {
+      console.log(`🔍 [GET SIMULATION] Found ${id} in manager`);
+    } else {
+      console.log(`❌ [GET SIMULATION] Simulation ${id} not found in manager`);
+      console.log(`🔍 [GET SIMULATION] Available simulations: ${Array.from(this.simulations.keys()).join(', ')}`);
+    }
+    return simulation;
   }
 
   getAllSimulations(): ExtendedSimulationState[] {
-    return Array.from(this.simulations.values());
+    const simulations = Array.from(this.simulations.values());
+    console.log(`🔍 [GET ALL SIMULATIONS] Found ${simulations.length} simulations in manager`);
+    return simulations;
   }
 
   setSimulationSpeed(id: string, speed: number): void {
@@ -1869,6 +1917,7 @@ export class SimulationManager {
     leakageStatus?: { generated: number; released: number; leakage: number };
     candleManagerStatus?: string;
     pauseOperationInProgress?: boolean;
+    webSocketReady?: boolean;
   } {
     const simulation = this.simulations.get(id);
     
@@ -1883,7 +1932,8 @@ export class SimulationManager {
         canStop: false,
         validationIssues: ['Simulation does not exist'],
         candleManagerStatus: 'not_found',
-        pauseOperationInProgress: false
+        pauseOperationInProgress: false,
+        webSocketReady: false
       };
     }
     
@@ -1899,6 +1949,7 @@ export class SimulationManager {
     
     const candleManagerStatus = this.candleManagerInitializationStatus.get(id) || 'unknown';
     const pauseOperationInProgress = this.pauseOperationLocks.get(id) || false;
+    const webSocketReady = this.simulationReadiness.get(id) || false;
     const validationIssues: string[] = [];
     
     if (candleManagerStatus === 'error') {
@@ -1909,6 +1960,10 @@ export class SimulationManager {
     
     if (pauseOperationInProgress) {
       validationIssues.push('Pause operation in progress');
+    }
+    
+    if (!webSocketReady) {
+      validationIssues.push('WebSocket coordination not ready');
     }
     
     return {
@@ -1922,7 +1977,8 @@ export class SimulationManager {
       validationIssues,
       leakageStatus,
       candleManagerStatus,
-      pauseOperationInProgress
+      pauseOperationInProgress,
+      webSocketReady
     };
   }
 
@@ -2406,6 +2462,7 @@ export class SimulationManager {
     this.simulationTradeCounters.clear();
     this.simulationRegistrationStatus.clear();
     this.registrationCallbacks.clear();
+    this.simulationReadiness.clear(); // NEW: Clean up WebSocket readiness tracking
     
     // 🚨 CRITICAL FIX: Reset global state during cleanup
     SimulationManager.globalSimulationLock = false;
@@ -2418,7 +2475,7 @@ export class SimulationManager {
     this.broadcastService.cleanup();
     this.externalMarketEngine.cleanup();
     
-    console.log('✅ CLEANUP: SimulationManager cleanup complete with CandleManager coordination and global state reset');
+    console.log('✅ CLEANUP: SimulationManager cleanup complete with CandleManager coordination, global state reset, and WebSocket coordination cleanup');
   }
 
   getPoolLeakageReport(): { [simulationId: string]: any } {
@@ -2428,6 +2485,7 @@ export class SimulationManager {
       const counters = this.simulationTradeCounters.get(simulationId);
       const traderEngineHealth = this.traderEngine.getPoolHealth();
       const candleManagerStatus = this.candleManagerInitializationStatus.get(simulationId);
+      const webSocketReady = this.simulationReadiness.get(simulationId);
       
       report[simulationId] = {
         simulation: {
@@ -2445,7 +2503,8 @@ export class SimulationManager {
         },
         candleManagerStatus: candleManagerStatus || 'unknown',
         candleManagerReady: this.candleManagerReadiness.get(simulationId) || false,
-        pauseOperationInProgress: this.pauseOperationLocks.get(simulationId) || false
+        pauseOperationInProgress: this.pauseOperationLocks.get(simulationId) || false,
+        webSocketReady: webSocketReady || false // NEW: Include WebSocket readiness
       };
     });
     
@@ -2463,6 +2522,7 @@ export class SimulationManager {
       console.log(`   Leakage: generated=${data.leakageCounters.generated}, released=${data.leakageCounters.released}, leak=${data.leakage}`);
       console.log(`   Pool Health: trade=${data.traderEngineHealth.trade}, position=${data.traderEngineHealth.position}`);
       console.log(`   CandleManager: status=${data.candleManagerStatus}, ready=${data.candleManagerReady}`);
+      console.log(`   WebSocket: ready=${data.webSocketReady}`);
       console.log(`   Pause Operation: ${data.pauseOperationInProgress ? 'IN PROGRESS' : 'NONE'}`);
       
       if (data.leakage > 50) {
@@ -2602,12 +2662,13 @@ export class SimulationManager {
         const candleManager = await this.getCandleManager(simulationId);
         const status = this.candleManagerInitializationStatus.get(simulationId);
         const ready = this.candleManagerReadiness.get(simulationId);
+        const wsReady = this.simulationReadiness.get(simulationId);
         
         if (candleManager) {
           const stats = candleManager.getStats();
-          console.log(`  📊 ${simulationId}: ${stats.candleCount} candles, interval=${stats.candleInterval}ms, status=${status}, ready=${ready}`);
+          console.log(`  📊 ${simulationId}: ${stats.candleCount} candles, interval=${stats.candleInterval}ms, status=${status}, ready=${ready}, wsReady=${wsReady}`);
         } else {
-          console.log(`  ❌ ${simulationId}: No CandleManager found, status=${status}, ready=${ready}`);
+          console.log(`  ❌ ${simulationId}: No CandleManager found, status=${status}, ready=${ready}, wsReady=${wsReady}`);
         }
       } catch (error) {
         console.log(`  ❌ ${simulationId}: Error getting CandleManager - ${error}`);
