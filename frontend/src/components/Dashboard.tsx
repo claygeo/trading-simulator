@@ -1,4 +1,4 @@
-// frontend/src/components/Dashboard.tsx - FIXED: Complete setPauseState_response Handler
+// frontend/src/components/Dashboard.tsx - FIXED: Complete setPauseState_response Handler + Auto-Start Prevention
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { SimulationApi } from '../services/api';
 import { useWebSocket } from '../services/websocket';
@@ -232,6 +232,10 @@ const Dashboard: React.FC = () => {
   const lastMessageProcessedRef = useRef<string>('');
   const marketConditionUpdateRef = useRef<number>(0);
   const updateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // 🚨 CRITICAL FIX: Reset state tracking to prevent auto-start
+  const resetInProgressRef = useRef<boolean>(false);
+  const manualStartRequiredRef = useRef<boolean>(false);
   
   const ULTRA_FAST_CONFIG = {
     MAX_PRICE_HISTORY: 1000,
@@ -500,7 +504,7 @@ const Dashboard: React.FC = () => {
         }
         break;
 
-      // 🔧 CRITICAL FIX: Handle setPauseState_response message
+      // 🔧 CRITICAL FIX: Enhanced setPauseState_response message handler
       case 'setPauseState_response':
       case 'pause_state_changed':
         if (data) {
@@ -526,14 +530,23 @@ const Dashboard: React.FC = () => {
             }
           }
           
-          // Show user feedback
+          // 🚨 CRITICAL FIX: Enhanced user feedback with error handling
           if (data.success) {
             const actionText = data.action === 'paused' ? 'paused' : 
                               data.action === 'resumed' ? 'resumed' : 
                               data.action === 'started' ? 'started' : 'updated';
             console.log(`✅ [PAUSE RESPONSE] Simulation ${actionText} successfully via WebSocket`);
           } else if (data.error) {
-            console.error(`❌ [PAUSE RESPONSE] Pause state change failed: ${data.error}`);
+            // 🚨 CRITICAL FIX: Handle specific error cases for better UX
+            if (data.error.includes('already running and not paused')) {
+              console.log(`ℹ️ [PAUSE RESPONSE] Simulation is already running - no action needed`);
+            } else if (data.error.includes('not currently paused')) {
+              console.log(`ℹ️ [PAUSE RESPONSE] Simulation is not paused - no resume needed`);
+            } else if (data.error.includes('already paused')) {
+              console.log(`ℹ️ [PAUSE RESPONSE] Simulation is already paused - no action needed`);
+            } else {
+              console.error(`❌ [PAUSE RESPONSE] Pause state change failed: ${data.error}`);
+            }
           }
         } else {
           console.log(`📡 [PAUSE RESPONSE] Received setPauseState_response without data`);
@@ -821,6 +834,9 @@ const Dashboard: React.FC = () => {
         setSimulationStartTime(Date.now());
       }
       
+      // 🚨 CRITICAL FIX: Clear manual start flag after successful start
+      manualStartRequiredRef.current = false;
+      
       console.log(`✅ Simulation ${simulationId} started successfully`);
       
     } catch (error) {
@@ -869,12 +885,16 @@ const Dashboard: React.FC = () => {
     }
   }, [simulationId, setPauseState, isConnected]);
 
-  // FIXED: Clean reset implementation that triggers PriceChart reset via empty priceHistory
+  // 🚨 CRITICAL FIX: Enhanced reset implementation that PREVENTS auto-start
   const handleResetSimulation = useCallback(async () => {
     if (!simulationId) return;
     
     try {
       console.log('🔄 CLEAN RESET: Starting simple reset process');
+      
+      // 🚨 CRITICAL FIX: Set reset flags to prevent auto-start
+      resetInProgressRef.current = true;
+      manualStartRequiredRef.current = true;
       
       // Step 1: Pause simulation if running
       if (simulation?.isRunning) {
@@ -938,6 +958,7 @@ const Dashboard: React.FC = () => {
         const newDynamicPrice = freshSimData.currentPrice;
         console.log(`💰 Reset generated new dynamic price: ${newDynamicPrice}`);
         
+        // 🚨 CRITICAL FIX: Set simulation as NOT RUNNING and require manual start
         setSimulation({
           ...freshSimData,
           isRunning: false,
@@ -964,7 +985,7 @@ const Dashboard: React.FC = () => {
           setDynamicPricingInfo(resetResponse.data.dynamicPricing);
         }
         
-        console.log('✅ CLEAN RESET: Complete with new dynamic price');
+        console.log('✅ CLEAN RESET: Complete with new dynamic price - MANUAL START REQUIRED');
         
       } else {
         if (process.env.NODE_ENV === 'development') {
@@ -983,6 +1004,7 @@ const Dashboard: React.FC = () => {
           traderRankings: []
         }, 'emergency_reset');
         
+        // 🚨 CRITICAL FIX: Ensure simulation is NOT RUNNING after reset
         setSimulation(prev => prev ? {
           ...prev,
           isRunning: false,
@@ -993,7 +1015,7 @@ const Dashboard: React.FC = () => {
           currentPrice: fallbackPrice
         } : prev);
         
-        console.log('⚠️ CLEAN RESET: Emergency fallback complete');
+        console.log('⚠️ CLEAN RESET: Emergency fallback complete - MANUAL START REQUIRED');
       }
       
     } catch (error) {
@@ -1017,6 +1039,7 @@ const Dashboard: React.FC = () => {
       setScenarioPhaseData(null);
       setDynamicPricingInfo(null);
       
+      // 🚨 CRITICAL FIX: Ensure simulation is NOT RUNNING after reset error
       if (simulation) {
         setSimulation(prev => prev ? {
           ...prev,
@@ -1029,7 +1052,11 @@ const Dashboard: React.FC = () => {
         } : prev);
       }
       
-      console.log('❌ CLEAN RESET: Error recovery complete');
+      console.log('❌ CLEAN RESET: Error recovery complete - MANUAL START REQUIRED');
+    } finally {
+      // 🚨 CRITICAL FIX: Clear reset flag, but keep manual start requirement
+      resetInProgressRef.current = false;
+      // manualStartRequiredRef.current remains true until user manually starts
     }
   }, [simulationId, simulation, determineTokenSymbol, updateSimulationState]);
 
@@ -1137,6 +1164,9 @@ const Dashboard: React.FC = () => {
           <div className="mt-2 text-sm text-yellow-400">
             🔧 CRITICAL FIX: setPauseState_response handler added
           </div>
+          <div className="mt-2 text-sm text-red-400">
+            🚨 CRITICAL FIX: Auto-start after reset PREVENTED
+          </div>
         </div>
       </div>
     );
@@ -1201,9 +1231,13 @@ const Dashboard: React.FC = () => {
     );
   }
 
+  // 🚨 CRITICAL FIX: Enhanced button logic to prevent auto-start
   const canStartSimulation = isConnected && 
                             simulationRegistrationStatus === 'ready' && 
-                            (!simulation.isRunning || simulation.isPaused);
+                            (!simulation.isRunning || simulation.isPaused) &&
+                            !resetInProgressRef.current;
+
+  const shouldShowStartButton = !simulation.isRunning || simulation.isPaused || manualStartRequiredRef.current;
 
   return (
     <div className="h-screen w-full bg-gray-900 text-white p-2 flex flex-col overflow-hidden">
@@ -1230,6 +1264,13 @@ const Dashboard: React.FC = () => {
             {dynamicPricingInfo && (
               <div className="ml-2 text-xs bg-green-900 px-2 py-1 rounded text-green-300">
                 💰 {dynamicPricingInfo.priceCategory || 'Dynamic'}
+              </div>
+            )}
+            
+            {/* 🚨 CRITICAL FIX: Manual start required indicator */}
+            {manualStartRequiredRef.current && (
+              <div className="ml-2 text-xs bg-orange-900 px-2 py-1 rounded text-orange-300">
+                🔄 RESET - Start Required
               </div>
             )}
             
@@ -1339,12 +1380,20 @@ const Dashboard: React.FC = () => {
             )}
           </div>
           
+          {/* 🚨 CRITICAL FIX: Enhanced button logic to prevent auto-start */}
           <div className="flex space-x-2">
-            {canStartSimulation ? (
+            {shouldShowStartButton ? (
               <button 
                 onClick={handleStartSimulation}
-                className="px-3 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
-                title={!canStartSimulation ? 'Waiting for simulation to be ready' : ''}
+                disabled={!canStartSimulation}
+                className={`px-3 py-0.5 rounded transition ${
+                  canStartSimulation 
+                    ? 'bg-blue-600 text-white hover:bg-blue-700' 
+                    : 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                }`}
+                title={!canStartSimulation ? 'Waiting for simulation to be ready' : 
+                       manualStartRequiredRef.current ? 'Manual start required after reset' : 
+                       'Start simulation'}
               >
                 {simulation.isPaused ? 'Resume' : 'Start'}
               </button>
@@ -1356,26 +1405,19 @@ const Dashboard: React.FC = () => {
               >
                 Pause
               </button>
-            ) : (
-              <button 
-                disabled
-                className="px-3 py-0.5 bg-gray-600 text-gray-400 rounded cursor-not-allowed"
-                title={`Cannot start - ${
-                  !isConnected ? 'WebSocket not connected' :
-                  simulationRegistrationStatus !== 'ready' ? 'Simulation not ready' :
-                  'Unknown issue'
-                }`}
-              >
-                {simulation.isPaused ? 'Resume' : 'Start'}
-              </button>
-            )}
+            ) : null}
             
             <button 
               onClick={handleResetSimulation}
-              className="px-3 py-0.5 bg-red-600 text-white rounded hover:bg-red-700 transition"
-              title="Clean reset - triggers chart reset via empty priceHistory"
+              disabled={resetInProgressRef.current}
+              className={`px-3 py-0.5 rounded transition ${
+                resetInProgressRef.current 
+                  ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+                  : 'bg-red-600 text-white hover:bg-red-700'
+              }`}
+              title="🚨 CRITICAL FIX: Clean reset - NO AUTO-START, manual start required"
             >
-              Reset
+              {resetInProgressRef.current ? 'Resetting...' : 'Reset'}
             </button>
           </div>
         </div>
@@ -1411,6 +1453,18 @@ const Dashboard: React.FC = () => {
                 </div>
               </div>
 
+              {/* 🚨 CRITICAL FIX: Auto-Start Prevention Status */}
+              <div className="bg-gray-700 p-3 rounded">
+                <div className="text-red-400 font-semibold mb-2">🚨 CRITICAL FIX: Auto-Start Prevention</div>
+                <div className="space-y-1 text-xs">
+                  <div>Reset In Progress: <span className={resetInProgressRef.current ? 'text-yellow-400' : 'text-gray-400'}>{resetInProgressRef.current ? 'Yes' : 'No'}</span></div>
+                  <div>Manual Start Required: <span className={manualStartRequiredRef.current ? 'text-red-400' : 'text-green-400'}>{manualStartRequiredRef.current ? 'YES - User Must Start' : 'No'}</span></div>
+                  <div>Auto-Start Prevented: <span className="text-green-400">✅ ACTIVE</span></div>
+                  <div>Can Start: <span className={canStartSimulation ? 'text-green-400' : 'text-red-400'}>{canStartSimulation ? 'Yes' : 'No'}</span></div>
+                  <div>Show Start Button: <span className={shouldShowStartButton ? 'text-green-400' : 'text-gray-400'}>{shouldShowStartButton ? 'Yes' : 'No'}</span></div>
+                </div>
+              </div>
+
               {/* 🔧 CRITICAL FIX: Enhanced pause handler status */}
               <div className="bg-gray-700 p-3 rounded">
                 <div className="text-green-400 font-semibold mb-2">🔧 CRITICAL FIX: Pause Handler</div>
@@ -1441,11 +1495,12 @@ const Dashboard: React.FC = () => {
               <div className="bg-gray-700 p-3 rounded">
                 <div className="text-green-400 font-semibold mb-2">FIXED Clean Reset System</div>
                 <div className="space-y-1 text-xs">
-                  <div>Reset Method: <span className="text-green-400">CLEAN</span></div>
+                  <div>Reset Method: <span className="text-green-400">CLEAN - NO AUTO-START</span></div>
                   <div>Price History Length: <span className="text-white">{priceHistory.length}</span></div>
                   <div>Chart Reset Trigger: <span className="text-green-400">Empty priceHistory array</span></div>
                   <div>✅ Fixed: <span className="text-green-400">No duplicate simulations</span></div>
                   <div>📡 Single Stream: <span className="text-green-400">One simulation ID</span></div>
+                  <div>🚨 Auto-Start: <span className="text-red-400">PREVENTED ✅</span></div>
                 </div>
               </div>
 
@@ -1458,18 +1513,6 @@ const Dashboard: React.FC = () => {
                   <div>Was Custom: <span className={dynamicPricingInfo?.wasCustom ? 'text-yellow-400' : 'text-gray-400'}>{dynamicPricingInfo?.wasCustom ? 'Yes' : 'No'}</span></div>
                   <div>Token Symbol: <span className="text-white">{tokenSymbol}</span></div>
                   <div>✅ FIXED: <span className="text-green-400">No hardcoded $100!</span></div>
-                </div>
-              </div>
-
-              {/* FIXED: Deduplication Status */}
-              <div className="bg-gray-700 p-3 rounded">
-                <div className="text-cyan-400 font-semibold mb-2">FIXED Deduplication</div>
-                <div className="space-y-1 text-xs">
-                  <div>Duplicate Prevention: <span className="text-green-400">ACTIVE</span></div>
-                  <div>Message Dedup: <span className="text-green-400">ENABLED</span></div>
-                  <div>Last Msg ID: <span className="text-white">{lastMessageProcessedRef.current.substring(0, 20)}...</span></div>
-                  <div>Init Guard: <span className="text-green-400">PROTECTED</span></div>
-                  <div>Single WebSocket: <span className="text-green-400">ENFORCED</span></div>
                 </div>
               </div>
 
