@@ -813,7 +813,7 @@ export class SimulationManager {
     this.broadcastService.registerClient(client);
   }
 
-  // 🚨 CRITICAL FIX: Prevent multiple simultaneous simulations with enhanced coordination
+  // 🚨 CRITICAL FIX: Enhanced trader loading with comprehensive validation and logging
   async createSimulation(parameters: Partial<EnhancedSimulationParameters> = {}): Promise<ExtendedSimulationState> {
     // Global lock to prevent multiple simulations
     if (SimulationManager.globalSimulationLock || SimulationManager.simulationCreationInProgress) {
@@ -848,34 +848,94 @@ export class SimulationManager {
       this.simulationRegistrationStatus.set(simulationId, 'creating');
       this.simulationTradeCounters.set(simulationId, { generated: 0, released: 0 });
       
-      // Enhanced Dune API trader loading with proper fallback
+      // 🚨 CRITICAL FIX: Enhanced Dune API trader loading with proper logging
       console.log(`🔍 TRADERS: Loading real Dune Analytics traders...`);
-      const traders = await duneApi.getPumpFunTraders();
+      
+      let traders: any[];
+      let traderLoadingMethod = 'unknown';
+      
+      try {
+        // First attempt: Load from Dune API
+        const duneTraders = await duneApi.getPumpFunTraders();
+        
+        if (duneTraders && duneTraders.length > 0) {
+          traders = duneTraders;
+          traderLoadingMethod = 'dune_api';
+          console.log(`✅ [DUNE SUCCESS] Loaded ${traders.length} real traders from Dune Analytics API`);
+        } else {
+          console.warn(`⚠️ [DUNE EMPTY] Dune API returned empty or null data`);
+          throw new Error('Dune API returned no traders');
+        }
+      } catch (duneError) {
+        console.error(`❌ [DUNE FAILED] Dune API error:`, duneError);
+        
+        // Fallback: Generate dummy traders
+        console.log(`🔄 [FALLBACK] Generating 118 dummy traders as fallback...`);
+        traders = this.dataGenerator.generateDummyTraders(118);
+        traderLoadingMethod = 'dummy_fallback';
+      }
+      
+      // 🚨 CRITICAL FIX: Validate trader count and log results
+      const traderCount = traders ? traders.length : 0;
+      console.log(`🔥 [TRADER COUNT VERIFICATION] Loaded ${traderCount} traders using method: ${traderLoadingMethod}`);
+      
+      if (traderCount === 0) {
+        console.error(`❌ [TRADER DATA FLOW] CRITICAL: No traders loaded! This will break trading activity.`);
+        console.error(`❌ [TRADER DATA FLOW] Expected: 118 real Dune Analytics traders`);
+        console.error(`❌ [TRADER DATA FLOW] Actual: 0 traders`);
+        
+        // Emergency fallback
+        console.log(`🚨 [EMERGENCY] Creating emergency dummy traders...`);
+        traders = this.dataGenerator.generateDummyTraders(118);
+        traderLoadingMethod = 'emergency_dummy';
+        console.log(`🔥 [EMERGENCY] Created ${traders.length} emergency dummy traders`);
+      }
+      
+      // Final validation
+      const finalTraderCount = traders ? traders.length : 0;
+      
+      if (finalTraderCount === 118) {
+        console.log(`🔥 [ALL PARTICIPANTS] Activating ${finalTraderCount}/${finalTraderCount} traders (100%) - Method: ${traderLoadingMethod}`);
+      } else {
+        console.warn(`⚠️ [TRADER COUNT MISMATCH] Expected 118 traders, got ${finalTraderCount} - Method: ${traderLoadingMethod}`);
+      }
       
       let simulation: ExtendedSimulationState;
       
       if (traders && traders.length > 0) {
-        console.log(`🔥 [ALL PARTICIPANTS] Activating ${traders.length}/${traders.length} real Dune Analytics traders (100%)`);
-        
+        // Convert traders to proper format
         const convertedTraders = traders.map(t => ({
-          position: t.position,
-          walletAddress: t.wallet_address,
-          netPnl: t.net_pnl,
-          totalVolume: t.total_volume,
-          buyVolume: t.buy_volume,
-          sellVolume: t.sell_volume,
-          tradeCount: t.trade_count,
-          feesUsd: t.fees_usd,
-          winRate: t.win_rate || 0.5,
+          position: t.position || 0,
+          walletAddress: t.wallet_address || t.walletAddress || `trader_${Math.random().toString(36).substr(2, 8)}`,
+          netPnl: t.net_pnl || t.netPnl || 0,
+          totalVolume: t.total_volume || t.totalVolume || 10000,
+          buyVolume: t.buy_volume || t.buyVolume || 5000,
+          sellVolume: t.sell_volume || t.sellVolume || 5000,
+          tradeCount: t.trade_count || t.tradeCount || 10,
+          feesUsd: t.fees_usd || t.feesUsd || 50,
+          winRate: t.win_rate || t.winRate || 0.5,
           riskProfile: this.dataGenerator.determineRiskProfile(t),
-          portfolioEfficiency: t.net_pnl / (t.total_volume || 1)
+          portfolioEfficiency: (t.net_pnl || t.netPnl || 0) / (t.total_volume || t.totalVolume || 1)
         }));
         
+        console.log(`🔄 [TRADER PROCESSING] Converting ${convertedTraders.length} traders to profiles...`);
         const traderProfiles = traderService.generateTraderProfiles(convertedTraders);
+        console.log(`✅ [TRADER PROFILES] Generated ${traderProfiles.length} trader profiles`);
+        
         simulation = await this.finalizeSimulationCreation(simulationId, parameters, convertedTraders, traderProfiles);
       } else {
-        console.warn(`⚠️ [FALLBACK PARTICIPANTS] Dune API failed, generating 118 dummy traders (fallback: true)`);
-        simulation = await this.createSimulationWithDummyTraders(simulationId, parameters);
+        console.error(`🚨 [CRITICAL ERROR] No traders available after all attempts!`);
+        throw new Error('Failed to load any traders for simulation');
+      }
+      
+      // 🚨 CRITICAL FIX: Double-check simulation has traders
+      const simulationTraderCount = simulation.traders ? simulation.traders.length : 0;
+      console.log(`🔥 [FINAL VERIFICATION] Simulation ${simulationId} created with ${simulationTraderCount} traders`);
+      
+      if (simulationTraderCount === 0) {
+        console.error(`❌ [FINAL VERIFICATION] CRITICAL: Simulation created with 0 traders!`);
+        console.error(`❌ [FINAL VERIFICATION] This will cause the TraderEngine to show "No traders found"`);
+        throw new Error('Simulation created with no traders - this will break trading activity');
       }
       
       this.simulationRegistrationStatus.set(simulationId, 'registering');
@@ -912,7 +972,7 @@ export class SimulationManager {
       SimulationManager.activeSimulationId = simulationId;
       SimulationManager.globalSimulationLock = true;
       
-      console.log(`✅ CREATED: Single simulation ${simulationId} with global lock enabled`);
+      console.log(`✅ CREATED: Single simulation ${simulationId} with ${simulationTraderCount} traders and global lock enabled`);
       console.log(`🔒 GLOBAL STATE: activeId=${SimulationManager.activeSimulationId}, locked=${SimulationManager.globalSimulationLock}`);
       
       return simulation;
@@ -924,11 +984,7 @@ export class SimulationManager {
       SimulationManager.globalSimulationLock = false;
       SimulationManager.activeSimulationId = null;
       
-      const emergencySimulation = await this.createSimulationWithDummyTraders(uuidv4(), parameters);
-      SimulationManager.activeSimulationId = emergencySimulation.id;
-      SimulationManager.globalSimulationLock = true;
-      
-      return emergencySimulation;
+      throw error;
     } finally {
       SimulationManager.simulationCreationInProgress = false;
     }

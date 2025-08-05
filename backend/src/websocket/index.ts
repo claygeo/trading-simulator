@@ -389,7 +389,7 @@ async function handleSubscriptionWithRetry(
         clearTimeout(existingTimer);
       }
       
-      // 🚨 CRITICAL FIX: Use proper variable scoping for retryDelay and attempts
+      // 🚨 CRITICAL FIX: Use proper variable scoping for retryDelay
       const retryDelay = Math.min(5000, 500 * Math.pow(2, attempts - 1)); // Now properly scoped
       
       console.log(`⏰ [WS SUB] Scheduling retry for ${simulationId} in ${retryDelay}ms (attempt ${attempts})`);
@@ -408,7 +408,7 @@ async function handleSubscriptionWithRetry(
       simulationId: simulationId,
       message: 'Simulation still registering, will retry automatically',
       retryAttempt: attempts,
-      retryDelay: retryDelay,
+      retryDelay: retryDelay, // Variable is now properly scoped
       timestamp: Date.now()
     }), { binary: false, compress: false, fin: true });
     
