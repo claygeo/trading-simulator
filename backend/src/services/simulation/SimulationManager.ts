@@ -1,4 +1,4 @@
-// backend/src/services/simulation/SimulationManager.ts - CRITICAL FIX: Proper State Management and User Controls
+// backend/src/services/simulation/SimulationManager.ts - CRITICAL FIX: Single Timestamp Authority
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket } from 'ws';
 import {
@@ -1367,11 +1367,12 @@ export class SimulationManager {
         this.candleManagerReadiness.set(id, true);
       }
       
-      // Initialize first candle
+      // 🚨 CRITICAL FIX: Initialize first candle using SINGLE TIMESTAMP AUTHORITY
       const readyCandleManager = await this.getCandleManager(id);
       if (readyCandleManager) {
+        // Use simulation.currentTime as the single timestamp authority
         readyCandleManager.updateCandle(simulation.currentTime, simulation.currentPrice, 1000);
-        console.log(`🕯️ [START] First candle initialized for ${id}`);
+        console.log(`🕯️ [START] First candle initialized for ${id} using simulation.currentTime=${simulation.currentTime}`);
       } else {
         console.warn(`⚠️ [START] CandleManager not available for first candle for ${id}`);
       }
@@ -1424,7 +1425,7 @@ export class SimulationManager {
     this.simulationIntervals.set(simulationId, interval);
   }
 
-  // Enhanced async advanceSimulation with improved CandleManager integration
+  // 🚨 CRITICAL FIX: Enhanced advanceSimulation with SINGLE TIMESTAMP AUTHORITY and improved CandleManager integration
   private async advanceSimulation(id: string): Promise<void> {
     const simulation = this.simulations.get(id);
     
@@ -1446,6 +1447,8 @@ export class SimulationManager {
         
         const realTimeElapsed = this.baseUpdateInterval;
         const aggressiveTimeAdvancement = realTimeElapsed * speed * 2;
+        
+        // 🚨 CRITICAL FIX: SimulationManager is the SINGLE TIMESTAMP AUTHORITY
         simulation.currentTime += aggressiveTimeAdvancement;
         
         if (simulation.currentTime >= simulation.endTime) {
@@ -1476,14 +1479,14 @@ export class SimulationManager {
         this.orderBookManager.updateOrderBook(simulation);
         this.traderEngine.updatePositionsPnL(simulation);
         
-        // Enhanced candle update with better error handling
-        await this.updateCandlesFromSimulationSafe(id, simulation);
+        // 🚨 CRITICAL FIX: Enhanced candle update with SINGLE TIMESTAMP AUTHORITY
+        await this.updateCandlesFromSimulationWithSingleTimestamp(id, simulation);
         
         const marketAnalysis = this.timeframeManager.analyzeMarketConditions(id, simulation);
         
         this.broadcastService.broadcastPriceUpdate(id, {
           type: 'price_update',
-          timestamp: simulation.currentTime,
+          timestamp: simulation.currentTime, // Use authoritative timestamp
           data: {
             price: simulation.currentPrice,
             orderBook: simulation.orderBook,
@@ -1521,6 +1524,7 @@ export class SimulationManager {
       const quantityVariation = Math.random() * 3 + 0.5;
       const quantity = baseQuantity * quantityVariation;
       
+      // 🚨 CRITICAL FIX: Use simulation.currentTime as single timestamp authority
       const tradeTimestamp = simulation.currentTime + (i * 100);
       
       const trade = {
@@ -1562,8 +1566,8 @@ export class SimulationManager {
     return Math.max(-0.01, Math.min(0.01, impact));
   }
 
-  // Safe candle update with comprehensive error handling and retry logic
-  private async updateCandlesFromSimulationSafe(simulationId: string, simulation: ExtendedSimulationState): Promise<void> {
+  // 🚨 CRITICAL FIX: Single Timestamp Authority - candle update with comprehensive error handling and single timestamp source
+  private async updateCandlesFromSimulationWithSingleTimestamp(simulationId: string, simulation: ExtendedSimulationState): Promise<void> {
     try {
       const candleManager = await this.getCandleManager(simulationId);
       
@@ -1575,7 +1579,7 @@ export class SimulationManager {
           const newCandleManager = await this.getCandleManager(simulationId);
           
           if (newCandleManager) {
-            await this.performCandleUpdate(newCandleManager, simulationId, simulation);
+            await this.performCandleUpdateWithSingleTimestamp(newCandleManager, simulationId, simulation);
           } else {
             console.error(`❌ CANDLE: Failed to recreate CandleManager for ${simulationId}`);
           }
@@ -1591,10 +1595,10 @@ export class SimulationManager {
         this.candleManagerReadiness.set(simulationId, true);
       }
       
-      await this.performCandleUpdate(candleManager, simulationId, simulation);
+      await this.performCandleUpdateWithSingleTimestamp(candleManager, simulationId, simulation);
       
     } catch (error) {
-      console.error(`❌ CANDLE: Error in updateCandlesFromSimulationSafe for ${simulationId}:`, error);
+      console.error(`❌ CANDLE: Error in updateCandlesFromSimulationWithSingleTimestamp for ${simulationId}:`, error);
       
       // Mark CandleManager as not ready to prevent further issues
       this.candleManagerReadiness.set(simulationId, false);
@@ -1602,17 +1606,21 @@ export class SimulationManager {
     }
   }
 
-  // Separate candle update performance method
-  private async performCandleUpdate(candleManager: CandleManager, simulationId: string, simulation: ExtendedSimulationState): Promise<void> {
+  // 🚨 CRITICAL FIX: Single timestamp authority candle update method
+  private async performCandleUpdateWithSingleTimestamp(candleManager: CandleManager, simulationId: string, simulation: ExtendedSimulationState): Promise<void> {
     const currentVolume = simulation.marketConditions.volume || 1000;
     
-    // Single update call to prevent duplicate data
+    // 🚨 CRITICAL FIX: Pass simulation.currentTime directly - SimulationManager is the SINGLE TIMESTAMP AUTHORITY
+    console.log(`📈 [SINGLE TIMESTAMP] Updating candle for ${simulationId} with authoritative timestamp: ${simulation.currentTime}`);
+    
+    // Single update call to prevent duplicate data - use simulation.currentTime as the authoritative timestamp
     candleManager.updateCandle(simulation.currentTime, simulation.currentPrice, currentVolume);
     
     if (this.externalCandleUpdateCallback) {
+      // Also pass the authoritative timestamp to external callback
       this.externalCandleUpdateCallback.queueUpdate(
         simulationId, 
-        simulation.currentTime, 
+        simulation.currentTime, // Single timestamp authority
         simulation.currentPrice, 
         currentVolume
       );
@@ -1628,6 +1636,8 @@ export class SimulationManager {
       close: candle.close,
       volume: candle.volume || 0
     }));
+    
+    console.log(`✅ [SINGLE TIMESTAMP] Updated candle data for ${simulationId} - ${candles.length} candles total`);
   }
 
   private processExternalMarketActivity(simulation: ExtendedSimulationState): void {
