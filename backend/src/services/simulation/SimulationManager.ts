@@ -63,7 +63,7 @@ export class SimulationManager {
   private websocketReadinessStatus: Map<string, boolean> = new Map();
   private websocketRegistrationPromises: Map<string, Promise<boolean>> = new Map();
   
-  // 🚨 CRITICAL FIX: Prevent multiple simulations
+  // Prevent multiple simulations
   private static globalSimulationLock = false;
   private static activeSimulationId: string | null = null;
   private static simulationCreationInProgress = false;
@@ -813,7 +813,7 @@ export class SimulationManager {
     this.broadcastService.registerClient(client);
   }
 
-  // 🚨 CRITICAL FIX: Prevent multiple simultaneous simulations with enhanced CandleManager coordination
+  // 🚨 CRITICAL FIX: Prevent multiple simultaneous simulations with enhanced coordination
   async createSimulation(parameters: Partial<EnhancedSimulationParameters> = {}): Promise<ExtendedSimulationState> {
     // Global lock to prevent multiple simulations
     if (SimulationManager.globalSimulationLock || SimulationManager.simulationCreationInProgress) {
@@ -848,7 +848,7 @@ export class SimulationManager {
       this.simulationRegistrationStatus.set(simulationId, 'creating');
       this.simulationTradeCounters.set(simulationId, { generated: 0, released: 0 });
       
-      // 🚨 CRITICAL FIX: Enhanced Dune API trader loading with proper fallback
+      // Enhanced Dune API trader loading with proper fallback
       console.log(`🔍 TRADERS: Loading real Dune Analytics traders...`);
       const traders = await duneApi.getPumpFunTraders();
       
@@ -886,7 +886,7 @@ export class SimulationManager {
       const aggressiveTimeframe: Timeframe = '1m';
       this.simulationTimeframes.set(simulationId, aggressiveTimeframe);
       
-      // 🚨 CRITICAL FIX: Create and coordinate CandleManager during simulation creation
+      // Create and coordinate CandleManager during simulation creation
       console.log(`🕯️ CANDLE: Creating CandleManager for ${simulationId} with price ${simulation.currentPrice}`);
       await this.ensureCandleManagerExists(simulationId, simulation.currentPrice);
       
@@ -953,7 +953,11 @@ export class SimulationManager {
     // Clean up pause operation tracking
     this.pauseOperations.delete(simulationId);
     this.pauseOperationLocks.delete(simulationId);
-    this.pauseStateMutex.delete(simulationId);
+    this.pauseStateMutex.delete(simulationId); // NEW: Clean up mutex
+    
+    // 🚨 CRITICAL FIX: Clean up WebSocket readiness tracking
+    this.websocketReadinessStatus.delete(simulationId);
+    this.websocketRegistrationPromises.delete(simulationId);
     
     // Reset global state if this was the active simulation
     if (SimulationManager.activeSimulationId === simulationId) {
@@ -1019,17 +1023,15 @@ export class SimulationManager {
     }
   }
 
-  // 🚨 CRITICAL FIX: Restore proper WebSocket readiness tracking for coordination
+  // 🚨 CRITICAL FIX: Restore WebSocket readiness tracking for proper coordination
   isSimulationReady(simulationId: string): boolean {
     const status = this.simulationRegistrationStatus.get(simulationId);
     const candleManagerReady = this.candleManagerReadiness.get(simulationId);
-    const websocketReady = this.websocketReadinessStatus.get(simulationId) !== false; // Default to true if not set
-    
-    console.log(`🔍 [WS READY CHECK] Simulation ${simulationId}: status=${status}, candleReady=${candleManagerReady}, wsReady=${websocketReady}`);
+    const websocketReady = this.websocketReadinessStatus.get(simulationId);
     
     return (status === 'ready' || status === 'starting' || status === 'running') && 
            candleManagerReady === true && 
-           websocketReady;
+           websocketReady !== false; // Allow undefined as ready
   }
 
   async waitForSimulationReady(simulationId: string, timeoutMs: number = 5000): Promise<boolean> {
@@ -1244,7 +1246,7 @@ export class SimulationManager {
     }
   }
 
-  // 🚨 CRITICAL FIX: Enhanced async startSimulation with CandleManager coordination
+  // Enhanced async startSimulation with CandleManager coordination
   async startSimulation(id: string): Promise<void> {
     const simulation = this.simulations.get(id);
     
@@ -1273,6 +1275,100 @@ export class SimulationManager {
       this.simulations.set(id, simulation);
       this.simulationRegistrationStatus.set(id, 'starting');
       
+      const speed = this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor;
+      const timeframe = this.simulationTimeframes.get(id) || '1m';
+      
+      // Start TPS metrics tracking when simulation starts
+      if (!this.metricsUpdateIntervals.has(id)) {
+        this.startTPSMetricsTracking(id);
+        console.log(`📊 [START] Started TPS tracking for ${id}`);
+      }
+      
+      // Ensure CandleManager is ready before starting
+      console.log(`🕯️ [START] Ensuring CandleManager is ready for ${id}`);
+      const candleManager = await this.getCandleManager(id);
+      
+      if (!candleManager) {
+        console.warn(`⚠️ [START] No CandleManager found, creating one for ${id}`);
+        await this.ensureCandleManagerExists(id, simulation.currentPrice);
+        
+        // Wait for it to be ready
+        const isReady = await this.waitForCandleManagerReady(id, 5000);
+        if (!isReady) {
+          console.warn(`⚠️ [START] CandleManager still not ready for ${id}, proceeding anyway`);
+        }
+      } else if (!candleManager.isInstanceInitialized()) {
+        console.log(`🔧 [START] Initializing existing CandleManager for ${id}`);
+        candleManager.initialize(simulation.startTime, simulation.currentPrice);
+        this.candleManagerReadiness.set(id, true);
+      }
+      
+      // Initialize first candle
+      const readyCandleManager = await this.getCandleManager(id);
+      if (readyCandleManager) {
+        readyCandleManager.updateCandle(simulation.currentTime, simulation.currentPrice, 1000);
+        console.log(`🕯️ [START] First candle initialized for ${id}`);
+      } else {
+        console.warn(`⚠️ [START] CandleManager not available for first candle for ${id}`);
+      }
+      
+      const marketAnalysis = this.timeframeManager.analyzeMarketConditions(id, simulation);
+      this.broadcastService.broadcastSimulationState(id, {
+        isRunning: true,
+        isPaused: false,
+        speed: speed,
+        currentPrice: simulation.currentPrice,
+        timeframe: timeframe,
+        orderBook: simulation.orderBook,
+        priceHistory: simulation.priceHistory,
+        activePositions: simulation.activePositions,
+        recentTrades: simulation.recentTrades.slice(0, 200),
+        traderRankings: simulation.traderRankings.slice(0, 20),
+        externalMarketMetrics: simulation.externalMarketMetrics,
+        totalTradesProcessed: this.getTotalTradesProcessed(id),
+        currentTPSMode: simulation.currentTPSMode
+      }, marketAnalysis);
+      
+      if (!this.simulationIntervals.has(id)) {
+        this.startSimulationLoop(id);
+      }
+      
+      this.simulationRegistrationStatus.set(id, 'running');
+      
+      console.log(`✅ [START] Successfully started simulation ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
+      
+    } catch (error) {
+      console.error(`❌ [START] Failed to start simulation ${id}:`, error);
+      
+      simulation.isRunning = false;
+      simulation.isPaused = false;
+      this.simulations.set(id, simulation);
+      this.simulationRegistrationStatus.set(id, 'ready');
+      throw error;
+    }
+  }
+
+  private startSimulationLoop(simulationId: string): void {
+    const interval = setInterval(() => {
+      try {
+        this.advanceSimulation(simulationId);
+      } catch (error) {
+        console.error(`Error in simulation loop for ${simulationId}:`, error);
+      }
+    }, this.baseUpdateInterval);
+    
+    this.simulationIntervals.set(simulationId, interval);
+  }
+
+  // Enhanced async advanceSimulation with improved CandleManager integration
+  private async advanceSimulation(id: string): Promise<void> {
+    const simulation = this.simulations.get(id);
+    
+    if (!simulation || !simulation.isRunning || simulation.isPaused) {
+      return;
+    }
+    
+    try {
       const speed = this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor;
       const timeframe = this.simulationTimeframes.get(id) || '1m';
       
@@ -1534,19 +1630,28 @@ export class SimulationManager {
     return simulation.recentTrades.length + simulation.closedPositions.length * 2;
   }
 
-  // 🚨 CRITICAL FIX: Enhanced pause implementation with proper state management and stop behavior
+  // 🚨 CRITICAL FIX: Enhanced pause implementation with mutex and proper state management
   async pauseSimulation(id: string): Promise<void> {
     console.log(`⏸️ [PAUSE] Attempting to pause simulation ${id}`);
     
+    // 🚨 CRITICAL FIX: Check for mutex lock to prevent race conditions
+    if (this.pauseStateMutex.get(id)) {
+      console.warn(`⚠️ [PAUSE] Mutex lock active: pause operation already in progress for ${id}`);
+      throw new Error(`Pause operation already in progress for simulation ${id}`);
+    }
+    
+    // 🚨 CRITICAL FIX: Set mutex lock immediately
+    this.pauseStateMutex.set(id, true);
+    
     // Check for existing pause operation to prevent race conditions
-    if (this.pauseOperationLocks.get(id) || this.pauseStateMutex.get(id)) {
+    if (this.pauseOperationLocks.get(id)) {
       console.warn(`⚠️ [PAUSE] Race condition prevented: pause operation already in progress for ${id}`);
+      this.pauseStateMutex.delete(id); // Clean up mutex
       throw new Error(`Duplicate pause state request - please wait before retrying`);
     }
     
     // Set operation lock immediately
     this.pauseOperationLocks.set(id, true);
-    this.pauseStateMutex.set(id, true);
     
     // Create pause operation promise
     const pausePromise = this.performPauseOperation(id);
@@ -1557,12 +1662,12 @@ export class SimulationManager {
     } finally {
       // Always clean up locks and operations
       this.pauseOperationLocks.delete(id);
-      this.pauseStateMutex.delete(id);
       this.pauseOperations.delete(id);
+      this.pauseStateMutex.delete(id); // Clean up mutex
     }
   }
 
-  // 🚨 CRITICAL FIX: Proper pause operation that ACTUALLY STOPS data generation and waits for resume
+  // Separate pause operation method for better error handling
   private async performPauseOperation(id: string): Promise<void> {
     try {
       const simulation = this.simulations.get(id);
@@ -1587,31 +1692,30 @@ export class SimulationManager {
         throw error;
       }
       
-      console.log(`⏸️ [PAUSE] Pausing simulation ${id} - STOPPING all data generation`);
+      console.log(`⏸️ [PAUSE] Pausing simulation ${id}`);
       
-      // 🚨 CRITICAL FIX: Set pause state BEFORE stopping intervals to ensure proper coordination
+      // 🚨 CRITICAL FIX: Set pause state BEFORE stopping intervals to prevent race conditions
       simulation.isPaused = true;
-      // Keep isRunning=true so we can resume later
       this.simulations.set(id, simulation);
       
-      // 🚨 CRITICAL FIX: ACTUALLY STOP the simulation loop to prevent data generation
+      // Stop simulation loop immediately
       const interval = this.simulationIntervals.get(id);
       if (interval) {
         clearInterval(interval);
         this.simulationIntervals.delete(id);
-        console.log(`⏸️ [PAUSE] ✅ STOPPED data generation interval for ${id}`);
+        console.log(`⏸️ [PAUSE] Stopped data generation for ${id}`);
       }
       
       // Stop TPS metrics to prevent further updates
       this.stopTPSMetricsTracking(id);
-      console.log(`📊 [PAUSE] ✅ STOPPED TPS metrics for ${id}`);
+      console.log(`📊 [PAUSE] Stopped TPS metrics for ${id}`);
       
-      // Finalize current candle with enhanced error handling
+      // 🚨 CRITICAL FIX: Finalize current candle with enhanced error handling
       try {
         const candleManager = await this.getCandleManager(id);
         if (candleManager && candleManager.isInstanceInitialized()) {
           candleManager.forceFinalizeCurrent();
-          console.log(`🕯️ [PAUSE] ✅ FINALIZED current candle for ${id}`);
+          console.log(`🕯️ [PAUSE] Finalized current candle for ${id}`);
         } else {
           console.warn(`⚠️ [PAUSE] CandleManager not available for finalization for ${id}`);
         }
@@ -1621,9 +1725,9 @@ export class SimulationManager {
       
       // Immediate cleanup
       this.performScheduledPoolCleanup(id);
-      console.log(`🧹 [PAUSE] ✅ PERFORMED cleanup during pause for ${id}`);
+      console.log(`🧹 [PAUSE] Performed cleanup during pause for ${id}`);
       
-      // Broadcast pause state - show that simulation is PAUSED and waiting
+      // Broadcast pause state
       this.broadcastService.broadcastSimulationStatus(
         id,
         simulation.isRunning,
@@ -1632,12 +1736,12 @@ export class SimulationManager {
         simulation.currentPrice
       );
       
-      console.log(`✅ [PAUSE] Successfully paused ${id} - DATA GENERATION STOPPED - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
+      console.log(`✅ [PAUSE] Successfully paused ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
       
     } catch (error) {
       console.error(`❌ [PAUSE] Error pausing simulation ${id}:`, error);
       
-      // Reset pause state on error to prevent stuck state
+      // 🚨 CRITICAL FIX: Reset pause state on error to prevent stuck state
       const simulation = this.simulations.get(id);
       if (simulation) {
         simulation.isPaused = false;
@@ -1649,19 +1753,28 @@ export class SimulationManager {
     }
   }
 
-  // 🚨 CRITICAL FIX: Enhanced resume implementation that RESTARTS data generation
+  // 🚨 CRITICAL FIX: Enhanced resume implementation with mutex and proper state management
   async resumeSimulation(id: string): Promise<void> {
     console.log(`▶️ [RESUME] Attempting to resume simulation ${id}`);
     
+    // 🚨 CRITICAL FIX: Check for mutex lock to prevent race conditions
+    if (this.pauseStateMutex.get(id)) {
+      console.warn(`⚠️ [RESUME] Mutex lock active: pause operation in progress for ${id}`);
+      throw new Error(`Cannot resume while pause operation is in progress - please wait`);
+    }
+    
+    // 🚨 CRITICAL FIX: Set mutex lock for resume
+    this.pauseStateMutex.set(id, true);
+    
     // Check for existing pause operation to prevent race conditions
-    if (this.pauseOperationLocks.get(id) || this.pauseStateMutex.get(id)) {
+    if (this.pauseOperationLocks.get(id)) {
       console.warn(`⚠️ [RESUME] Race condition prevented: pause operation in progress for ${id}`);
+      this.pauseStateMutex.delete(id); // Clean up mutex
       throw new Error(`Cannot resume while pause operation is in progress - please wait`);
     }
     
     // Set operation lock for resume
     this.pauseOperationLocks.set(id, true);
-    this.pauseStateMutex.set(id, true);
     
     try {
       const simulation = this.simulations.get(id);
@@ -1675,7 +1788,7 @@ export class SimulationManager {
       console.log(`🔍 [RESUME] Current state - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`);
       
       if (!simulation.isRunning) {
-        const error = new Error(`Cannot resume simulation ${id} - not running (use start instead)`);
+        const error = new Error(`Cannot resume simulation ${id} - not running`);
         console.error(`❌ [RESUME] ${error.message}`);
         throw error;
       }
@@ -1686,30 +1799,29 @@ export class SimulationManager {
         throw error;
       }
       
-      console.log(`▶️ [RESUME] Resuming simulation ${id} - RESTARTING data generation`);
+      console.log(`▶️ [RESUME] Resuming simulation ${id}`);
       
-      // 🚨 CRITICAL FIX: Set resume state BEFORE starting intervals
+      // 🚨 CRITICAL FIX: Set resume state BEFORE starting intervals to prevent race conditions
       simulation.isPaused = false;
-      // isRunning should already be true
       this.simulations.set(id, simulation);
       
-      // 🚨 CRITICAL FIX: RESTART the simulation loop to resume data generation
+      // Restart simulation loop
       if (!this.simulationIntervals.has(id)) {
         this.startSimulationLoop(id);
-        console.log(`▶️ [RESUME] ✅ RESTARTED data generation for ${id}`);
+        console.log(`▶️ [RESUME] Restarted data generation for ${id}`);
       }
       
       // Restart TPS metrics
       if (!this.metricsUpdateIntervals.has(id)) {
         this.startTPSMetricsTracking(id);
-        console.log(`📊 [RESUME] ✅ RESTARTED TPS metrics for ${id}`);
+        console.log(`📊 [RESUME] Restarted TPS metrics for ${id}`);
       }
       
-      // Ensure candle manager is ready with enhanced error handling
+      // 🚨 CRITICAL FIX: Ensure candle manager is ready with enhanced error handling
       try {
         const candleManager = await this.getCandleManager(id);
         if (candleManager && candleManager.isInstanceInitialized()) {
-          console.log(`🕯️ [RESUME] ✅ CandleManager ready for ${id}`);
+          console.log(`🕯️ [RESUME] CandleManager ready for ${id}`);
         } else {
           console.warn(`⚠️ [RESUME] CandleManager not ready for ${id}, attempting to fix`);
           await this.ensureCandleManagerExists(id, simulation.currentPrice);
@@ -1718,7 +1830,7 @@ export class SimulationManager {
         console.error(`❌ [RESUME] Error checking CandleManager for ${id}:`, candleError);
       }
       
-      // Broadcast resume state - show that simulation is RUNNING again
+      // Broadcast resume state
       this.broadcastService.broadcastSimulationStatus(
         id,
         simulation.isRunning,
@@ -1727,18 +1839,19 @@ export class SimulationManager {
         simulation.currentPrice
       );
       
-      console.log(`✅ [RESUME] Successfully resumed ${id} - DATA GENERATION RESTARTED - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
+      console.log(`✅ [RESUME] Successfully resumed ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
       
     } catch (error) {
       console.error(`❌ [RESUME] Error resuming simulation ${id}:`, error);
       throw error;
     } finally {
-      // Always clean up the operation locks
+      // Always clean up the operation lock and mutex
       this.pauseOperationLocks.delete(id);
       this.pauseStateMutex.delete(id);
     }
   }
 
+  // 🚨 CRITICAL FIX: Enhanced stop implementation with proper state management
   stopSimulation(id: string): void {
     console.log(`⏹️ [STOP] Attempting to stop simulation ${id}`);
     
@@ -1752,7 +1865,7 @@ export class SimulationManager {
       
       console.log(`🔍 [STOP] Current state - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`);
       
-      // 🚨 CRITICAL FIX: Properly stop simulation regardless of pause state
+      // 🚨 CRITICAL FIX: Proper stop behavior - stops data generation and waits for user start
       simulation.isRunning = false;
       simulation.isPaused = false;
       this.simulations.set(id, simulation);
@@ -1761,12 +1874,12 @@ export class SimulationManager {
       if (interval) {
         clearInterval(interval);
         this.simulationIntervals.delete(id);
-        console.log(`⏹️ [STOP] ✅ CLEARED simulation interval for ${id}`);
+        console.log(`⏹️ [STOP] Cleared simulation interval for ${id}`);
       }
       
       this.stopTPSMetricsTracking(id);
       this.performScheduledPoolCleanup(id);
-      console.log(`🧹 [STOP] ✅ PERFORMED final cleanup for ${id}`);
+      console.log(`🧹 [STOP] Performed final cleanup for ${id}`);
       
       this.broadcastService.broadcastSimulationStatus(
         id,
@@ -1853,7 +1966,7 @@ export class SimulationManager {
     };
   }
 
-  // 🚨 CRITICAL FIX: Enhanced reset with proper state management - WAITS for manual start, doesn't auto-start
+  // 🚨 CRITICAL FIX: Enhanced reset with proper state management - reset stops simulation and waits for user start
   async resetSimulation(id: string): Promise<void> {
     const simulation = this.simulations.get(id);
     
@@ -1863,13 +1976,12 @@ export class SimulationManager {
     
     console.log(`🔄 [RESET] Starting reset for simulation ${id}`);
     
-    // 🚨 CRITICAL FIX: Stop simulation first, regardless of current state
+    // 🚨 CRITICAL FIX: Reset stops simulation completely and waits for manual start
     if (simulation.isRunning) {
       const interval = this.simulationIntervals.get(id);
       if (interval) {
         clearInterval(interval);
         this.simulationIntervals.delete(id);
-        console.log(`🔄 [RESET] ✅ STOPPED simulation interval for ${id}`);
       }
     }
     
@@ -1907,7 +2019,7 @@ export class SimulationManager {
       const candleManager = await this.getCandleManager(id);
       if (candleManager) {
         candleManager.clear();
-        console.log(`🕯️ [RESET] ✅ CandleManager cleared for ${id}`);
+        console.log(`🕯️ [RESET] CandleManager cleared for ${id}`);
       } else {
         console.warn(`⚠️ [RESET] No CandleManager found for ${id}`);
       }
@@ -1916,7 +2028,7 @@ export class SimulationManager {
     }
     
     this.simulationTradeCounters.set(id, { generated: 0, released: 0 });
-    console.log(`🔄 [RESET] ✅ Reset leak tracking counters for ${id}`);
+    console.log(`🔄 [RESET] Reset leak tracking counters for ${id}`);
     
     if (this.transactionQueue) {
       this.transactionQueue.clearProcessedTrades(id);
@@ -1936,7 +2048,7 @@ export class SimulationManager {
       if (candleManager) {
         // Re-initialize the existing CandleManager with new parameters
         candleManager.initialize(Date.now(), newDynamicPrice);
-        console.log(`🔧 [RESET] ✅ Re-initialized CandleManager for ${id} with new price ${newDynamicPrice}`);
+        console.log(`🔧 [RESET] Re-initialized CandleManager for ${id} with new price ${newDynamicPrice}`);
       } else {
         // Create new CandleManager if somehow missing
         console.log(`🔧 [RESET] Creating new CandleManager for ${id}`);
@@ -1958,7 +2070,7 @@ export class SimulationManager {
     simulation.currentTime = simulationStartTime;
     simulation.endTime = simulationStartTime + (params.duration * 60 * 1000);
     
-    // Reset with empty chart - let it build naturally
+    // 🚨 CRITICAL FIX: Reset with empty chart - let it build naturally
     simulation.priceHistory = [];
     
     simulation.currentPrice = newDynamicPrice;
@@ -1966,7 +2078,7 @@ export class SimulationManager {
     simulation.parameters.initialLiquidity = newDynamicLiquidity;
     simulation.marketConditions.volatility = this.marketEngine.calculateBaseVolatility(newDynamicPrice) * params.volatilityFactor;
     
-    // 🚨 CRITICAL FIX: Reset to STOPPED state - WAIT for manual start, don't auto-start
+    // 🚨 CRITICAL FIX: Reset behavior - stops simulation and waits for manual start
     simulation.isRunning = false;
     simulation.isPaused = false;
     
@@ -2006,7 +2118,7 @@ export class SimulationManager {
       data: simulation
     });
     
-    console.log(`✅ [RESET] Simulation ${id} reset complete - WAITING FOR MANUAL START (isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`);
+    console.log(`✅ [RESET] Simulation ${id} reset complete - isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused} (waits for manual start)`);
   }
 
   // Enhanced delete with global state management and CandleManager cleanup
@@ -2333,9 +2445,9 @@ export class SimulationManager {
     this.candleManagerInitializationStatus.clear();
     this.pauseOperations.clear();
     this.pauseOperationLocks.clear();
-    this.pauseStateMutex.clear();
-    this.websocketReadinessStatus.clear();
-    this.websocketRegistrationPromises.clear();
+    this.pauseStateMutex.clear(); // NEW: Clean up mutex
+    this.websocketReadinessStatus.clear(); // NEW: Clean up WebSocket status
+    this.websocketRegistrationPromises.clear(); // NEW: Clean up WebSocket promises
     
     this.simulationTradeCounters.clear();
     this.simulationRegistrationStatus.clear();
@@ -2352,7 +2464,7 @@ export class SimulationManager {
     this.broadcastService.cleanup();
     this.externalMarketEngine.cleanup();
     
-    console.log('✅ CLEANUP: SimulationManager cleanup complete with CandleManager coordination and global state reset');
+    console.log('✅ CLEANUP: SimulationManager cleanup complete with proper state management and global state reset');
   }
 
   getPoolLeakageReport(): { [simulationId: string]: any } {
@@ -2379,7 +2491,9 @@ export class SimulationManager {
         },
         candleManagerStatus: candleManagerStatus || 'unknown',
         candleManagerReady: this.candleManagerReadiness.get(simulationId) || false,
-        pauseOperationInProgress: this.pauseOperationLocks.get(simulationId) || this.pauseStateMutex.get(simulationId) || false
+        pauseOperationInProgress: this.pauseOperationLocks.get(simulationId) || false,
+        pauseStateMutex: this.pauseStateMutex.get(simulationId) || false,
+        websocketReady: this.websocketReadinessStatus.get(simulationId) !== false
       };
     });
     
@@ -2397,7 +2511,8 @@ export class SimulationManager {
       console.log(`   Leakage: generated=${data.leakageCounters.generated}, released=${data.leakageCounters.released}, leak=${data.leakage}`);
       console.log(`   Pool Health: trade=${data.traderEngineHealth.trade}, position=${data.traderEngineHealth.position}`);
       console.log(`   CandleManager: status=${data.candleManagerStatus}, ready=${data.candleManagerReady}`);
-      console.log(`   Pause Operation: ${data.pauseOperationInProgress ? 'IN PROGRESS' : 'NONE'}`);
+      console.log(`   Pause Operation: ${data.pauseOperationInProgress ? 'IN PROGRESS' : 'NONE'}, Mutex: ${data.pauseStateMutex ? 'LOCKED' : 'UNLOCKED'}`);
+      console.log(`   WebSocket: ready=${data.websocketReady}`);
       
       if (data.leakage > 50) {
         console.warn(`⚠️ LEAK DETECTED in ${simulationId}: ${data.leakage} unreleased objects`);
@@ -2577,97 +2692,3 @@ export class SimulationManager {
 }
 
 export default SimulationManager;
-      const timeframe = this.simulationTimeframes.get(id) || '1m';
-      
-      // Start TPS metrics tracking when simulation starts
-      if (!this.metricsUpdateIntervals.has(id)) {
-        this.startTPSMetricsTracking(id);
-        console.log(`📊 [START] Started TPS tracking for ${id}`);
-      }
-      
-      // Ensure CandleManager is ready before starting
-      console.log(`🕯️ [START] Ensuring CandleManager is ready for ${id}`);
-      const candleManager = await this.getCandleManager(id);
-      
-      if (!candleManager) {
-        console.warn(`⚠️ [START] No CandleManager found, creating one for ${id}`);
-        await this.ensureCandleManagerExists(id, simulation.currentPrice);
-        
-        // Wait for it to be ready
-        const isReady = await this.waitForCandleManagerReady(id, 5000);
-        if (!isReady) {
-          console.warn(`⚠️ [START] CandleManager still not ready for ${id}, proceeding anyway`);
-        }
-      } else if (!candleManager.isInstanceInitialized()) {
-        console.log(`🔧 [START] Initializing existing CandleManager for ${id}`);
-        candleManager.initialize(simulation.startTime, simulation.currentPrice);
-        this.candleManagerReadiness.set(id, true);
-      }
-      
-      // Initialize first candle
-      const readyCandleManager = await this.getCandleManager(id);
-      if (readyCandleManager) {
-        readyCandleManager.updateCandle(simulation.currentTime, simulation.currentPrice, 1000);
-        console.log(`🕯️ [START] First candle initialized for ${id}`);
-      } else {
-        console.warn(`⚠️ [START] CandleManager not available for first candle for ${id}`);
-      }
-      
-      const marketAnalysis = this.timeframeManager.analyzeMarketConditions(id, simulation);
-      this.broadcastService.broadcastSimulationState(id, {
-        isRunning: true,
-        isPaused: false,
-        speed: speed,
-        currentPrice: simulation.currentPrice,
-        timeframe: timeframe,
-        orderBook: simulation.orderBook,
-        priceHistory: simulation.priceHistory,
-        activePositions: simulation.activePositions,
-        recentTrades: simulation.recentTrades.slice(0, 200),
-        traderRankings: simulation.traderRankings.slice(0, 20),
-        externalMarketMetrics: simulation.externalMarketMetrics,
-        totalTradesProcessed: this.getTotalTradesProcessed(id),
-        currentTPSMode: simulation.currentTPSMode
-      }, marketAnalysis);
-      
-      if (!this.simulationIntervals.has(id)) {
-        this.startSimulationLoop(id);
-      }
-      
-      this.simulationRegistrationStatus.set(id, 'running');
-      
-      console.log(`✅ [START] Successfully started simulation ${id} - final state: isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused}`);
-      
-    } catch (error) {
-      console.error(`❌ [START] Failed to start simulation ${id}:`, error);
-      
-      simulation.isRunning = false;
-      simulation.isPaused = false;
-      this.simulations.set(id, simulation);
-      this.simulationRegistrationStatus.set(id, 'ready');
-      throw error;
-    }
-  }
-
-  private startSimulationLoop(simulationId: string): void {
-    const interval = setInterval(() => {
-      try {
-        this.advanceSimulation(simulationId);
-      } catch (error) {
-        console.error(`Error in simulation loop for ${simulationId}:`, error);
-      }
-    }, this.baseUpdateInterval);
-    
-    this.simulationIntervals.set(simulationId, interval);
-  }
-
-  // Enhanced async advanceSimulation with improved CandleManager integration
-  private async advanceSimulation(id: string): Promise<void> {
-    const simulation = this.simulations.get(id);
-    
-    if (!simulation || !simulation.isRunning || simulation.isPaused) {
-      return;
-    }
-    
-    try {
-      const speed = this.simulationSpeeds.get(id) || simulation.parameters.timeCompressionFactor;
