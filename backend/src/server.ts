@@ -389,11 +389,11 @@ app.use((req, res, next) => {
 // 🚀 ROOT ROUTE - Backend API Status
 app.get('/', (req, res) => {
   res.json({
-    message: 'Trading Simulator Backend API - ALL CRITICAL ISSUES RESOLVED + CANDLEMANAGER SINGLETON FIX + LEGACY ENDPOINT VALIDATION',
+    message: 'Trading Simulator Backend API - SIMPLIFIED TIMESTAMP COORDINATION + CANDLEMANAGER SINGLETON FIX',
     status: 'running',
     timestamp: Date.now(),
     environment: process.env.NODE_ENV || 'development',
-    version: '2.8.1',
+    version: '2.9.0',
     corsConfiguration: {
       newDomain: 'https://tradeterm.app',
       oldDomain: 'https://pumpfun-simulator.netlify.app',
@@ -404,22 +404,21 @@ app.get('/', (req, res) => {
       websocket: 'active',
       simulations: 'active',
       compression: 'disabled',
-      candleManager: 'enhanced with singleton pattern',
-      timestampCoordination: 'active',
+      candleManager: 'simplified pass-through pattern',
+      timestampCoordination: 'simplified - accepts timestamps as-is',
       tpsSupport: 'active',
       stressTestSupport: 'active',
       dynamicPricing: 'FIXED',
       objectPoolMonitoring: 'active',
       memoryLeakPrevention: 'active',
-      singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced'
+      singletonPattern: 'enforced'
     },
     features: {
       timestampOrderingFixed: true,
       apiEndpointsFixed: true,
       chartResetFixed: true,
-      thinCandlesFixed: true,
-      resetCoordinationFixed: true,
+      thinCandlePreventionRemoved: true,
+      simplifiedCoordination: true,
       memoryLeaksFixed: true,
       webSocketPauseStateFixed: true,
       pauseStateLogicFixed: true,
@@ -428,9 +427,7 @@ app.get('/', (req, res) => {
       exceptionHandlingImproved: true,
       candleManagerSingletonFixed: true,
       multipleInstancesPrevented: true,
-      legacyEndpointValidationEnhanced: true,
-      tpsSupport: true,
-      stressTestSupport: true,
+      simplifiedPassThrough: true,
       supportedTPSModes: ['NORMAL', 'BURST', 'STRESS', 'HFT'],
       maxTPS: 15000,
       liquidationCascade: true,
@@ -460,17 +457,17 @@ app.get('/', (req, res) => {
       websocket: 'ws://' + req.get('host')
     },
     fixes: {
-      timestampOrdering: 'APPLIED - Race conditions eliminated',
+      timestampOrdering: 'SIMPLIFIED - Accepts timestamps as-is from SimulationManager',
       apiRouteRegistration: 'APPLIED - All endpoints now available',
-      chartReset: 'APPLIED - Clean reset with timestamp coordination',
+      chartReset: 'APPLIED - Clean reset with simplified coordination',
       compressionElimination: 'active',
       candleManagerConstructor: 'applied',
       corsDomainUpdate: 'applied - supports tradeterm.app',
       tpsIntegration: 'complete',
       stressTestIntegration: 'complete',
       dynamicPricingFix: 'APPLIED - No more $100 hardcode!',
-      thinCandlesFix: 'APPLIED - No more 9 thin white candles!',
-      resetCoordinationFix: 'APPLIED - Complete state cleanup!',
+      thinCandlePreventionRemoved: 'APPLIED - All blocking logic removed!',
+      simplifiedCoordination: 'APPLIED - Basic pass-through relay!',
       memoryLeaksFix: 'APPLIED - Object pool monitoring & cleanup!',
       webSocketPauseStateFix: 'APPLIED - setPauseState handler added!',
       pauseStateLogicFix: 'APPLIED - Contradictory states prevented!',
@@ -479,34 +476,25 @@ app.get('/', (req, res) => {
       exceptionHandlingFix: 'APPLIED - Improved error recovery!',
       candleManagerSingletonFix: 'APPLIED - Multiple instances prevented!',
       singletonPatternEnforced: 'APPLIED - One instance per simulation ID!',
-      legacyEndpointValidationFix: 'APPLIED - Enhanced trader validation!'
+      simplifiedPassThroughPattern: 'APPLIED - CandleUpdateCoordinator is now a simple relay!'
     }
   });
 });
 
-// 🔧 CRITICAL FIX: Enhanced CandleUpdateCoordinator with SINGLETON PATTERN - ALL FIXES APPLIED
+// 🔧 SIMPLIFIED CANDLEUPDATECOORDINATOR - BASIC PASS-THROUGH PATTERN
 class CandleUpdateCoordinator {
   private candleManagers: Map<string, CandleManager> = new Map();
   private updateQueue: Map<string, Array<{timestamp: number, price: number, volume: number}>> = new Map();
   private processInterval: NodeJS.Timeout;
-  private lastProcessedTime: Map<string, number> = new Map();
   private speedMultipliers: Map<string, number> = new Map();
   private errorCounts: Map<string, number> = new Map();
-  private timestampCoordinator: TimestampCoordinator;
-  
-  // State tracking to prevent thin candles
-  private simulationStates: Map<string, 'initializing' | 'ready' | 'building' | 'stable'> = new Map();
-  private initialCandlesPrevented: Map<string, boolean> = new Map();
-  private resetInProgress: Map<string, boolean> = new Map();
-  private lastResetTime: Map<string, number> = new Map();
   
   // 🔧 MEMORY LEAK FIX: Object pool tracking
   private poolReferences: Map<string, Set<any>> = new Map();
   
   constructor(private simulationManager: any, private flushIntervalMs: number = 25) {
-    this.timestampCoordinator = new TimestampCoordinator();
     this.processInterval = setInterval(() => this.processUpdatesWithErrorHandling(), this.flushIntervalMs);
-    console.log('🕯️ ENHANCED CandleUpdateCoordinator initialized - ALL CRITICAL FIXES APPLIED + SINGLETON PATTERN ENFORCED');
+    console.log('🕯️ SIMPLIFIED CandleUpdateCoordinator initialized - BASIC PASS-THROUGH PATTERN');
   }
   
   private async processUpdatesWithErrorHandling() {
@@ -554,6 +542,7 @@ class CandleUpdateCoordinator {
     console.log(`⚡ Candle coordinator speed set to ${speedMultiplier}x for simulation ${simulationId}`);
   }
   
+  // 🎯 SIMPLIFIED: Basic pass-through - accepts timestamps without modification
   queueUpdate(simulationId: string, timestamp: number, price: number, volume: number) {
     const errorCount = this.errorCounts.get(simulationId) || 0;
     if (errorCount >= 5) {
@@ -561,49 +550,24 @@ class CandleUpdateCoordinator {
       return;
     }
 
-    // Prevent thin candle generation during initial startup
-    const simulationState = this.simulationStates.get(simulationId) || 'initializing';
-    const isInReset = this.resetInProgress.get(simulationId) || false;
-    const lastReset = this.lastResetTime.get(simulationId) || 0;
-    const timeSinceReset = timestamp - lastReset;
-
-    if (simulationState === 'initializing' || isInReset || timeSinceReset < 2000) {
-      console.log(`🚫 THIN CANDLE PREVENTION: Skipping update for ${simulationId} (state: ${simulationState}, reset: ${isInReset}, timeSinceReset: ${timeSinceReset}ms)`);
+    // 🎯 BASIC VALIDATION: Only check for invalid data, no timing logic
+    if (!this.isValidCandleData(price, volume)) {
+      console.warn(`⚠️ Invalid candle data skipped - price: ${price}, volume: ${volume}`);
       return;
     }
-
-    // TIMESTAMP COORDINATION: Ensure sequential timestamps
-    const coordinatedTimestamp = this.timestampCoordinator.getCoordinatedTimestamp(simulationId, timestamp);
     
     if (!this.updateQueue.has(simulationId)) {
       this.updateQueue.set(simulationId, []);
     }
     
-    const lastProcessed = this.lastProcessedTime.get(simulationId) || 0;
-    if (coordinatedTimestamp < lastProcessed) {
-      console.warn(`⏰ TIMESTAMP COORDINATION: Skipping old update for simulation ${simulationId}: ${new Date(coordinatedTimestamp).toISOString()}`);
-      return;
-    }
-
-    // Validate price and volume to prevent invalid candles
-    if (!this.isValidCandleData(price, volume)) {
-      console.warn(`⚠️ THIN CANDLE PREVENTION: Invalid candle data skipped - price: ${price}, volume: ${volume}`);
-      return;
-    }
-    
+    // 🎯 PASS-THROUGH: Accept timestamp as-is from SimulationManager
     this.updateQueue.get(simulationId)!.push({ 
-      timestamp: coordinatedTimestamp, 
+      timestamp: timestamp,  // No modification - trust SimulationManager
       price, 
       volume 
     });
-
-    // Mark simulation as building after first valid update
-    if (simulationState === 'ready') {
-      this.simulationStates.set(simulationId, 'building');
-      console.log(`📈 THIN CANDLE PREVENTION: Simulation ${simulationId} state changed to 'building'`);
-    }
     
-    console.log(`📊 COORDINATED: Queued candle update for ${simulationId}: ${volume} volume @ $${price.toFixed(4)} at ${new Date(coordinatedTimestamp).toISOString()}`);
+    console.log(`📊 PASS-THROUGH: Queued candle update for ${simulationId}: ${volume} volume @ $${price.toFixed(4)} at ${new Date(timestamp).toISOString()}`);
   }
 
   private isValidCandleData(price: number, volume: number): boolean {
@@ -632,30 +596,12 @@ class CandleUpdateCoordinator {
           this.cleanupSimulation(simulationId);
           continue;
         }
-
-        // Skip processing during reset or initialization
-        const isInReset = this.resetInProgress.get(simulationId) || false;
-        const simulationState = this.simulationStates.get(simulationId) || 'initializing';
-
-        if (isInReset) {
-          console.log(`🔄 RESET IN PROGRESS: Skipping candle processing for ${simulationId}`);
-          this.updateQueue.set(simulationId, []); // Clear queue during reset
-          continue;
-        }
-
-        if (simulationState === 'initializing') {
-          console.log(`⏳ INITIALIZATION: Waiting for simulation ${simulationId} to be ready`);
-          continue;
-        }
         
-        // Sort updates by coordinated timestamp
-        updates.sort((a, b) => a.timestamp - b.timestamp);
-
-        // Filter out any remaining invalid updates
+        // 🎯 SIMPLIFIED: No timing validation - process all updates
         const validUpdates = updates.filter(update => this.isValidCandleData(update.price, update.volume));
         
         if (validUpdates.length === 0) {
-          console.log(`⚠️ THIN CANDLE PREVENTION: No valid updates for ${simulationId}, skipping`);
+          console.log(`⚠️ No valid updates for ${simulationId}, skipping`);
           this.updateQueue.set(simulationId, []);
           continue;
         }
@@ -663,23 +609,13 @@ class CandleUpdateCoordinator {
         let candleManager = this.candleManagers.get(simulationId);
         if (!candleManager) {
           try {
-            console.log(`🏭 [SINGLETON FIX] Creating CandleManager for ${simulationId} using getInstance() with memory leak prevention...`);
+            console.log(`🏭 [SINGLETON] Creating CandleManager for ${simulationId} using getInstance()...`);
             
-            // 🚨 CRITICAL FIX: Replace direct instantiation with singleton pattern
+            // 🚨 CRITICAL FIX: Use singleton pattern
             if (typeof CandleManager.getInstance !== 'function') {
               throw new Error('CandleManager.getInstance method is not available - singleton pattern not implemented');
             }
             
-            // 🔍 SINGLETON TEST: Use singleton pattern for testing
-            console.log(`🔍 [SINGLETON] Testing CandleManager singleton for ${simulationId}...`);
-            const testManagerId = `test-${simulationId}-${Date.now()}`;
-            const testManager = CandleManager.getInstance(testManagerId, 10000);
-            testManager.clear();
-            console.log('✅ [SINGLETON] CandleManager singleton test passed');
-            
-            // 🔍 SINGLETON USAGE: Use singleton pattern for main instance
-            console.log(`🔍 [SINGLETON] Using CandleManager.getInstance for ${simulationId}`);
-            console.log(`🔍 [SINGLETON] This ensures only ONE instance per simulation ID`);
             candleManager = CandleManager.getInstance(simulationId, 10000);
             
             // Initialize with simulation start time
@@ -694,12 +630,9 @@ class CandleUpdateCoordinator {
               objectPoolMonitor.registerPool(`candle-${simulationId}`, candleManager);
             }
             
-            console.log(`✅ [SINGLETON] CandleManager singleton created successfully for ${simulationId} with memory leak prevention`);
+            console.log(`✅ [SINGLETON] CandleManager singleton created successfully for ${simulationId}`);
             
             this.errorCounts.delete(simulationId);
-
-            console.log(`🎯 [SINGLETON] CLEAN START: No existing candles loaded for ${simulationId} to prevent thin candles`);
-            candleManager.clear();
             
           } catch (createError) {
             console.error(`❌ [SINGLETON] Failed to create CandleManager singleton for ${simulationId}:`, createError);
@@ -713,29 +646,21 @@ class CandleUpdateCoordinator {
               continue;
             }
             
-            if (createError instanceof Error && createError.message.includes('getInstance')) {
-              console.error('🚨 [SINGLETON] CONFIRMED: CandleManager singleton getInstance method error detected!');
-            }
-            
             continue;
           }
         }
         
-        // Process updates with coordination
-        const lastProcessed = this.lastProcessedTime.get(simulationId) || 0;
-        const newValidUpdates = validUpdates.filter(u => u.timestamp >= lastProcessed);
-        
+        // 🎯 SIMPLIFIED: Process all valid updates without timing checks
         const speedMultiplier = this.speedMultipliers.get(simulationId) || 1;
         const shouldProcess = speedMultiplier >= 1 || Math.random() < speedMultiplier;
         
-        if (shouldProcess && newValidUpdates.length > 0) {
-          console.log(`📊 [SINGLETON] Processing ${newValidUpdates.length} valid candle updates for simulation ${simulationId}`);
+        if (shouldProcess && validUpdates.length > 0) {
+          console.log(`📊 [SINGLETON] Processing ${validUpdates.length} valid candle updates for simulation ${simulationId}`);
           
-          for (const update of newValidUpdates) {
+          for (const update of validUpdates) {
             try {
+              // 🎯 PASS-THROUGH: Send timestamp unchanged to CandleManager
               candleManager.updateCandle(update.timestamp, update.price, update.volume);
-              this.lastProcessedTime.set(simulationId, update.timestamp);
-              this.timestampCoordinator.recordSuccessfulUpdate(simulationId, update.timestamp);
             } catch (updateError) {
               console.error(`❌ [SINGLETON] Error updating candle for ${simulationId}:`, updateError);
               continue;
@@ -745,29 +670,19 @@ class CandleUpdateCoordinator {
           try {
             const updatedCandles = candleManager.getCandles(1000);
             
-            const isOrdered = this.timestampCoordinator.validateCandleOrdering(updatedCandles);
-            
-            if (isOrdered && updatedCandles.length > 0) {
-              // Validate candles don't have invalid OHLC before setting
+            if (updatedCandles.length > 0) {
+              // 🎯 SIMPLIFIED: Basic validation without extensive ordering checks
               const validCandles = updatedCandles.filter(candle => this.isValidOHLCCandle(candle));
               
               if (validCandles.length > 0) {
                 simulation.priceHistory = validCandles;
-                console.log(`✅ [SINGLETON] COORDINATED: Candles updated for ${simulationId}: ${validCandles.length} valid candles with perfect ordering from singleton instance`);
-
-                // Update simulation state
-                if (simulationState === 'building' && validCandles.length >= 10) {
-                  this.simulationStates.set(simulationId, 'stable');
-                  console.log(`🎯 [SINGLETON] THIN CANDLE PREVENTION: Simulation ${simulationId} state changed to 'stable'`);
-                }
+                console.log(`✅ [SINGLETON] PASS-THROUGH: Candles updated for ${simulationId}: ${validCandles.length} valid candles from singleton instance`);
               } else {
-                console.warn(`⚠️ [SINGLETON] THIN CANDLE PREVENTION: All candles filtered out for ${simulationId} due to invalid OHLC`);
+                console.warn(`⚠️ [SINGLETON] All candles filtered out for ${simulationId} due to invalid OHLC`);
               }
-            } else {
-              console.error('❌ [SINGLETON] COORDINATION FAILURE: Skipping candle update due to ordering issues');
             }
             
-            if (broadcastManager && isOrdered && updatedCandles.length > 0) {
+            if (broadcastManager && updatedCandles.length > 0) {
               try {
                 broadcastManager.sendDirectMessage(simulationId, {
                   type: 'candle_update',
@@ -777,8 +692,7 @@ class CandleUpdateCoordinator {
                     speed: speedMultiplier,
                     candleCount: simulation.priceHistory.length,
                     isLive: simulation.isRunning,
-                    timestampCoordinated: true,
-                    thinCandlesPrevented: true,
+                    passThrough: true,
                     singletonInstance: true
                   }
                 });
@@ -790,8 +704,8 @@ class CandleUpdateCoordinator {
           } catch (getCandlesError) {
             console.error(`❌ [SINGLETON] Error getting candles for ${simulationId}:`, getCandlesError);
           }
-        } else if (newValidUpdates.length === 0) {
-          console.log(`⏸️ [SINGLETON] No new valid candle updates for simulation ${simulationId}`);
+        } else if (validUpdates.length === 0) {
+          console.log(`⏸️ [SINGLETON] No valid candle updates for simulation ${simulationId}`);
         }
         
         this.updateQueue.set(simulationId, []);
@@ -832,21 +746,11 @@ class CandleUpdateCoordinator {
       return false;
     }
 
-    // Check for suspiciously small price differences (thin candles)
-    const range = high - low;
-    const avgPrice = (open + close) / 2;
-    const rangePercent = range / avgPrice;
-    
-    if (rangePercent < 0.00001) {
-      console.warn(`⚠️ [SINGLETON] THIN CANDLE DETECTION: Suspiciously small range detected - range: ${range}, avgPrice: ${avgPrice}, rangePercent: ${rangePercent}`);
-      return false;
-    }
-
     return true;
   }
   
   private cleanupSimulation(simulationId: string) {
-    console.log(`🧹 [SINGLETON] COORDINATED: Cleaning up simulation ${simulationId} due to errors`);
+    console.log(`🧹 [SINGLETON] Cleaning up simulation ${simulationId} due to errors`);
     
     const candleManager = this.candleManagers.get(simulationId);
     if (candleManager && typeof candleManager.shutdown === 'function') {
@@ -861,36 +765,24 @@ class CandleUpdateCoordinator {
     
     this.candleManagers.delete(simulationId);
     this.updateQueue.delete(simulationId);
-    this.lastProcessedTime.delete(simulationId);
     this.speedMultipliers.delete(simulationId);
     this.errorCounts.delete(simulationId);
-    this.timestampCoordinator.cleanup(simulationId);
-    
-    // Clean up thin candle prevention state
-    this.simulationStates.delete(simulationId);
-    this.initialCandlesPrevented.delete(simulationId);
-    this.resetInProgress.delete(simulationId);
-    this.lastResetTime.delete(simulationId);
     
     // 🔧 MEMORY LEAK FIX: Clean up pool references
     this.poolReferences.delete(simulationId);
     
-    console.log(`✅ [SINGLETON] COORDINATED: Cleanup completed for simulation ${simulationId}`);
+    console.log(`✅ [SINGLETON] Cleanup completed for simulation ${simulationId}`);
   }
   
+  // 🎯 SIMPLIFIED: Basic clear without complex coordination
   clearCandles(simulationId: string) {
-    console.log(`🔄 [SINGLETON] RESET COORDINATION: Starting complete candle clear for ${simulationId}`);
-    
-    // Mark reset in progress
-    this.resetInProgress.set(simulationId, true);
-    this.lastResetTime.set(simulationId, Date.now());
-    this.simulationStates.set(simulationId, 'initializing');
+    console.log(`🔄 [SINGLETON] Basic candle clear for ${simulationId}`);
     
     const candleManager = this.candleManagers.get(simulationId);
     if (candleManager) {
       try {
         candleManager.clear();
-        console.log(`🧹 [SINGLETON] RESET COORDINATION: Cleared candles for simulation ${simulationId}`);
+        console.log(`🧹 [SINGLETON] Cleared candles for simulation ${simulationId}`);
       } catch (error) {
         console.error(`❌ [SINGLETON] Error clearing candles for ${simulationId}:`, error);
       }
@@ -898,21 +790,12 @@ class CandleUpdateCoordinator {
     
     // Clear all coordinator state
     this.updateQueue.set(simulationId, []);
-    this.lastProcessedTime.delete(simulationId);
     this.errorCounts.delete(simulationId);
-    this.timestampCoordinator.reset(simulationId);
     
     // 🔧 MEMORY LEAK FIX: Clear pool references
     this.poolReferences.delete(simulationId);
     
-    console.log(`🧹 [SINGLETON] RESET COORDINATION: Cleared candle coordinator state for simulation ${simulationId}`);
-    
-    // Wait before allowing new updates to prevent immediate thin candles
-    setTimeout(() => {
-      this.resetInProgress.set(simulationId, false);
-      this.simulationStates.set(simulationId, 'ready');
-      console.log(`✅ [SINGLETON] RESET COORDINATION: Reset completion for ${simulationId} - ready for new candles`);
-    }, 1000); // 1 second delay to ensure clean state
+    console.log(`🧹 [SINGLETON] Cleared candle coordinator state for ${simulationId}`);
   }
   
   getCandleCount(simulationId: string): number {
@@ -928,13 +811,9 @@ class CandleUpdateCoordinator {
     return 0;
   }
   
+  // 🎯 SIMPLIFIED: Basic clean start without complex coordination
   ensureCleanStart(simulationId: string) {
-    console.log(`🎯 [SINGLETON] RESET COORDINATION: Ensuring comprehensive clean start for simulation ${simulationId}`);
-    
-    // Mark as initializing to prevent any updates
-    this.simulationStates.set(simulationId, 'initializing');
-    this.resetInProgress.set(simulationId, true);
-    this.lastResetTime.set(simulationId, Date.now());
+    console.log(`🎯 [SINGLETON] Basic clean start for simulation ${simulationId}`);
     
     const existingManager = this.candleManagers.get(simulationId);
     if (existingManager) {
@@ -952,24 +831,14 @@ class CandleUpdateCoordinator {
       this.candleManagers.delete(simulationId);
     }
     
-    // Clear all state completely
+    // Clear all state
     this.updateQueue.set(simulationId, []);
-    this.lastProcessedTime.delete(simulationId);
     this.errorCounts.delete(simulationId);
-    this.timestampCoordinator.reset(simulationId);
-    this.initialCandlesPrevented.set(simulationId, true);
     
     // 🔧 MEMORY LEAK FIX: Clear pool references
     this.poolReferences.delete(simulationId);
     
-    console.log(`✅ [SINGLETON] RESET COORDINATION: Comprehensive clean start ensured for simulation ${simulationId}`);
-    
-    // Wait longer before marking as ready to prevent thin candles
-    setTimeout(() => {
-      this.resetInProgress.set(simulationId, false);
-      this.simulationStates.set(simulationId, 'ready');
-      console.log(`🎯 [SINGLETON] RESET COORDINATION: Simulation ${simulationId} marked as ready for proper candle generation`);
-    }, 2000); // 2 second delay for complete reset
+    console.log(`✅ [SINGLETON] Basic clean start completed for simulation ${simulationId}`);
   }
   
   // 🔧 MEMORY LEAK FIX: Get pool statistics
@@ -980,7 +849,8 @@ class CandleUpdateCoordinator {
       memoryUsage: process.memoryUsage(),
       globalPoolStats: objectPoolMonitor.getGlobalStats(),
       managerDetails: new Map(),
-      singletonPattern: 'enforced'
+      singletonPattern: 'enforced',
+      coordinatorType: 'simplified-pass-through'
     };
     
     for (const [simulationId, refs] of this.poolReferences.entries()) {
@@ -1025,133 +895,13 @@ class CandleUpdateCoordinator {
     
     this.candleManagers.clear();
     this.updateQueue.clear();
-    this.lastProcessedTime.clear();
     this.speedMultipliers.clear();
     this.errorCounts.clear();
-    this.timestampCoordinator.shutdown();
-    
-    // Clean up thin candle prevention state
-    this.simulationStates.clear();
-    this.initialCandlesPrevented.clear();
-    this.resetInProgress.clear();
-    this.lastResetTime.clear();
     
     // 🔧 MEMORY LEAK FIX: Clean up all pool references
     this.poolReferences.clear();
     
-    console.log('🧹 [SINGLETON] COORDINATED: CandleUpdateCoordinator shutdown complete with memory leak prevention and singleton pattern');
-  }
-}
-
-// TIMESTAMP COORDINATION HELPER CLASS - Enhanced with reset coordination
-class TimestampCoordinator {
-  private lastTimestamps: Map<string, number> = new Map();
-  private intervalTracking: Map<string, number> = new Map();
-  private expectedIntervals: Map<string, number> = new Map();
-  
-  constructor() {
-    console.log('📅 TimestampCoordinator initialized for sequential timestamp management');
-  }
-  
-  getCoordinatedTimestamp(simulationId: string, inputTimestamp: number): number {
-    const lastTimestamp = this.lastTimestamps.get(simulationId) || 0;
-    const expectedInterval = this.expectedIntervals.get(simulationId) || 10000; // 10 second default
-    
-    // If this is the first timestamp or input is reasonably newer
-    if (lastTimestamp === 0 || inputTimestamp >= lastTimestamp + expectedInterval) {
-      this.lastTimestamps.set(simulationId, inputTimestamp);
-      return inputTimestamp;
-    }
-    
-    // Otherwise, create a sequential timestamp
-    const coordinatedTimestamp = lastTimestamp + expectedInterval;
-    this.lastTimestamps.set(simulationId, coordinatedTimestamp);
-    
-    console.log(`🔧 TIMESTAMP COORDINATION: ${inputTimestamp} -> ${coordinatedTimestamp} (sequential enforcement)`);
-    return coordinatedTimestamp;
-  }
-  
-  recordSuccessfulUpdate(simulationId: string, timestamp: number) {
-    const lastTimestamp = this.lastTimestamps.get(simulationId);
-    if (lastTimestamp) {
-      const interval = timestamp - lastTimestamp;
-      this.intervalTracking.set(simulationId, interval);
-      
-      // Track the expected interval for this simulation
-      if (interval > 0) {
-        this.expectedIntervals.set(simulationId, interval);
-      }
-    }
-  }
-  
-  validateCandleOrdering(candles: any[]): boolean {
-    if (candles.length === 0) return true;
-    
-    for (let i = 1; i < candles.length; i++) {
-      if (candles[i].timestamp <= candles[i - 1].timestamp) {
-        console.error(`❌ ORDERING VIOLATION: Candle ${i} timestamp ${candles[i].timestamp} <= previous ${candles[i - 1].timestamp}`);
-        return false;
-      }
-    }
-    
-    console.log(`✅ ORDERING VALIDATED: ${candles.length} candles in perfect sequential order`);
-    return true;
-  }
-  
-  validateCandleSequence(simulationId: string, candles: any[]): any[] {
-    if (candles.length === 0) return [];
-    
-    const result: any[] = [];
-    let lastTimestamp = 0;
-    let fixedCount = 0;
-    const expectedInterval = this.expectedIntervals.get(simulationId) || 10000;
-    
-    for (const candle of candles) {
-      let timestamp = candle.timestamp;
-      
-      if (timestamp <= lastTimestamp) {
-        timestamp = lastTimestamp + expectedInterval;
-        fixedCount++;
-      }
-      
-      if (candle.high >= candle.low &&
-          candle.high >= candle.open &&
-          candle.high >= candle.close &&
-          candle.low <= candle.open &&
-          candle.low <= candle.close) {
-        
-        result.push({
-          ...candle,
-          timestamp: timestamp
-        });
-        lastTimestamp = timestamp;
-      }
-    }
-    
-    if (fixedCount > 0) {
-      console.log(`🔧 COORDINATION: Fixed ${fixedCount} timestamp issues in candle sequence for ${simulationId}`);
-    }
-    
-    console.log(`📊 COORDINATED VALIDATION: ${result.length}/${candles.length} candles validated for ${simulationId}`);
-    return result;
-  }
-  
-  reset(simulationId: string) {
-    this.lastTimestamps.delete(simulationId);
-    this.intervalTracking.delete(simulationId);
-    this.expectedIntervals.delete(simulationId);
-    console.log(`🔄 COORDINATION: Reset timestamp coordination for ${simulationId}`);
-  }
-  
-  cleanup(simulationId: string) {
-    this.reset(simulationId);
-  }
-  
-  shutdown() {
-    this.lastTimestamps.clear();
-    this.intervalTracking.clear();
-    this.expectedIntervals.clear();
-    console.log('📅 TimestampCoordinator shutdown complete');
+    console.log('🧹 [SINGLETON] CandleUpdateCoordinator shutdown complete - SIMPLIFIED PASS-THROUGH PATTERN');
   }
 }
 
@@ -1215,40 +965,22 @@ function asyncHandler(fn: Function) {
   };
 }
 
-// ENHANCED API ROUTES - COMPLETE REGISTRATION SYSTEM WITH ALL FIXES
-console.log('🚀 Setting up COMPLETE API routes with ALL critical fixes + singleton pattern + legacy endpoint validation...');
+// ENHANCED API ROUTES - COMPLETE REGISTRATION SYSTEM WITH SIMPLIFIED COORDINATION
+console.log('🚀 Setting up COMPLETE API routes with SIMPLIFIED timestamp coordination...');
 
 // Test endpoint for connectivity verification
 app.get('/api/test', asyncHandler(async (req: any, res: any) => {
-  console.log('🧪 Test endpoint hit - backend is running with ALL critical fixes applied + singleton pattern + legacy validation');
+  console.log('🧪 Test endpoint hit - backend is running with SIMPLIFIED coordination');
   res.json({ 
     status: 'ok', 
-    message: 'Backend is running with ALL critical fixes applied + CandleManager singleton pattern + legacy endpoint validation',
+    message: 'Backend is running with SIMPLIFIED timestamp coordination + CandleManager singleton pattern',
     timestamp: Date.now(),
     environment: process.env.NODE_ENV || 'development',
-    version: '2.8.1',
-    allFixesApplied: {
-      timestampCoordinationFixed: true,
-      apiRoutesFixed: true,
-      chartResetFixed: true,
-      thinCandlesFixed: true,
-      resetCoordinationFixed: true,
-      memoryLeaksFixed: true,
-      webSocketPauseStateFixed: true,
-      pauseStateLogicFixed: true,
-      broadcastManagerFixed: true,
-      ohlcValidationEnhanced: true,
-      exceptionHandlingImproved: true,
-      candleManagerSingletonFixed: true,
-      multipleInstancesPrevented: true,
-      legacyEndpointValidationEnhanced: true
-    },
-    tpsSupport: true,
-    stressTestSupport: true,
-    dynamicPricing: true,
-    objectPoolMonitoring: true,
-    singletonPatternEnforced: true,
-    legacyEndpointValidation: true
+    version: '2.9.0',
+    coordinatorType: 'simplified-pass-through',
+    thinCandlePreventionRemoved: true,
+    timestampModificationRemoved: true,
+    basicPassThroughActive: true
   });
 }));
 
@@ -1269,6 +1001,7 @@ app.get('/api/object-pools/status', (req, res) => {
         healthStatus: globalStats.criticalPools === 0 ? 'healthy' : 
                      globalStats.criticalPools < 3 ? 'warning' : 'critical',
         singletonPattern: 'enforced',
+        coordinatorType: 'simplified-pass-through',
         recommendations: globalStats.criticalPools > 0 ? [
           'Critical object pool detected - consider restart',
           'Monitor for memory leaks in object usage',
@@ -1417,9 +1150,9 @@ app.post('/api/stress-test/trigger', async (req, res) => {
   }
 });
 
-// Create new simulation with ALL FIXES APPLIED + SINGLETON PATTERN
+// Create new simulation with SIMPLIFIED COORDINATION
 app.post('/api/simulation', validateSimulationParameters, asyncHandler(async (req: any, res: any) => {
-  console.log('🚀 Creating new simulation with ALL CRITICAL FIXES applied + singleton pattern + legacy validation:', req.body);
+  console.log('🚀 Creating new simulation with SIMPLIFIED coordination:', req.body);
   
   try {
     const { 
@@ -1436,17 +1169,17 @@ app.post('/api/simulation', validateSimulationParameters, asyncHandler(async (re
     if (useCustomPrice && customPrice && customPrice > 0) {
       finalPrice = customPrice;
       pricingMethod = 'custom';
-      console.log(`💰 FIXED: Using custom price: $${finalPrice}`);
+      console.log(`💰 Using custom price: $${finalPrice}`);
     } else if (initialPrice && initialPrice > 0) {
       finalPrice = initialPrice;
       pricingMethod = 'explicit';
-      console.log(`💰 FIXED: Using explicit initial price: $${finalPrice}`);
+      console.log(`💰 Using explicit initial price: $${finalPrice}`);
     } else if (priceRange && priceRange !== 'random') {
       pricingMethod = 'range';
-      console.log(`🎲 FIXED: Using price range: ${priceRange}`);
+      console.log(`🎲 Using price range: ${priceRange}`);
     } else {
       pricingMethod = 'random';
-      console.log(`🎲 FIXED: Using random dynamic price generation`);
+      console.log(`🎲 Using random dynamic price generation`);
     }
     
     const parameters = {
@@ -1459,17 +1192,16 @@ app.post('/api/simulation', validateSimulationParameters, asyncHandler(async (re
       ...(finalPrice ? { initialPrice: finalPrice } : {})
     };
 
-    console.log('📊 FIXED: Final parameters for dynamic pricing and ALL fixes + singleton:', {
+    console.log('📊 Final parameters for SIMPLIFIED coordination:', {
       ...parameters,
       pricingMethod,
-      allFixesApplied: true,
-      singletonPattern: true
+      coordinatorType: 'simplified-pass-through'
     });
     
     const simulation = await simulationManager.createSimulation(parameters);
-    console.log('✅ FIXED: Simulation created successfully with dynamic price and ALL FIXES + singleton:', simulation.currentPrice);
+    console.log('✅ Simulation created successfully with SIMPLIFIED coordination:', simulation.currentPrice);
 
-    // Ensure clean start for new simulation to prevent thin candles
+    // Ensure clean start for new simulation
     if (candleUpdateCoordinator) {
       candleUpdateCoordinator.ensureCleanStart(simulation.id);
     }
@@ -1480,21 +1212,9 @@ app.post('/api/simulation', validateSimulationParameters, asyncHandler(async (re
       simulationId: simulation.id,
       isReady: simulationManager.isSimulationReady(simulation.id),
       registrationStatus: simulationManager.isSimulationReady(simulation.id) ? 'ready' : 'pending',
-      allFixesApplied: {
-        tpsSupport: true,
-        timestampCoordination: true,
-        thinCandlesPrevented: true,
-        resetCoordinationEnhanced: true,
-        memoryLeaksFixed: true,
-        webSocketPauseStateFixed: true,
-        pauseStateLogicFixed: true,
-        broadcastManagerFixed: true,
-        ohlcValidationEnhanced: true,
-        exceptionHandlingImproved: true,
-        candleManagerSingletonFixed: true,
-        multipleInstancesPrevented: true,
-        legacyEndpointValidationEnhanced: true
-      },
+      coordinatorType: 'simplified-pass-through',
+      timestampHandling: 'accepts-as-is-from-simulation-manager',
+      thinCandlePreventionRemoved: true,
       currentTPSMode: simulation.currentTPSMode || 'NORMAL',
       dynamicPricing: {
         enabled: true,
@@ -1509,8 +1229,7 @@ app.post('/api/simulation', validateSimulationParameters, asyncHandler(async (re
         requestedCustomPrice: useCustomPrice ? customPrice : null
       },
       singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced',
-      message: `Simulation created successfully with ${pricingMethod} pricing: ${simulation.currentPrice} and ALL CRITICAL FIXES + SINGLETON PATTERN + LEGACY VALIDATION APPLIED`
+      message: `Simulation created successfully with ${pricingMethod} pricing: ${simulation.currentPrice} and SIMPLIFIED COORDINATION`
     });
   } catch (error) {
     console.error('❌ Error creating simulation:', error);
@@ -1539,33 +1258,19 @@ app.get('/api/simulations', asyncHandler(async (req: any, res: any) => {
       candleCount: sim.priceHistory?.length || 0,
       tradeCount: sim.recentTrades?.length || 0,
       currentTPSMode: sim.currentTPSMode || 'NORMAL',
-      allFixesApplied: {
-        tpsSupport: true,
-        timestampCoordination: true,
-        thinCandlesPrevented: true,
-        resetCoordinationEnhanced: true,
-        memoryLeaksFixed: true,
-        webSocketPauseStateFixed: true,
-        pauseStateLogicFixed: true,
-        broadcastManagerFixed: true,
-        ohlcValidationEnhanced: true,
-        exceptionHandlingImproved: true,
-        candleManagerSingletonFixed: true,
-        multipleInstancesPrevented: true,
-        legacyEndpointValidationEnhanced: true
-      },
+      coordinatorType: 'simplified-pass-through',
+      timestampHandling: 'accepts-as-is',
+      thinCandlePreventionRemoved: true,
       dynamicPricing: true,
-      singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced'
+      singletonPattern: 'enforced'
     }));
 
     res.json({
       success: true,
       data: simulationSummaries,
       count: simulationSummaries.length,
-      allFixesApplied: true,
-      singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced'
+      coordinatorType: 'simplified-pass-through',
+      singletonPattern: 'enforced'
     });
   } catch (error) {
     console.error('❌ Error fetching simulations:', error);
@@ -1592,7 +1297,7 @@ app.get('/api/simulation/:id', asyncHandler(async (req: any, res: any) => {
       });
     }
 
-    console.log(`✅ Simulation ${id} found - returning data with ALL FIXES + singleton applied`);
+    console.log(`✅ Simulation ${id} found - returning data with SIMPLIFIED coordination`);
     
     const cleanSimulation = {
       ...simulation,
@@ -1601,21 +1306,9 @@ app.get('/api/simulation/:id', asyncHandler(async (req: any, res: any) => {
       activePositions: simulation.activePositions || [],
       traderRankings: simulation.traderRankings || simulation.traders?.map(t => t.trader) || [],
       currentTPSMode: simulation.currentTPSMode || 'NORMAL',
-      allFixesApplied: {
-        tpsSupport: true,
-        timestampCoordination: true,
-        thinCandlesPrevented: true,
-        resetCoordinationEnhanced: true,
-        memoryLeaksFixed: true,
-        webSocketPauseStateFixed: true,
-        pauseStateLogicFixed: true,
-        broadcastManagerFixed: true,
-        ohlcValidationEnhanced: true,
-        exceptionHandlingImproved: true,
-        candleManagerSingletonFixed: true,
-        multipleInstancesPrevented: true,
-        legacyEndpointValidationEnhanced: true
-      },
+      coordinatorType: 'simplified-pass-through',
+      timestampHandling: 'accepts-as-is',
+      thinCandlePreventionRemoved: true,
       externalMarketMetrics: simulation.externalMarketMetrics || {
         currentTPS: 25,
         actualTPS: 0,
@@ -1635,16 +1328,14 @@ app.get('/api/simulation/:id', asyncHandler(async (req: any, res: any) => {
                       simulation.currentPrice < 10 ? 'mid' :
                       simulation.currentPrice < 100 ? 'large' : 'mega'
       },
-      singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced'
+      singletonPattern: 'enforced'
     };
 
     res.json({
       success: true,
       data: cleanSimulation,
-      allFixesApplied: true,
-      singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced'
+      coordinatorType: 'simplified-pass-through',
+      singletonPattern: 'enforced'
     });
   } catch (error) {
     console.error(`❌ Error fetching simulation ${id}:`, error);
@@ -1655,10 +1346,10 @@ app.get('/api/simulation/:id', asyncHandler(async (req: any, res: any) => {
   }
 }));
 
-// Check simulation readiness endpoint with enhanced coordination
+// Check simulation readiness endpoint
 app.get('/api/simulation/:id/ready', asyncHandler(async (req: any, res: any) => {
   const { id } = req.params;
-  console.log(`🔍 Checking readiness for simulation ${id} with ALL FIXES + singleton`);
+  console.log(`🔍 Checking readiness for simulation ${id} with SIMPLIFIED coordination`);
   
   try {
     const simulation = simulationManager.getSimulation(id);
@@ -1677,31 +1368,18 @@ app.get('/api/simulation/:id/ready', asyncHandler(async (req: any, res: any) => 
     const isReady = simulationManager.isSimulationReady(id);
     const status = isReady ? 'ready' : 'initializing';
     
-    console.log(`🔍 Simulation ${id} readiness: ${isReady ? 'READY' : 'NOT READY'} with ALL FIXES + singleton`);
+    console.log(`🔍 Simulation ${id} readiness: ${isReady ? 'READY' : 'NOT READY'} with SIMPLIFIED coordination`);
 
     res.json({
       success: true,
       ready: isReady,
       status: status,
       id: id,
-      allFixesApplied: {
-        tpsSupport: true,
-        timestampCoordination: true,
-        thinCandlesPrevented: true,
-        resetCoordinationEnhanced: true,
-        memoryLeaksFixed: true,
-        webSocketPauseStateFixed: true,
-        pauseStateLogicFixed: true,
-        broadcastManagerFixed: true,
-        ohlcValidationEnhanced: true,
-        exceptionHandlingImproved: true,
-        candleManagerSingletonFixed: true,
-        multipleInstancesPrevented: true,
-        legacyEndpointValidationEnhanced: true
-      },
+      coordinatorType: 'simplified-pass-through',
+      timestampHandling: 'accepts-as-is',
+      thinCandlePreventionRemoved: true,
       dynamicPricing: true,
       singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced',
       currentTPSMode: simulation.currentTPSMode || 'NORMAL',
       details: {
         isRunning: simulation.isRunning,
@@ -1724,10 +1402,10 @@ app.get('/api/simulation/:id/ready', asyncHandler(async (req: any, res: any) => 
   }
 }));
 
-// Start simulation with ALL FIXES + SINGLETON
+// Start simulation with SIMPLIFIED coordination
 app.post('/api/simulation/:id/start', asyncHandler(async (req: any, res: any) => {
   const { id } = req.params;
-  console.log(`🚀 Starting simulation ${id} with ALL CRITICAL FIXES + singleton`);
+  console.log(`🚀 Starting simulation ${id} with SIMPLIFIED coordination`);
   
   try {
     const simulation = simulationManager.getSimulation(id);
@@ -1748,7 +1426,7 @@ app.post('/api/simulation/:id/start', asyncHandler(async (req: any, res: any) =>
       });
     }
 
-    // Ensure coordinator is ready and prevent initial thin candles
+    // Ensure coordinator is ready
     if (candleUpdateCoordinator) {
       candleUpdateCoordinator.ensureCleanStart(id);
       // Add a small delay to ensure clean start before starting simulation
@@ -1756,35 +1434,22 @@ app.post('/api/simulation/:id/start', asyncHandler(async (req: any, res: any) =>
     }
 
     await simulationManager.startSimulation(id);
-    console.log(`✅ Simulation ${id} started successfully with ALL FIXES + singleton`);
+    console.log(`✅ Simulation ${id} started successfully with SIMPLIFIED coordination`);
 
     res.json({
       success: true,
-      message: 'Simulation started successfully with ALL CRITICAL FIXES + SINGLETON PATTERN + LEGACY VALIDATION',
+      message: 'Simulation started successfully with SIMPLIFIED COORDINATION',
       data: {
         id: id,
         isRunning: true,
         isPaused: false,
         startTime: simulation.startTime,
         currentTPSMode: simulation.currentTPSMode || 'NORMAL',
-        allFixesApplied: {
-          tpsSupport: true,
-          timestampCoordination: true,
-          thinCandlesPrevented: true,
-          resetCoordinationEnhanced: true,
-          memoryLeaksFixed: true,
-          webSocketPauseStateFixed: true,
-          pauseStateLogicFixed: true,
-          broadcastManagerFixed: true,
-          ohlcValidationEnhanced: true,
-          exceptionHandlingImproved: true,
-          candleManagerSingletonFixed: true,
-          multipleInstancesPrevented: true,
-          legacyEndpointValidationEnhanced: true
-        },
+        coordinatorType: 'simplified-pass-through',
+        timestampHandling: 'accepts-as-is',
+        thinCandlePreventionRemoved: true,
         dynamicPricing: true,
         singletonPattern: 'enforced',
-        legacyEndpointValidation: 'enhanced',
         currentPrice: simulation.currentPrice
       }
     });
@@ -1797,26 +1462,26 @@ app.post('/api/simulation/:id/start', asyncHandler(async (req: any, res: any) =>
   }
 }));
 
-// 🔧 CRITICAL FIX: Enhanced pause simulation with proper state logic
+// Pause simulation
 app.post('/api/simulation/:id/pause', asyncHandler(async (req: any, res: any) => {
   const { id } = req.params;
-  console.log(`⏸️ [PAUSE STATE FIX] Pausing simulation ${id}`);
+  console.log(`⏸️ Pausing simulation ${id}`);
   
   try {
     const simulation = simulationManager.getSimulation(id);
     
     if (!simulation) {
-      console.log(`❌ [PAUSE STATE FIX] Simulation ${id} not found for pause`);
+      console.log(`❌ Simulation ${id} not found for pause`);
       return res.status(404).json({
         success: false,
         error: 'Simulation not found'
       });
     }
 
-    // 🔧 CRITICAL FIX: Proper state validation to prevent isRunning: true, isPaused: true
+    // Proper state validation to prevent isRunning: true, isPaused: true
     if (!simulation.isRunning || simulation.isPaused) {
       const stateMessage = `Cannot pause simulation - isRunning: ${simulation.isRunning}, isPaused: ${simulation.isPaused}`;
-      console.log(`❌ [PAUSE STATE FIX] ${stateMessage}`);
+      console.log(`❌ ${stateMessage}`);
       return res.status(400).json({
         success: false,
         error: stateMessage,
@@ -1832,39 +1497,30 @@ app.post('/api/simulation/:id/pause', asyncHandler(async (req: any, res: any) =>
     // Verify the state was updated correctly
     const updatedSimulation = simulationManager.getSimulation(id);
     if (updatedSimulation && updatedSimulation.isRunning && updatedSimulation.isPaused) {
-      console.error(`🚨 [PAUSE STATE FIX] CRITICAL: Contradictory state detected after pause! isRunning: ${updatedSimulation.isRunning}, isPaused: ${updatedSimulation.isPaused}`);
+      console.error(`🚨 CRITICAL: Contradictory state detected after pause! isRunning: ${updatedSimulation.isRunning}, isPaused: ${updatedSimulation.isPaused}`);
       // Force correct the state
       updatedSimulation.isRunning = false;
       updatedSimulation.isPaused = true;
-      console.log(`✅ [PAUSE STATE FIX] State corrected: isRunning: ${updatedSimulation.isRunning}, isPaused: ${updatedSimulation.isPaused}`);
+      console.log(`✅ State corrected: isRunning: ${updatedSimulation.isRunning}, isPaused: ${updatedSimulation.isPaused}`);
     }
     
-    console.log(`✅ [PAUSE STATE FIX] Simulation ${id} paused successfully`);
+    console.log(`✅ Simulation ${id} paused successfully`);
 
     res.json({
       success: true,
-      message: 'Simulation paused successfully with proper state management',
+      message: 'Simulation paused successfully',
       data: {
         id: id,
         isRunning: updatedSimulation?.isRunning || false,
         isPaused: updatedSimulation?.isPaused || true,
         currentTPSMode: simulation.currentTPSMode || 'NORMAL',
         currentPrice: simulation.currentPrice,
-        allFixesApplied: {
-          pauseStateLogicFixed: true,
-          timestampCoordination: true,
-          thinCandlesPrevented: true,
-          resetCoordinationEnhanced: true,
-          memoryLeaksFixed: true,
-          candleManagerSingletonFixed: true,
-          legacyEndpointValidationEnhanced: true
-        },
-        singletonPattern: 'enforced',
-        legacyEndpointValidation: 'enhanced'
+        coordinatorType: 'simplified-pass-through',
+        singletonPattern: 'enforced'
       }
     });
   } catch (error) {
-    console.error(`❌ [PAUSE STATE FIX] Error pausing simulation ${id}:`, error);
+    console.error(`❌ Error pausing simulation ${id}:`, error);
     res.status(500).json({
       success: false,
       error: error instanceof Error ? error.message : 'Failed to pause simulation'
@@ -1872,12 +1528,12 @@ app.post('/api/simulation/:id/pause', asyncHandler(async (req: any, res: any) =>
   }
 }));
 
-// CRITICAL RESET with COMPLETE reset coordination to prevent thin candles
+// SIMPLIFIED RESET with basic coordination
 app.post('/api/simulation/:id/reset', asyncHandler(async (req: any, res: any) => {
   const { id } = req.params;
   const { clearAllData = true, resetPrice, resetState = 'complete' } = req.body;
   
-  console.log(`🔄 CRITICAL RESET: Resetting simulation ${id} with ALL FIXES + singleton + legacy validation`);
+  console.log(`🔄 SIMPLIFIED RESET: Resetting simulation ${id}`);
   
   try {
     const simulation = simulationManager.getSimulation(id);
@@ -1890,47 +1546,42 @@ app.post('/api/simulation/:id/reset', asyncHandler(async (req: any, res: any) =>
       });
     }
 
-    // PHASE 1: IMMEDIATE COORDINATOR CLEANUP (prevents thin candles)
-    console.log(`🔄 PHASE 1: Immediate coordinator cleanup for ${id}`);
+    // SIMPLIFIED: Basic coordinator cleanup
+    console.log(`🔄 Basic coordinator cleanup for ${id}`);
     if (candleUpdateCoordinator) {
       candleUpdateCoordinator.clearCandles(id);
-      // Wait for complete cleanup before proceeding
-      await new Promise(resolve => setTimeout(resolve, 500));
     }
 
-    // PHASE 2: SIMULATION MANAGER RESET (generates new dynamic price)
-    console.log(`🔄 PHASE 2: SimulationManager reset for ${id}`);
+    // Simulation manager reset
+    console.log(`🔄 SimulationManager reset for ${id}`);
     await simulationManager.resetSimulation(id);
     
-    // PHASE 3: COMPREHENSIVE CLEAN START (ensures no thin candles)
-    console.log(`🔄 PHASE 3: Comprehensive clean start coordination for ${id}`);
+    // Basic clean start
+    console.log(`🔄 Basic clean start for ${id}`);
     if (candleUpdateCoordinator) {
       candleUpdateCoordinator.ensureCleanStart(id);
-      // Additional delay to ensure complete reset coordination
-      await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
     const resetSimulation = simulationManager.getSimulation(id);
     
-    // PHASE 4: VERIFICATION (ensure clean state)
-    console.log(`🔄 PHASE 4: Reset verification for ${id}`);
+    // Basic verification
     if (resetSimulation && resetSimulation.priceHistory && resetSimulation.priceHistory.length > 0) {
-      console.warn(`⚠️ Found existing price history after reset, clearing manually to prevent thin candles`);
+      console.warn(`⚠️ Found existing price history after reset, clearing manually`);
       resetSimulation.priceHistory = [];
     }
     
-    // 🔧 CRITICAL FIX: Ensure proper state after reset (prevent contradictory states)
+    // Ensure proper state after reset
     if (resetSimulation) {
       resetSimulation.isRunning = false;
       resetSimulation.isPaused = false;
-      console.log(`✅ [PAUSE STATE FIX] Reset state verified: isRunning: ${resetSimulation.isRunning}, isPaused: ${resetSimulation.isPaused}`);
+      console.log(`✅ Reset state verified: isRunning: ${resetSimulation.isRunning}, isPaused: ${resetSimulation.isPaused}`);
     }
     
-    console.log(`✅ COMPLETE RESET: All phases completed for ${id} with new dynamic price: ${resetSimulation?.currentPrice}`);
+    console.log(`✅ SIMPLIFIED RESET: Completed for ${id} with new dynamic price: ${resetSimulation?.currentPrice}`);
 
     res.json({
       success: true,
-      message: 'Simulation reset successfully with ALL CRITICAL FIXES + SINGLETON PATTERN + LEGACY VALIDATION',
+      message: 'Simulation reset successfully with SIMPLIFIED COORDINATION',
       data: {
         id: id,
         isRunning: false,
@@ -1940,21 +1591,9 @@ app.post('/api/simulation/:id/reset', asyncHandler(async (req: any, res: any) =>
         recentTrades: resetSimulation?.recentTrades || [],
         activePositions: resetSimulation?.activePositions || [],
         currentTPSMode: resetSimulation?.currentTPSMode || 'NORMAL',
-        allFixesApplied: {
-          tpsSupport: true,
-          timestampCoordination: true,
-          thinCandlesPrevented: true,
-          resetCoordinationEnhanced: true,
-          memoryLeaksFixed: true,
-          webSocketPauseStateFixed: true,
-          pauseStateLogicFixed: true,
-          broadcastManagerFixed: true,
-          ohlcValidationEnhanced: true,
-          exceptionHandlingImproved: true,
-          candleManagerSingletonFixed: true,
-          multipleInstancesPrevented: true,
-          legacyEndpointValidationEnhanced: true
-        },
+        coordinatorType: 'simplified-pass-through',
+        timestampHandling: 'accepts-as-is',
+        thinCandlePreventionRemoved: true,
         dynamicPricing: {
           enabled: true,
           newPrice: resetSimulation?.currentPrice,
@@ -1964,11 +1603,9 @@ app.post('/api/simulation/:id/reset', asyncHandler(async (req: any, res: any) =>
                         resetSimulation?.currentPrice && resetSimulation.currentPrice < 100 ? 'large' : 'mega'
         },
         singletonPattern: 'enforced',
-        legacyEndpointValidation: 'enhanced',
         resetComplete: true,
         resetTimestamp: Date.now(),
-        resetPhases: ['coordinator_cleanup', 'simulation_reset', 'clean_start', 'verification'],
-        guaranteedCleanStart: true
+        resetType: 'simplified-basic-coordination'
       }
     });
   } catch (error) {
@@ -1985,7 +1622,7 @@ app.post('/api/simulation/:id/speed', asyncHandler(async (req: any, res: any) =>
   const { id } = req.params;
   const { speed, timestamp, requestId } = req.body;
   
-  console.log(`⚡ Setting speed for simulation ${id} to ${speed}x with ALL FIXES + singleton + legacy validation`);
+  console.log(`⚡ Setting speed for simulation ${id} to ${speed}x with SIMPLIFIED coordination`);
   
   try {
     const simulation = simulationManager.getSimulation(id);
@@ -2022,7 +1659,7 @@ app.post('/api/simulation/:id/speed', asyncHandler(async (req: any, res: any) =>
 
     res.json({
       success: true,
-      message: `Speed changed to ${speed}x with ALL FIXES + singleton + legacy validation`,
+      message: `Speed changed to ${speed}x with SIMPLIFIED coordination`,
       data: {
         id: id,
         oldSpeed: oldSpeed,
@@ -2032,16 +1669,8 @@ app.post('/api/simulation/:id/speed', asyncHandler(async (req: any, res: any) =>
         applied: true,
         currentTPSMode: simulation.currentTPSMode || 'NORMAL',
         currentPrice: simulation.currentPrice,
-        allFixesApplied: {
-          timestampCoordination: true,
-          thinCandlesPrevented: true,
-          resetCoordinationEnhanced: true,
-          memoryLeaksFixed: true,
-          candleManagerSingletonFixed: true,
-          legacyEndpointValidationEnhanced: true
-        },
-        singletonPattern: 'enforced',
-        legacyEndpointValidation: 'enhanced'
+        coordinatorType: 'simplified-pass-through',
+        singletonPattern: 'enforced'
       }
     });
   } catch (error) {
@@ -2080,16 +1709,8 @@ app.get('/api/simulation/:id/tps-mode', asyncHandler(async (req: any, res: any) 
         targetTPS: getTargetTPSForMode(currentMode),
         metrics: metrics,
         supportedModes: ['NORMAL', 'BURST', 'STRESS', 'HFT'],
-        allFixesApplied: {
-          timestampCoordination: true,
-          thinCandlesPrevented: true,
-          resetCoordinationEnhanced: true,
-          memoryLeaksFixed: true,
-          candleManagerSingletonFixed: true,
-          legacyEndpointValidationEnhanced: true
-        },
+        coordinatorType: 'simplified-pass-through',
         singletonPattern: 'enforced',
-        legacyEndpointValidation: 'enhanced',
         timestamp: Date.now()
       }
     });
@@ -2140,16 +1761,8 @@ app.post('/api/simulation/:id/tps-mode', asyncHandler(async (req: any, res: any)
           newMode: mode,
           targetTPS: getTargetTPSForMode(mode),
           metrics: result.metrics,
-          allFixesApplied: {
-            timestampCoordination: true,
-            thinCandlesPrevented: true,
-            resetCoordinationEnhanced: true,
-            memoryLeaksFixed: true,
-            candleManagerSingletonFixed: true,
-            legacyEndpointValidationEnhanced: true
-          },
+          coordinatorType: 'simplified-pass-through',
           singletonPattern: 'enforced',
-          legacyEndpointValidation: 'enhanced',
           timestamp: Date.now()
         },
         message: `TPS mode changed to ${mode}`
@@ -2205,16 +1818,8 @@ app.post('/api/simulation/:id/stress-test/liquidation-cascade', asyncHandler(asy
           ordersGenerated: result.ordersGenerated,
           estimatedImpact: result.estimatedImpact,
           cascadeSize: result.cascadeSize,
-          allFixesApplied: {
-            timestampCoordination: true,
-            thinCandlesPrevented: true,
-            resetCoordinationEnhanced: true,
-            memoryLeaksFixed: true,
-            candleManagerSingletonFixed: true,
-            legacyEndpointValidationEnhanced: true
-          },
+          coordinatorType: 'simplified-pass-through',
           singletonPattern: 'enforced',
-          legacyEndpointValidation: 'enhanced',
           timestamp: Date.now()
         },
         message: 'Liquidation cascade triggered successfully'
@@ -2263,16 +1868,8 @@ app.get('/api/simulation/:id/stress-test/capabilities', asyncHandler(async (req:
           arbitrageSimulation: currentMode !== 'NORMAL'
         },
         supportedModes: ['NORMAL', 'BURST', 'STRESS', 'HFT'],
-        allFixesApplied: {
-          timestampCoordination: true,
-          thinCandlesPrevented: true,
-          resetCoordinationEnhanced: true,
-          memoryLeaksFixed: true,
-          candleManagerSingletonFixed: true,
-          legacyEndpointValidationEnhanced: true
-        },
+        coordinatorType: 'simplified-pass-through',
         singletonPattern: 'enforced',
-        legacyEndpointValidation: 'enhanced',
         timestamp: Date.now()
       }
     });
@@ -2320,20 +1917,9 @@ app.get('/api/simulation/:id/status', asyncHandler(async (req: any, res: any) =>
       endTime: simulation.endTime,
       registrationStatus: 'ready',
       candleManagerReady: true,
-      allFixesApplied: {
-        timestampCoordination: true,
-        thinCandlesPrevented: true,
-        resetCoordinationEnhanced: true,
-        memoryLeaksFixed: true,
-        webSocketPauseStateFixed: true,
-        pauseStateLogicFixed: true,
-        broadcastManagerFixed: true,
-        ohlcValidationEnhanced: true,
-        exceptionHandlingImproved: true,
-        candleManagerSingletonFixed: true,
-        multipleInstancesPrevented: true,
-        legacyEndpointValidationEnhanced: true
-      },
+      coordinatorType: 'simplified-pass-through',
+      timestampHandling: 'accepts-as-is',
+      thinCandlePreventionRemoved: true,
       tpsSupport: true,
       currentTPSMode: simulation.currentTPSMode || 'NORMAL',
       supportedTPSModes: ['NORMAL', 'BURST', 'STRESS', 'HFT'],
@@ -2358,22 +1944,20 @@ app.get('/api/simulation/:id/status', asyncHandler(async (req: any, res: any) =>
         neverHardcoded: true
       },
       singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced',
       message: (simulation.priceHistory?.length || 0) === 0 
-        ? `Ready to start with ALL FIXES + SINGLETON + LEGACY VALIDATION - NO THIN CANDLES guaranteed (${simulation.currentPrice})`
-        : `Building chart with ALL FIXES + SINGLETON + LEGACY VALIDATION: ${simulation.priceHistory?.length || 0} candles (TPS: ${simulation.currentTPSMode || 'NORMAL'}, Price: ${simulation.currentPrice})`,
+        ? `Ready to start with SIMPLIFIED COORDINATION - Pass-through pattern (${simulation.currentPrice})`
+        : `Building chart with SIMPLIFIED COORDINATION: ${simulation.priceHistory?.length || 0} candles (TPS: ${simulation.currentTPSMode || 'NORMAL'}, Price: ${simulation.currentPrice})`,
       timestamp: Date.now()
     };
     
-    console.log(`✅ Status retrieved for ${id} with ALL FIXES + singleton + legacy validation:`, {
+    console.log(`✅ Status retrieved for ${id} with SIMPLIFIED coordination:`, {
       isRunning: status.isRunning,
       candleCount: status.candleCount,
       isReady: status.isReady,
-      allFixesApplied: status.allFixesApplied,
+      coordinatorType: status.coordinatorType,
       currentTPSMode: status.currentTPSMode,
       dynamicPrice: status.currentPrice,
-      singletonPattern: status.singletonPattern,
-      legacyEndpointValidation: status.legacyEndpointValidation
+      singletonPattern: status.singletonPattern
     });
     
     res.json(status);
@@ -2383,9 +1967,9 @@ app.get('/api/simulation/:id/status', asyncHandler(async (req: any, res: any) =>
   }
 }));
 
-// EXTERNAL TRADE PROCESSING with ALL FIXES + SINGLETON
+// EXTERNAL TRADE PROCESSING with SIMPLIFIED coordination
 app.post('/api/simulation/:id/external-trade', async (req, res) => {
-  console.log('🔄 Processing real-time external trade with ALL FIXES + singleton + legacy validation!', req.params.id);
+  console.log('🔄 Processing real-time external trade with SIMPLIFIED coordination!', req.params.id);
   try {
     const { id } = req.params;
     const tradeData = req.body;
@@ -2396,12 +1980,12 @@ app.post('/api/simulation/:id/external-trade', async (req, res) => {
       return res.status(404).json({ error: 'Simulation not found' });
     }
     
-    // TIMESTAMP COORDINATION: Ensure aligned timestamp
-    const alignedTimestamp = Math.floor(Date.now() / 1000) * 1000;
+    // 🎯 SIMPLIFIED: Basic timestamp - no coordination logic
+    const basicTimestamp = Date.now();
     
     const trade = {
-      id: tradeData.id || `ext-${alignedTimestamp}-${Math.random().toString(36).substr(2, 9)}`,
-      timestamp: alignedTimestamp,
+      id: tradeData.id || `ext-${basicTimestamp}-${Math.random().toString(36).substr(2, 9)}`,
+      timestamp: basicTimestamp,
       trader: {
         walletAddress: tradeData.traderId || 'external-processor',
         preferredName: tradeData.traderName || 'Transaction Processor',
@@ -2416,7 +2000,7 @@ app.post('/api/simulation/:id/external-trade', async (req, res) => {
     
     trade.value = trade.price * trade.quantity;
     
-    // Enhanced price impact calculation with ALL FIXES + SINGLETON
+    // Enhanced price impact calculation
     const liquidityFactor = simulation.parameters?.initialLiquidity || 1000000;
     const sizeImpact = trade.value / liquidityFactor;
     
@@ -2507,11 +2091,11 @@ app.post('/api/simulation/:id/external-trade', async (req, res) => {
     const maxPrice = initialPrice * 100;
     simulation.currentPrice = Math.max(minPrice, Math.min(maxPrice, simulation.currentPrice));
     
-    // Update candles with coordinator and validate data
+    // 🎯 SIMPLIFIED: Update candles with basic pass-through
     if (candleUpdateCoordinator) {
       try {
-        candleUpdateCoordinator.queueUpdate(id, alignedTimestamp, simulation.currentPrice, trade.quantity);
-        console.log(`📈 [SINGLETON] ALL FIXES: Queued candle update: ${simulation.currentPrice.toFixed(6)} at ${new Date(alignedTimestamp).toISOString()}`);
+        candleUpdateCoordinator.queueUpdate(id, basicTimestamp, simulation.currentPrice, trade.quantity);
+        console.log(`📈 [SINGLETON] SIMPLIFIED: Queued candle update: ${simulation.currentPrice.toFixed(6)} at ${new Date(basicTimestamp).toISOString()}`);
       } catch (candleError) {
         console.error(`❌ [SINGLETON] Error queuing candle update:`, candleError);
       }
@@ -2548,13 +2132,13 @@ app.post('/api/simulation/:id/external-trade', async (req, res) => {
       try {
         broadcastManager.sendDirectMessage(id, {
           type: 'trade',
-          timestamp: alignedTimestamp,
+          timestamp: basicTimestamp,
           data: trade
         });
         
         broadcastManager.sendDirectMessage(id, {
           type: 'price_update',
-          timestamp: alignedTimestamp,
+          timestamp: basicTimestamp,
           data: {
             price: simulation.currentPrice,
             orderBook: simulation.orderBook,
@@ -2566,21 +2150,15 @@ app.post('/api/simulation/:id/external-trade', async (req, res) => {
             externalMarketMetrics: simulation.externalMarketMetrics,
             marketConditions: simulation.marketConditions,
             currentTPSMode: simulation.currentTPSMode || 'NORMAL',
-            allFixesApplied: {
-              timestampCoordination: true,
-              thinCandlesPrevented: true,
-              resetCoordinationEnhanced: true,
-              memoryLeaksFixed: true,
-              candleManagerSingletonFixed: true,
-              legacyEndpointValidationEnhanced: true
-            },
+            coordinatorType: 'simplified-pass-through',
+            timestampHandling: 'accepts-as-is',
+            thinCandlePreventionRemoved: true,
             dynamicPricing: {
               enabled: true,
               currentPrice: simulation.currentPrice,
               priceCategory: priceCategory
             },
-            singletonPattern: 'enforced',
-            legacyEndpointValidation: 'enhanced'
+            singletonPattern: 'enforced'
           }
         });
       } catch (broadcastError) {
@@ -2588,7 +2166,7 @@ app.post('/api/simulation/:id/external-trade', async (req, res) => {
       }
     }
     
-    console.log(`✅ [SINGLETON] ALL FIXES: Real-time trade processed: ${trade.action} ${trade.quantity.toFixed(2)} @ ${trade.price.toFixed(6)} -> New price: ${simulation.currentPrice.toFixed(6)} (${((trade.impact) * 100).toFixed(3)}% impact, TPS: ${tpsMode}, Category: ${priceCategory})`);
+    console.log(`✅ [SINGLETON] SIMPLIFIED: Real-time trade processed: ${trade.action} ${trade.quantity.toFixed(2)} @ ${trade.price.toFixed(6)} -> New price: ${simulation.currentPrice.toFixed(6)} (${((trade.impact) * 100).toFixed(3)}% impact, TPS: ${tpsMode}, Category: ${priceCategory})`);
     
     res.json({ 
       success: true, 
@@ -2600,15 +2178,9 @@ app.post('/api/simulation/:id/external-trade', async (req, res) => {
       trend: simulation.marketConditions.trend,
       simulationTime: simulation.currentTime,
       candleCount: simulation.priceHistory?.length || 0,
-      allFixesApplied: {
-        timestampCoordination: true,
-        thinCandlesPrevented: true,
-        resetCoordinationEnhanced: true,
-        memoryLeaksFixed: true,
-        candleManagerSingletonFixed: true,
-        multipleInstancesPrevented: true,
-        legacyEndpointValidationEnhanced: true
-      },
+      coordinatorType: 'simplified-pass-through',
+      timestampHandling: 'accepts-as-is',
+      thinCandlePreventionRemoved: true,
       tpsSupport: true,
       currentTPSMode: simulation.currentTPSMode || 'NORMAL',
       tpsMultiplier: tpsMultiplier,
@@ -2618,8 +2190,7 @@ app.post('/api/simulation/:id/external-trade', async (req, res) => {
         priceCategoryMultiplier: priceCategoryMultiplier,
         currentPrice: simulation.currentPrice
       },
-      singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced'
+      singletonPattern: 'enforced'
     });
   } catch (error) {
     console.error('❌ [SINGLETON] Error processing external trade:', error);
@@ -2627,18 +2198,10 @@ app.post('/api/simulation/:id/external-trade', async (req, res) => {
     res.status(500).json({ 
       error: 'Failed to process external trade', 
       details: (error as Error).message,
-      allFixesApplied: {
-        timestampCoordination: true,
-        thinCandlesPrevented: true,
-        resetCoordinationEnhanced: true,
-        memoryLeaksFixed: true,
-        candleManagerSingletonFixed: true,
-        legacyEndpointValidationEnhanced: true
-      },
+      coordinatorType: 'simplified-pass-through',
       tpsSupport: true,
       dynamicPricing: true,
-      singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced'
+      singletonPattern: 'enforced'
     });
   }
 });
@@ -2654,9 +2217,9 @@ function getTargetTPSForMode(mode: string): number {
   }
 }
 
-// BACKWARD COMPATIBILITY: Legacy routes that work with ALL FIXES + SINGLETON + ENHANCED VALIDATION
+// BACKWARD COMPATIBILITY: Legacy routes with SIMPLIFIED coordination
 app.post('/simulation', async (req, res) => {
-  console.log('🔄 [COMPAT] Legacy /simulation endpoint with ALL FIXES + singleton + ENHANCED VALIDATION');
+  console.log('🔄 [COMPAT] Legacy /simulation endpoint with SIMPLIFIED coordination');
   
   try {
     const simulationId = `sim_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -2697,7 +2260,7 @@ app.post('/simulation', async (req, res) => {
     
     const initialTPSMode = req.body.initialTPSMode || 'NORMAL';
     
-    console.log(`⚡ [COMPAT] Creating simulation ${simulationId} via legacy endpoint with ALL FIXES + singleton + ENHANCED VALIDATION (${pricingMethod}) and TPS mode ${initialTPSMode}...`);
+    console.log(`⚡ [COMPAT] Creating simulation ${simulationId} via legacy endpoint with SIMPLIFIED coordination (${pricingMethod}) and TPS mode ${initialTPSMode}...`);
     
     let simulation: any;
     let usedFallback = false;
@@ -2705,7 +2268,7 @@ app.post('/simulation', async (req, res) => {
     try {
       console.log('🔍 [COMPAT] Pre-validating CandleManager singleton availability...');
       
-      // 🚨 CRITICAL FIX: Use singleton pattern in legacy endpoint
+      // Use singleton pattern in legacy endpoint
       if (typeof CandleManager.getInstance !== 'function') {
         throw new Error('CandleManager.getInstance method not available');
       }
@@ -2730,10 +2293,10 @@ app.post('/simulation', async (req, res) => {
         }
       }
       
-      console.log(`✅ [COMPAT] SimulationManager created: ${simulation.id} with ALL FIXES + singleton + ENHANCED VALIDATION and dynamic price ${simulation.currentPrice}`);
+      console.log(`✅ [COMPAT] SimulationManager created: ${simulation.id} with SIMPLIFIED coordination and dynamic price ${simulation.currentPrice}`);
       
     } catch (managerError) {
-      console.warn(`⚠️ [COMPAT] SimulationManager failed, using fallback with ALL FIXES + singleton + ENHANCED VALIDATION:`, managerError);
+      console.warn(`⚠️ [COMPAT] SimulationManager failed, using fallback with SIMPLIFIED coordination:`, managerError);
       usedFallback = true;
       
       let fallbackPrice = 100;
@@ -2784,44 +2347,32 @@ app.post('/simulation', async (req, res) => {
           marketSentiment: 'neutral', liquidationRisk: 0
         },
         candleManagerReady: true,
-        allFixesApplied: {
-          timestampCoordination: true,
-          thinCandlesPrevented: true,
-          resetCoordinationEnhanced: true,
-          memoryLeaksFixed: true,
-          webSocketPauseStateFixed: true,
-          pauseStateLogicFixed: true,
-          broadcastManagerFixed: true,
-          ohlcValidationEnhanced: true,
-          exceptionHandlingImproved: true,
-          candleManagerSingletonFixed: true,
-          multipleInstancesPrevented: true,
-          legacyEndpointValidationEnhanced: true
-        },
+        coordinatorType: 'simplified-pass-through',
+        timestampHandling: 'accepts-as-is',
+        thinCandlePreventionRemoved: true,
         tpsSupport: true,
         dynamicPricing: {
           enabled: true,
           price: fallbackPrice,
           method: pricingMethod
         },
-        singletonPattern: 'enforced',
-        legacyEndpointValidation: 'enhanced'
+        singletonPattern: 'enforced'
       };
       
       try {
         const simulationsMap = (simulationManager as any).simulations;
         if (simulationsMap && typeof simulationsMap.set === 'function') {
           simulationsMap.set(simulationId, simulation);
-          console.log(`✅ [COMPAT] Fallback simulation ${simulationId} stored in manager with ALL FIXES + singleton + ENHANCED VALIDATION`);
+          console.log(`✅ [COMPAT] Fallback simulation ${simulationId} stored in manager with SIMPLIFIED coordination`);
         }
       } catch (storageError) {
         console.error(`❌ [COMPAT] Error storing fallback simulation:`, storageError);
       }
     }
     
-    console.log(`✅ [COMPAT] Legacy simulation ${simulation.id} created successfully with ALL FIXES + singleton + ENHANCED VALIDATION (fallback: ${usedFallback})`);
+    console.log(`✅ [COMPAT] Legacy simulation ${simulation.id} created successfully with SIMPLIFIED coordination (fallback: ${usedFallback})`);
     
-    // 🚨 CRITICAL FIX: Enhanced Legacy Endpoint Validation - VALIDATE TRADER COUNT
+    // Enhanced Legacy Endpoint Validation - VALIDATE TRADER COUNT
     const createdTraderCount = simulation.traders ? simulation.traders.length : 0;
     console.log(`🔥 [COMPAT] Legacy simulation trader validation: ${createdTraderCount} traders`);
 
@@ -2884,10 +2435,8 @@ app.post('/simulation', async (req, res) => {
           expectedTraders: 118,
           fixAttempted: true,
           fixError: fixError instanceof Error ? fixError.message : 'Unknown error',
-          allFixesApplied: {
-            legacyEndpointValidationEnhanced: true,
-            emergencyTraderInjection: 'failed'
-          }
+          coordinatorType: 'simplified-pass-through',
+          emergencyTraderInjection: 'failed'
         });
       }
     }
@@ -2914,7 +2463,7 @@ app.post('/simulation', async (req, res) => {
     
     const finalVerifySimulation = simulationManager.getSimulation(simulation.id);
     if (finalVerifySimulation) {
-      console.log(`✅ [COMPAT] FINAL VERIFIED: Legacy simulation ${simulation.id} is in manager with ALL FIXES + singleton + ENHANCED VALIDATION`);
+      console.log(`✅ [COMPAT] FINAL VERIFIED: Legacy simulation ${simulation.id} is in manager with SIMPLIFIED coordination`);
     } else {
       console.error(`❌ [COMPAT] FINAL CRITICAL ERROR: Legacy simulation ${simulation.id} NOT in manager!`);
     }
@@ -2922,7 +2471,7 @@ app.post('/simulation', async (req, res) => {
     const response = {
       simulationId: simulation.id,
       success: true,
-      message: `Simulation created successfully via legacy endpoint with ALL CRITICAL FIXES + SINGLETON PATTERN + ENHANCED VALIDATION (${simulation.currentPrice}) (fallback: ${usedFallback})`,
+      message: `Simulation created successfully via legacy endpoint with SIMPLIFIED COORDINATION (${simulation.currentPrice}) (fallback: ${usedFallback})`,
       data: {
         id: simulation.id,
         isRunning: simulation.isRunning || false,
@@ -2939,20 +2488,9 @@ app.post('/simulation', async (req, res) => {
         storedInManager: !!simulationManager.getSimulation(simulation.id),
         traderValidationPassed: (simulation.traders?.length || 0) > 0,
         emergencyFixApplied: createdTraderCount === 0 && (simulation.traders?.length || 0) > 0,
-        allFixesApplied: {
-          timestampCoordination: true,
-          thinCandlesPrevented: true,
-          resetCoordinationEnhanced: true,
-          memoryLeaksFixed: true,
-          webSocketPauseStateFixed: true,
-          pauseStateLogicFixed: true,
-          broadcastManagerFixed: true,
-          ohlcValidationEnhanced: true,
-          exceptionHandlingImproved: true,
-          candleManagerSingletonFixed: true,
-          multipleInstancesPrevented: true,
-          legacyEndpointValidationEnhanced: true
-        },
+        coordinatorType: 'simplified-pass-through',
+        timestampHandling: 'accepts-as-is',
+        thinCandlePreventionRemoved: true,
         tpsSupport: true,
         currentTPSMode: simulation.currentTPSMode || 'NORMAL',
         supportedTPSModes: ['NORMAL', 'BURST', 'STRESS', 'HFT'],
@@ -2969,16 +2507,15 @@ app.post('/simulation', async (req, res) => {
           requestedRange: priceRange || 'random',
           requestedCustomPrice: useCustomPrice ? customPrice : null
         },
-        singletonPattern: 'enforced',
-        legacyEndpointValidation: 'enhanced'
+        singletonPattern: 'enforced'
       },
       timestamp: Date.now(),
       endpoint: 'legacy /simulation (without /api)',
       recommendation: 'Frontend should use /api/simulation for consistency',
-      fixApplied: 'COMPLETE: ALL CRITICAL FIXES + SINGLETON PATTERN + ENHANCED VALIDATION APPLIED!'
+      fixApplied: 'COMPLETE: SIMPLIFIED COORDINATION + SINGLETON PATTERN + ENHANCED VALIDATION APPLIED!'
     };
     
-    console.log('📤 [COMPAT] Sending legacy endpoint response with ALL FIXES + singleton + ENHANCED VALIDATION');
+    console.log('📤 [COMPAT] Sending legacy endpoint response with SIMPLIFIED coordination');
     res.json(response);
     
   } catch (error) {
@@ -2989,23 +2526,15 @@ app.post('/simulation', async (req, res) => {
       details: error instanceof Error ? error.message : 'Unknown error',
       timestamp: Date.now(),
       endpoint: 'legacy /simulation',
-      allFixesApplied: {
-        timestampCoordination: true,
-        thinCandlesPrevented: true,
-        resetCoordinationEnhanced: true,
-        memoryLeaksFixed: true,
-        candleManagerSingletonFixed: true,
-        legacyEndpointValidationEnhanced: true
-      },
+      coordinatorType: 'simplified-pass-through',
       tpsSupport: true,
       dynamicPricing: true,
-      singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced'
+      singletonPattern: 'enforced'
     });
   }
 });
 
-// Additional legacy endpoints with ALL FIXES + SINGLETON + ENHANCED VALIDATION
+// Additional legacy endpoints with SIMPLIFIED coordination
 app.get('/simulation/:id', async (req, res) => {
   console.log(`🔄 [COMPAT] Legacy GET /simulation/${req.params.id} called`);
   
@@ -3026,20 +2555,9 @@ app.get('/simulation/:id', async (req, res) => {
         traderCount: simulation.traders?.length || 0,
         isReady: true,
         registrationStatus: 'ready',
-        allFixesApplied: {
-          timestampCoordination: true,
-          thinCandlesPrevented: true,
-          resetCoordinationEnhanced: true,
-          memoryLeaksFixed: true,
-          webSocketPauseStateFixed: true,
-          pauseStateLogicFixed: true,
-          broadcastManagerFixed: true,
-          ohlcValidationEnhanced: true,
-          exceptionHandlingImproved: true,
-          candleManagerSingletonFixed: true,
-          multipleInstancesPrevented: true,
-          legacyEndpointValidationEnhanced: true
-        },
+        coordinatorType: 'simplified-pass-through',
+        timestampHandling: 'accepts-as-is',
+        thinCandlePreventionRemoved: true,
         tpsSupport: true,
         currentTPSMode: simulation.currentTPSMode || 'NORMAL',
         supportedTPSModes: ['NORMAL', 'BURST', 'STRESS', 'HFT'],
@@ -3051,8 +2569,7 @@ app.get('/simulation/:id', async (req, res) => {
                         simulation.currentPrice < 10 ? 'mid' :
                         simulation.currentPrice < 100 ? 'large' : 'mega'
         },
-        singletonPattern: 'enforced',
-        legacyEndpointValidation: 'enhanced'
+        singletonPattern: 'enforced'
       },
       endpoint: 'legacy /simulation/:id (without /api)'
     });
@@ -3078,27 +2595,16 @@ app.get('/simulation/:id/ready', async (req, res) => {
       });
     }
     
-    console.log(`✅ [COMPAT] Simulation ${id} is ready (legacy endpoint) with ALL FIXES + singleton + ENHANCED VALIDATION`);
+    console.log(`✅ [COMPAT] Simulation ${id} is ready (legacy endpoint) with SIMPLIFIED coordination`);
     res.json({ 
       ready: true, 
       status: 'ready',
       id,
       state: simulation.state || 'created',
       traderCount: simulation.traders?.length || 0,
-      allFixesApplied: {
-        timestampCoordination: true,
-        thinCandlesPrevented: true,
-        resetCoordinationEnhanced: true,
-        memoryLeaksFixed: true,
-        webSocketPauseStateFixed: true,
-        pauseStateLogicFixed: true,
-        broadcastManagerFixed: true,
-        ohlcValidationEnhanced: true,
-        exceptionHandlingImproved: true,
-        candleManagerSingletonFixed: true,
-        multipleInstancesPrevented: true,
-        legacyEndpointValidationEnhanced: true
-      },
+      coordinatorType: 'simplified-pass-through',
+      timestampHandling: 'accepts-as-is',
+      thinCandlePreventionRemoved: true,
       tpsSupport: true,
       currentTPSMode: simulation.currentTPSMode || 'NORMAL',
       dynamicPricing: {
@@ -3106,7 +2612,6 @@ app.get('/simulation/:id/ready', async (req, res) => {
         currentPrice: simulation.currentPrice
       },
       singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced',
       endpoint: 'legacy /simulation/:id/ready'
     });
     
@@ -3151,14 +2656,9 @@ app.post('/simulation/:id/start', async (req, res) => {
       currentPrice: updatedSimulation?.currentPrice,
       candleCount: updatedSimulation?.priceHistory?.length || 0,
       traderCount: updatedSimulation?.traders?.length || 0,
-      allFixesApplied: {
-        timestampCoordination: true,
-        thinCandlesPrevented: true,
-        resetCoordinationEnhanced: true,
-        memoryLeaksFixed: true,
-        candleManagerSingletonFixed: true,
-        legacyEndpointValidationEnhanced: true
-      },
+      coordinatorType: 'simplified-pass-through',
+      timestampHandling: 'accepts-as-is',
+      thinCandlePreventionRemoved: true,
       tpsSupport: true,
       currentTPSMode: updatedSimulation?.currentTPSMode || 'NORMAL',
       dynamicPricing: {
@@ -3166,8 +2666,7 @@ app.post('/simulation/:id/start', async (req, res) => {
         currentPrice: updatedSimulation?.currentPrice
       },
       singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced',
-      message: 'Real-time chart generation started with ALL FIXES + SINGLETON + ENHANCED VALIDATION - NO THIN CANDLES guaranteed',
+      message: 'Real-time chart generation started with SIMPLIFIED COORDINATION - Pass-through pattern',
       timestamp: Date.now(),
       endpoint: 'legacy /simulation/:id/start'
     });
@@ -3200,17 +2699,8 @@ app.post('/simulation/:id/pause', async (req, res) => {
       currentTPSMode: simulation.currentTPSMode || 'NORMAL',
       currentPrice: simulation.currentPrice,
       traderCount: simulation.traders?.length || 0,
-      allFixesApplied: {
-        timestampCoordination: true,
-        thinCandlesPrevented: true,
-        resetCoordinationEnhanced: true,
-        memoryLeaksFixed: true,
-        pauseStateLogicFixed: true,
-        candleManagerSingletonFixed: true,
-        legacyEndpointValidationEnhanced: true
-      },
+      coordinatorType: 'simplified-pass-through',
       singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced',
       message: 'Simulation paused successfully',
       endpoint: 'legacy /simulation/:id/pause'
     });
@@ -3221,7 +2711,7 @@ app.post('/simulation/:id/pause', async (req, res) => {
 });
 
 app.post('/simulation/:id/reset', async (req, res) => {
-  console.log(`🔄 [COMPAT] Legacy RESET /simulation/${req.params.id}/reset called with ALL FIXES + singleton + ENHANCED VALIDATION`);
+  console.log(`🔄 [COMPAT] Legacy RESET /simulation/${req.params.id}/reset called with SIMPLIFIED coordination`);
   
   try {
     const { id } = req.params;
@@ -3231,22 +2721,20 @@ app.post('/simulation/:id/reset', async (req, res) => {
       return res.status(404).json({ error: 'Simulation not found' });
     }
     
-    // PHASE 1: IMMEDIATE COORDINATOR CLEANUP
-    console.log(`🔄 LEGACY RESET PHASE 1: Immediate coordinator cleanup for ${id}`);
+    // SIMPLIFIED: Basic coordinator cleanup
+    console.log(`🔄 LEGACY RESET: Basic coordinator cleanup for ${id}`);
     if (candleUpdateCoordinator) {
       candleUpdateCoordinator.clearCandles(id);
-      await new Promise(resolve => setTimeout(resolve, 500));
     }
 
-    // PHASE 2: SIMULATION MANAGER RESET
-    console.log(`🔄 LEGACY RESET PHASE 2: SimulationManager reset for ${id}`);
+    // Simulation manager reset
+    console.log(`🔄 LEGACY RESET: SimulationManager reset for ${id}`);
     simulationManager.resetSimulation(id);
     
-    // PHASE 3: COMPREHENSIVE CLEAN START
-    console.log(`🔄 LEGACY RESET PHASE 3: Comprehensive clean start for ${id}`);
+    // Basic clean start
+    console.log(`🔄 LEGACY RESET: Basic clean start for ${id}`);
     if (candleUpdateCoordinator) {
       candleUpdateCoordinator.ensureCleanStart(id);
-      await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
     const resetSimulation = simulationManager.getSimulation(id);
@@ -3254,7 +2742,7 @@ app.post('/simulation/:id/reset', async (req, res) => {
       resetSimulation.priceHistory = [];
     }
     
-    console.log(`✅ [COMPAT] Legacy reset completed with ALL FIXES + singleton + ENHANCED VALIDATION and new dynamic price: ${resetSimulation?.currentPrice}`);
+    console.log(`✅ [COMPAT] Legacy reset completed with SIMPLIFIED coordination and new dynamic price: ${resetSimulation?.currentPrice}`);
     
     res.json({ 
       success: true,
@@ -3265,15 +2753,9 @@ app.post('/simulation/:id/reset', async (req, res) => {
       cleanStart: true,
       isRunning: false,
       isPaused: false,
-      allFixesApplied: {
-        timestampCoordination: true,
-        thinCandlesPrevented: true,
-        resetCoordinationEnhanced: true,
-        memoryLeaksFixed: true,
-        pauseStateLogicFixed: true,
-        candleManagerSingletonFixed: true,
-        legacyEndpointValidationEnhanced: true
-      },
+      coordinatorType: 'simplified-pass-through',
+      timestampHandling: 'accepts-as-is',
+      thinCandlePreventionRemoved: true,
       tpsSupport: true,
       currentTPSMode: resetSimulation?.currentTPSMode || 'NORMAL',
       dynamicPricing: {
@@ -3285,8 +2767,7 @@ app.post('/simulation/:id/reset', async (req, res) => {
                       resetSimulation?.currentPrice && resetSimulation.currentPrice < 100 ? 'large' : 'mega'
       },
       singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced',
-      message: 'Simulation reset to clean state with ALL FIXES + SINGLETON + ENHANCED VALIDATION - GUARANTEED no thin candles!',
+      message: 'Simulation reset to clean state with SIMPLIFIED COORDINATION - Basic pass-through pattern',
       timestamp: Date.now(),
       endpoint: 'legacy /simulation/:id/reset'
     });
@@ -3310,11 +2791,11 @@ app.get('/api/health', (req, res) => {
       status: 'UPDATED - Domain change complete'
     },
     features: {
-      timestampCoordinationFixed: true,
+      timestampCoordinationSimplified: true,
       apiEndpointsFixed: true,
       chartResetFixed: true,
-      thinCandlesFixed: true,
-      resetCoordinationFixed: true,
+      thinCandlePreventionRemoved: true,
+      simplifiedCoordination: true,
       memoryLeaksFixed: true,
       webSocketPauseStateFixed: true,
       pauseStateLogicFixed: true,
@@ -3323,7 +2804,7 @@ app.get('/api/health', (req, res) => {
       exceptionHandlingImproved: true,
       candleManagerSingletonFixed: true,
       multipleInstancesPrevented: true,
-      legacyEndpointValidationEnhanced: true,
+      passThrough: true,
       tpsSupport: true,
       stressTestSupport: true,
       supportedTPSModes: ['NORMAL', 'BURST', 'STRESS', 'HFT'],
@@ -3340,6 +2821,9 @@ app.get('/api/health', (req, res) => {
       objectPoolMonitoring: true,
       singletonPatternEnforced: true
     },
+    coordinatorType: 'simplified-pass-through',
+    timestampHandling: 'accepts-as-is-from-simulation-manager',
+    thinCandlePreventionRemoved: true,
     endpoints: {
       create_simulation: 'POST /api/simulation',
       get_simulation: 'GET /api/simulation/:id',
@@ -3367,13 +2851,13 @@ app.get('/api/health', (req, res) => {
       stressTestMessages: ['trigger_liquidation_cascade'],
       broadcastEvents: ['tps_mode_changed', 'liquidation_cascade_triggered', 'external_market_pressure']
     },
-    message: 'Backend API running with ALL CRITICAL FIXES + SINGLETON PATTERN + ENHANCED LEGACY VALIDATION APPLIED',
+    message: 'Backend API running with SIMPLIFIED TIMESTAMP COORDINATION + SINGLETON PATTERN',
     simulationManagerAvailable: simulationManager ? true : false,
-    timestampCoordinationActive: true,
+    timestampCoordinationSimplified: true,
     apiEndpointsRegistered: true,
     chartResetEnhanced: true,
-    thinCandlesPrevented: true,
-    resetCoordinationEnhanced: true,
+    thinCandlePreventionRemoved: true,
+    simplifiedCoordination: true,
     memoryLeaksFixed: true,
     webSocketPauseStateFixed: true,
     pauseStateLogicFixed: true,
@@ -3382,14 +2866,14 @@ app.get('/api/health', (req, res) => {
     exceptionHandlingImproved: true,
     candleManagerSingletonFixed: true,
     multipleInstancesPrevented: true,
-    legacyEndpointValidationEnhanced: true,
     globalCandleManagerAvailable: typeof (globalThis as any).CandleManager === 'function',
     tpsIntegrationComplete: true,
     stressTestIntegrationComplete: true,
     webSocketTPSIntegrationComplete: true,
     dynamicPricingFixed: true,
     singletonPatternEnforced: true,
-    fixApplied: 'COMPLETE: ALL CRITICAL ISSUES RESOLVED + CANDLEMANAGER SINGLETON PATTERN ENFORCED + ENHANCED LEGACY ENDPOINT VALIDATION - Multiple Instances Prevented + Trader Validation Enhanced!',
+    coordinatorType: 'simplified-pass-through',
+    fixApplied: 'COMPLETE: SIMPLIFIED TIMESTAMP COORDINATION + CANDLEMANAGER SINGLETON PATTERN ENFORCED - Pass-through relay pattern!',
     platform: 'Render',
     nodeVersion: process.version
   });
@@ -3445,7 +2929,7 @@ app.get('/api/metrics', (req, res) => {
   
   if (format === 'prometheus') {
     res.set('Content-Type', 'text/plain');
-    res.send(`# TYPE performance_metrics gauge\nperformance_metrics{type="timestamp"} ${Date.now()}\n# TYPE tps_metrics gauge\ntps_metrics{type="total_tps"} ${tpsMetrics.totalTPS}\n# TYPE timestamp_coordination gauge\ntimestamp_coordination{type="active"} 1\n# TYPE object_pools gauge\nobject_pools{type="total_objects"} ${poolMetrics.totalObjects}\nobject_pools{type="critical_pools"} ${poolMetrics.criticalPools}\n# TYPE singleton_pattern gauge\nsingleton_pattern{type="enforced"} 1\n# TYPE legacy_validation gauge\nlegacy_validation{type="enhanced"} 1`);
+    res.send(`# TYPE performance_metrics gauge\nperformance_metrics{type="timestamp"} ${Date.now()}\n# TYPE tps_metrics gauge\ntps_metrics{type="total_tps"} ${tpsMetrics.totalTPS}\n# TYPE timestamp_coordination gauge\ntimestamp_coordination{type="simplified"} 1\n# TYPE object_pools gauge\nobject_pools{type="total_objects"} ${poolMetrics.totalObjects}\nobject_pools{type="critical_pools"} ${poolMetrics.criticalPools}\n# TYPE singleton_pattern gauge\nsingleton_pattern{type="enforced"} 1\n# TYPE pass_through gauge\npass_through{type="active"} 1`);
   } else {
     res.set('Content-Type', 'application/json');
     res.json({
@@ -3454,27 +2938,14 @@ app.get('/api/metrics', (req, res) => {
       objectPoolMetrics: poolMetrics,
       candleCoordinatorMetrics: coordinatorStats,
       memoryUsage: process.memoryUsage(),
-      allFixesApplied: {
-        timestampCoordinationActive: true,
-        apiEndpointsFixed: true,
-        chartResetEnhanced: true,
-        thinCandlesPrevented: true,
-        resetCoordinationEnhanced: true,
-        memoryLeaksFixed: true,
-        webSocketPauseStateFixed: true,
-        pauseStateLogicFixed: true,
-        broadcastManagerFixed: true,
-        ohlcValidationEnhanced: true,
-        exceptionHandlingImproved: true,
-        candleManagerSingletonFixed: true,
-        multipleInstancesPrevented: true,
-        legacyEndpointValidationEnhanced: true
-      },
+      coordinatorType: 'simplified-pass-through',
+      timestampHandling: 'accepts-as-is',
+      thinCandlePreventionRemoved: true,
       corsUpdated: true,
       tpsSupport: true,
       dynamicPricingFixed: true,
       singletonPatternEnforced: true,
-      legacyEndpointValidationEnhanced: true
+      passThrough: true
     });
   }
 });
@@ -3483,7 +2954,7 @@ app.get('/api/metrics', (req, res) => {
 const server = http.createServer(app);
 
 // Create WebSocket server with compression elimination
-console.log('🚨 Creating WebSocket server with compression elimination and ALL FIXES + singleton + enhanced validation...');
+console.log('🚨 Creating WebSocket server with compression elimination and SIMPLIFIED coordination...');
 
 const wss = CompressionFreeWebSocketServer({ 
   server,
@@ -3501,11 +2972,11 @@ const wss = CompressionFreeWebSocketServer({
   strategy: 0,
 });
 
-console.log('✅ WebSocket Server Created with ALL FIXES + singleton + enhanced validation support');
+console.log('✅ WebSocket Server Created with SIMPLIFIED coordination support');
 
 wss.on('connection', (ws: WebSocket, req) => {
   const origin = req.headers.origin;
-  console.log('🔌 New WebSocket connection - CORS & Compression Check with ALL FIXES + singleton + enhanced validation:');
+  console.log('🔌 New WebSocket connection - CORS & Compression Check with SIMPLIFIED coordination:');
   console.log('Origin:', origin);
   console.log('Extensions:', (ws as any).extensions);
   
@@ -3522,7 +2993,7 @@ wss.on('connection', (ws: WebSocket, req) => {
     console.log('✅ WebSocket connection is compression-free');
   }
   
-  console.log(`🔌 WebSocket connected successfully with ALL FIXES + singleton + enhanced validation from origin: ${origin || 'unknown'}`);
+  console.log(`🔌 WebSocket connected successfully with SIMPLIFIED coordination from origin: ${origin || 'unknown'}`);
   
   let currentSimulationId: string | null = null;
   let messageCount = 0;
@@ -3561,22 +3032,10 @@ wss.on('connection', (ws: WebSocket, req) => {
         success: false,
         data: null,
         error: null,
-        allFixesApplied: {
-          timestampCoordination: true,
-          thinCandlesPrevented: true,
-          resetCoordinationEnhanced: true,
-          memoryLeaksFixed: true,
-          webSocketPauseStateFixed: true,
-          pauseStateLogicFixed: true,
-          broadcastManagerFixed: true,
-          ohlcValidationEnhanced: true,
-          exceptionHandlingImproved: true,
-          candleManagerSingletonFixed: true,
-          multipleInstancesPrevented: true,
-          legacyEndpointValidationEnhanced: true
-        },
-        singletonPattern: 'enforced',
-        legacyEndpointValidation: 'enhanced'
+        coordinatorType: 'simplified-pass-through',
+        timestampHandling: 'accepts-as-is',
+        thinCandlePreventionRemoved: true,
+        singletonPattern: 'enforced'
       };
       
       switch (type) {
@@ -3598,7 +3057,7 @@ wss.on('connection', (ws: WebSocket, req) => {
           }
           
           broadcastManager.registerClient(ws, simulationId);
-          console.log(`✅ WebSocket subscribed to simulation ${simulationId} with ALL FIXES + singleton + enhanced validation`);
+          console.log(`✅ WebSocket subscribed to simulation ${simulationId} with SIMPLIFIED coordination`);
           
           response.success = true;
           response.data = {
@@ -3611,7 +3070,9 @@ wss.on('connection', (ws: WebSocket, req) => {
               candleCount: simulation.priceHistory?.length || 0,
               traderCount: simulation.traders?.length || 0,
               currentTPSMode: simulation.currentTPSMode || 'NORMAL',
-              allFixesApplied: response.allFixesApplied,
+              coordinatorType: 'simplified-pass-through',
+              timestampHandling: 'accepts-as-is',
+              thinCandlePreventionRemoved: true,
               dynamicPricing: {
                 enabled: true,
                 currentPrice: simulation.currentPrice,
@@ -3620,8 +3081,7 @@ wss.on('connection', (ws: WebSocket, req) => {
                               simulation.currentPrice < 10 ? 'mid' :
                               simulation.currentPrice < 100 ? 'large' : 'mega'
               },
-              singletonPattern: 'enforced',
-              legacyEndpointValidation: 'enhanced'
+              singletonPattern: 'enforced'
             }
           };
           break;
@@ -3661,7 +3121,9 @@ wss.on('connection', (ws: WebSocket, req) => {
             tradeCount: statusSim.recentTrades?.length || 0,
             traderCount: statusSim.traders?.length || 0,
             currentTPSMode: statusSim.currentTPSMode || 'NORMAL',
-            allFixesApplied: response.allFixesApplied,
+            coordinatorType: 'simplified-pass-through',
+            timestampHandling: 'accepts-as-is',
+            thinCandlePreventionRemoved: true,
             dynamicPricing: {
               enabled: true,
               currentPrice: statusSim.currentPrice,
@@ -3670,14 +3132,13 @@ wss.on('connection', (ws: WebSocket, req) => {
                             statusSim.currentPrice < 10 ? 'mid' :
                             statusSim.currentPrice < 100 ? 'large' : 'mega'
             },
-            singletonPattern: 'enforced',
-            legacyEndpointValidation: 'enhanced'
+            singletonPattern: 'enforced'
           };
           break;
 
-        // 🔧 CRITICAL FIX: Add missing setPauseState handler
+        // setPauseState handler
         case 'setPauseState':
-          console.log(`⏸️ [WEBSOCKET PAUSE FIX] Handling setPauseState for simulation ${simulationId}`);
+          console.log(`⏸️ [WEBSOCKET] Handling setPauseState for simulation ${simulationId}`);
           
           if (!simulationId) {
             response.error = 'simulationId required for setPauseState';
@@ -3694,7 +3155,7 @@ wss.on('connection', (ws: WebSocket, req) => {
           
           try {
             if (shouldPause) {
-              // 🔧 PAUSE STATE LOGIC FIX: Validate state before pausing
+              // Validate state before pausing
               if (!pauseSim.isRunning || pauseSim.isPaused) {
                 response.error = `Cannot pause simulation - isRunning: ${pauseSim.isRunning}, isPaused: ${pauseSim.isPaused}`;
                 break;
@@ -3705,7 +3166,7 @@ wss.on('connection', (ws: WebSocket, req) => {
               // Verify state was updated correctly
               const updatedSim = simulationManager.getSimulation(simulationId);
               if (updatedSim && updatedSim.isRunning && updatedSim.isPaused) {
-                console.error(`🚨 [PAUSE STATE FIX] CRITICAL: Contradictory state after pause!`);
+                console.error(`🚨 CRITICAL: Contradictory state after pause!`);
                 // Force correct the state
                 updatedSim.isRunning = false;
                 updatedSim.isPaused = true;
@@ -3716,9 +3177,9 @@ wss.on('connection', (ws: WebSocket, req) => {
                 paused: true, 
                 isRunning: false, 
                 isPaused: true,
-                message: 'Simulation paused successfully via WebSocket with state fix + singleton + enhanced validation'
+                message: 'Simulation paused successfully via WebSocket with SIMPLIFIED coordination'
               };
-              console.log(`✅ [WEBSOCKET PAUSE FIX] Simulation ${simulationId} paused via WebSocket`);
+              console.log(`✅ [WEBSOCKET] Simulation ${simulationId} paused via WebSocket`);
             } else {
               // Resume simulation
               if (!pauseSim.isPaused) {
@@ -3732,12 +3193,12 @@ wss.on('connection', (ws: WebSocket, req) => {
                 paused: false, 
                 isRunning: true, 
                 isPaused: false,
-                message: 'Simulation resumed successfully via WebSocket + singleton + enhanced validation'
+                message: 'Simulation resumed successfully via WebSocket with SIMPLIFIED coordination'
               };
-              console.log(`✅ [WEBSOCKET PAUSE FIX] Simulation ${simulationId} resumed via WebSocket`);
+              console.log(`✅ [WEBSOCKET] Simulation ${simulationId} resumed via WebSocket`);
             }
           } catch (pauseError) {
-            console.error(`❌ [WEBSOCKET PAUSE FIX] Error in setPauseState:`, pauseError);
+            console.error(`❌ [WEBSOCKET] Error in setPauseState:`, pauseError);
             response.error = pauseError instanceof Error ? pauseError.message : 'Failed to change pause state';
           }
           break;
@@ -3771,7 +3232,7 @@ wss.on('connection', (ws: WebSocket, req) => {
                 newMode: data.mode,
                 targetTPS: getTargetTPSForMode(data.mode),
                 metrics: tpsResult.metrics,
-                allFixesApplied: response.allFixesApplied
+                coordinatorType: 'simplified-pass-through'
               };
               
               if (broadcastManager) {
@@ -3812,7 +3273,7 @@ wss.on('connection', (ws: WebSocket, req) => {
             metrics: tpsStatusSim.externalMarketMetrics,
             supportedModes: ['NORMAL', 'BURST', 'STRESS', 'HFT'],
             traderCount: tpsStatusSim.traders?.length || 0,
-            allFixesApplied: response.allFixesApplied
+            coordinatorType: 'simplified-pass-through'
           };
           break;
           
@@ -3844,7 +3305,7 @@ wss.on('connection', (ws: WebSocket, req) => {
                 ordersGenerated: liquidationResult.ordersGenerated,
                 estimatedImpact: liquidationResult.estimatedImpact,
                 cascadeSize: liquidationResult.cascadeSize,
-                allFixesApplied: response.allFixesApplied
+                coordinatorType: 'simplified-pass-through'
               };
               
               if (broadcastManager) {
@@ -3893,7 +3354,7 @@ wss.on('connection', (ws: WebSocket, req) => {
             },
             supportedModes: ['NORMAL', 'BURST', 'STRESS', 'HFT'],
             traderCount: capabilitiesSim.traders?.length || 0,
-            allFixesApplied: response.allFixesApplied
+            coordinatorType: 'simplified-pass-through'
           };
           break;
           
@@ -3904,9 +3365,8 @@ wss.on('connection', (ws: WebSocket, req) => {
             timestamp: Date.now(),
             messageCount: messageCount,
             serverUptime: process.uptime(),
-            allFixesApplied: response.allFixesApplied,
-            singletonPattern: 'enforced',
-            legacyEndpointValidation: 'enhanced'
+            coordinatorType: 'simplified-pass-through',
+            singletonPattern: 'enforced'
           };
           break;
           
@@ -3934,22 +3394,8 @@ wss.on('connection', (ws: WebSocket, req) => {
           type: 'error',
           timestamp: Date.now(),
           error: error instanceof Error ? error.message : 'Unknown error',
-          allFixesApplied: {
-            timestampCoordination: true,
-            thinCandlesPrevented: true,
-            resetCoordinationEnhanced: true,
-            memoryLeaksFixed: true,
-            webSocketPauseStateFixed: true,
-            pauseStateLogicFixed: true,
-            broadcastManagerFixed: true,
-            ohlcValidationEnhanced: true,
-            exceptionHandlingImproved: true,
-            candleManagerSingletonFixed: true,
-            multipleInstancesPrevented: true,
-            legacyEndpointValidationEnhanced: true
-          },
-          singletonPattern: 'enforced',
-          legacyEndpointValidation: 'enhanced'
+          coordinatorType: 'simplified-pass-through',
+          singletonPattern: 'enforced'
         });
         
         if (errorResponse.charCodeAt(0) !== 0x1F) {
@@ -3991,28 +3437,17 @@ wss.on('connection', (ws: WebSocket, req) => {
     const welcomeMessage = JSON.stringify({
       type: 'welcome',
       timestamp: Date.now(),
-      message: 'WebSocket connected successfully with ALL CRITICAL FIXES + SINGLETON PATTERN + ENHANCED LEGACY VALIDATION',
+      message: 'WebSocket connected successfully with SIMPLIFIED TIMESTAMP COORDINATION + SINGLETON PATTERN',
       features: {
         compressionBlocked: true,
-        allFixesApplied: {
-          timestampCoordination: true,
-          thinCandlesPrevented: true,
-          resetCoordinationEnhanced: true,
-          memoryLeaksFixed: true,
-          webSocketPauseStateFixed: true,
-          pauseStateLogicFixed: true,
-          broadcastManagerFixed: true,
-          ohlcValidationEnhanced: true,
-          exceptionHandlingImproved: true,
-          candleManagerSingletonFixed: true,
-          multipleInstancesPrevented: true,
-          legacyEndpointValidationEnhanced: true
-        },
+        coordinatorType: 'simplified-pass-through',
+        timestampHandling: 'accepts-as-is',
+        thinCandlePreventionRemoved: true,
         tpsSupport: true,
         stressTestSupport: true,
         dynamicPricing: true,
         singletonPatternEnforced: true,
-        legacyEndpointValidationEnhanced: true
+        passThrough: true
       },
       supportedMessages: [
         'subscribe', 'unsubscribe', 'get_status', 'setPauseState', 'set_tps_mode', 
@@ -4029,10 +3464,10 @@ wss.on('connection', (ws: WebSocket, req) => {
   }
 });
 
-console.log('✅ WebSocket server configured with ALL FIXES + singleton + enhanced validation and compression elimination');
+console.log('✅ WebSocket server configured with SIMPLIFIED coordination and compression elimination');
 
 // Initialize services after WebSocket setup
-console.log('🚀 Initializing services with ALL FIXES + singleton + enhanced validation...');
+console.log('🚀 Initializing services with SIMPLIFIED coordination...');
 
 // Initialize transaction queue
 try {
@@ -4055,7 +3490,7 @@ if (!broadcastManager) {
 // Initialize candle update coordinator
 try {
   candleUpdateCoordinator = new CandleUpdateCoordinator(simulationManager, 25);
-  console.log('✅ CandleUpdateCoordinator initialized with ALL FIXES + singleton + enhanced validation');
+  console.log('✅ CandleUpdateCoordinator initialized with SIMPLIFIED coordination');
 } catch (coordError) {
   console.error('❌ Failed to initialize CandleUpdateCoordinator:', coordError);
 }
@@ -4091,7 +3526,7 @@ if (simulationManager) {
   }
 }
 
-// 🔧 EXCEPTION HANDLING IMPROVEMENT: Enhanced error handling middleware
+// Enhanced error handling middleware
 app.use((err: any, req: any, res: any, next: any) => {
   console.error('❌ Express error:', err);
   
@@ -4120,9 +3555,8 @@ app.use((err: any, req: any, res: any, next: any) => {
       error: 'Internal simulation error',
       message: 'Simulation service temporarily unavailable',
       timestamp: Date.now(),
-      allFixesApplied: true,
+      coordinatorType: 'simplified-pass-through',
       singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced',
       suggestion: 'Please try again in a moment'
     });
   }
@@ -4133,9 +3567,8 @@ app.use((err: any, req: any, res: any, next: any) => {
       error: 'WebSocket service error',
       message: 'Real-time updates temporarily unavailable',
       timestamp: Date.now(),
-      allFixesApplied: true,
+      coordinatorType: 'simplified-pass-through',
       singletonPattern: 'enforced',
-      legacyEndpointValidation: 'enhanced',
       suggestion: 'WebSocket functionality may be limited'
     });
   }
@@ -4144,22 +3577,10 @@ app.use((err: any, req: any, res: any, next: any) => {
     error: err.message || 'Internal server error',
     timestamp: Date.now(),
     requestId: req.id,
-    allFixesApplied: {
-      timestampCoordination: true,
-      thinCandlesPrevented: true,
-      resetCoordinationEnhanced: true,
-      memoryLeaksFixed: true,
-      webSocketPauseStateFixed: true,
-      pauseStateLogicFixed: true,
-      broadcastManagerFixed: true,
-      ohlcValidationEnhanced: true,
-      exceptionHandlingImproved: true,
-      candleManagerSingletonFixed: true,
-      multipleInstancesPrevented: true,
-      legacyEndpointValidationEnhanced: true
-    },
+    coordinatorType: 'simplified-pass-through',
+    timestampHandling: 'accepts-as-is',
+    thinCandlePreventionRemoved: true,
     singletonPattern: 'enforced',
-    legacyEndpointValidation: 'enhanced',
     path: req.path,
     method: req.method
   });
@@ -4206,26 +3627,14 @@ app.use('*', (req, res) => {
       }
     },
     message: 'Use /api/health to check service status',
-    allFixesApplied: {
-      timestampCoordination: true,
-      thinCandlesPrevented: true,
-      resetCoordinationEnhanced: true,
-      memoryLeaksFixed: true,
-      webSocketPauseStateFixed: true,
-      pauseStateLogicFixed: true,
-      broadcastManagerFixed: true,
-      ohlcValidationEnhanced: true,
-      exceptionHandlingImproved: true,
-      candleManagerSingletonFixed: true,
-      multipleInstancesPrevented: true,
-      legacyEndpointValidationEnhanced: true
-    },
-    singletonPattern: 'enforced',
-    legacyEndpointValidation: 'enhanced'
+    coordinatorType: 'simplified-pass-through',
+    timestampHandling: 'accepts-as-is',
+    thinCandlePreventionRemoved: true,
+    singletonPattern: 'enforced'
   });
 });
 
-// 🔧 EXCEPTION HANDLING IMPROVEMENT: Enhanced graceful shutdown handling
+// Enhanced graceful shutdown handling
 process.on('SIGTERM', () => {
   console.log('🛑 SIGTERM received, shutting down gracefully...');
   
@@ -4281,7 +3690,7 @@ process.on('SIGINT', () => {
   process.emit('SIGTERM' as any);
 });
 
-// 🔧 EXCEPTION HANDLING IMPROVEMENT: Enhanced uncaught exception handler
+// Enhanced uncaught exception handler
 process.on('uncaughtException', (error) => {
   console.error('❌ Uncaught Exception:', error);
   console.error('Stack trace:', error.stack);
@@ -4338,15 +3747,10 @@ process.on('uncaughtException', (error) => {
     }
   }
   
-  if (error.message.includes('trader') || error.message.includes('Trader')) {
-    console.error('🚨 CRITICAL: Trader-related uncaught exception detected!');
-    console.error('🔧 This may be related to legacy endpoint validation fixes');
-  }
-  
   console.error('⚠️ Server continuing despite uncaught exception...');
 });
 
-// 🔧 EXCEPTION HANDLING IMPROVEMENT: Enhanced unhandled promise rejection handler
+// Enhanced unhandled promise rejection handler
 process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
   
@@ -4372,11 +3776,6 @@ process.on('unhandledRejection', (reason, promise) => {
     if (errorMessage.includes('getInstance') || errorMessage.includes('singleton')) {
       console.error('🚨 CRITICAL: CandleManager singleton-related unhandled rejection detected!');
     }
-    
-    if (errorMessage.includes('trader') || errorMessage.includes('Trader')) {
-      console.error('🚨 CRITICAL: Trader-related unhandled rejection detected!');
-      console.error('🔧 This may be related to legacy endpoint validation enhancements');
-    }
   }
   
   console.error('⚠️ Server continuing despite unhandled rejection...');
@@ -4385,18 +3784,19 @@ process.on('unhandledRejection', (reason, promise) => {
 // Start the server
 server.listen(PORT, () => {
   console.log('🚀 =================================================================');
-  console.log('🚀 TRADING SIMULATOR BACKEND STARTED WITH ALL CRITICAL FIXES + SINGLETON + ENHANCED LEGACY VALIDATION');
+  console.log('🚀 TRADING SIMULATOR BACKEND STARTED WITH SIMPLIFIED TIMESTAMP COORDINATION');
   console.log('🚀 =================================================================');
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`🚀 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🚀 Node.js version: ${process.version}`);
   console.log('🚀 =================================================================');
-  console.log('✅ ALL CRITICAL FIXES APPLIED + SINGLETON PATTERN ENFORCED + ENHANCED LEGACY VALIDATION:');
+  console.log('✅ SIMPLIFIED COORDINATION + SINGLETON PATTERN ENFORCED:');
   console.log('✅   - Compression elimination (prevents binary frames)');
-  console.log('✅   - Enhanced CandleUpdateCoordinator with thin candle prevention');
-  console.log('✅   - Complete reset coordination (4-phase reset process)');
-  console.log('✅   - Sequential timestamp enforcement');
-  console.log('✅   - Real-time quality monitoring and validation');
+  console.log('✅   - SIMPLIFIED CandleUpdateCoordinator - Basic pass-through pattern');
+  console.log('✅   - REMOVED: All thin candle prevention logic');
+  console.log('✅   - REMOVED: All timestamp modification and coordination');
+  console.log('✅   - ACCEPTS: Timestamps as-is from SimulationManager');
+  console.log('✅   - Basic candle data validation only');
   console.log('✅   - TPS mode support with stress testing');
   console.log('✅   - Dynamic pricing system (no hardcoded $100)');
   console.log('✅   - Complete API endpoint registration');
@@ -4404,31 +3804,24 @@ server.listen(PORT, () => {
   console.log('✅   - CORS configuration updated for tradeterm.app');
   console.log('✅   - Backward compatibility maintained');
   console.log('✅   - MEMORY LEAK FIXES: Object pool monitoring & cleanup');
-  console.log('✅   - WEBSOCKET PAUSE STATE FIX: setPauseState handler added');
-  console.log('✅   - PAUSE STATE LOGIC FIX: Contradictory states prevented');
-  console.log('✅   - BROADCAST MANAGER FIX: Interface methods restored');
-  console.log('✅   - OHLC VALIDATION ENHANCED: Reduced auto-corrections');
-  console.log('✅   - EXCEPTION HANDLING IMPROVED: Enhanced error recovery');
-  console.log('✅   - CANDLEMANAGER SINGLETON FIX: Multiple instances prevented');
+  console.log('✅   - WEBSOCKET setPauseState handler added');
+  console.log('✅   - PAUSE STATE LOGIC: Contradictory states prevented');
+  console.log('✅   - BROADCAST MANAGER: Interface methods restored');
+  console.log('✅   - ENHANCED EXCEPTION HANDLING: Improved error recovery');
+  console.log('✅   - CANDLEMANAGER SINGLETON: Multiple instances prevented');
   console.log('✅   - SINGLETON PATTERN ENFORCED: One instance per simulation ID');
-  console.log('✅   - LEGACY ENDPOINT VALIDATION ENHANCED: Trader count validation & emergency fix');
   console.log('🚀 =================================================================');
-  console.log('🎯 ALL CRITICAL ISSUES RESOLVED + SINGLETON PATTERN ENFORCED + ENHANCED LEGACY VALIDATION:');
-  console.log('🎯   - NO MORE CANDLEMANAGER MULTIPLE INSTANCES (singleton enforced)');
-  console.log('🎯   - NO MORE "TWO SIMULATIONS" VISUAL EFFECT (single data stream)');
-  console.log('🎯   - NO MORE OBJECT POOL MEMORY LEAKS (monitoring & cleanup)');
-  console.log('🎯   - NO MORE WEBSOCKET setPauseState HANDLER MISSING');
-  console.log('🎯   - NO MORE PAUSE STATE LOGIC CONTRADICTIONS');
-  console.log('🎯   - NO MORE BROADCAST MANAGER INTERFACE MISMATCHES');
-  console.log('🎯   - NO MORE EXCESSIVE OHLC AUTO-CORRECTIONS');
-  console.log('🎯   - NO MORE UNCAUGHT EXCEPTIONS CAUSING INSTABILITY');
-  console.log('🎯   - NO MORE LEGACY ENDPOINT TRADER LOADING FAILURES');
-  console.log('🎯   - NO MORE SIMULATIONS CREATED WITHOUT TRADERS');
-  console.log('🎯   - NO MORE THIN WHITE CANDLES (comprehensive prevention)');
-  console.log('🎯   - NO MORE RESET STATE CORRUPTION (4-phase coordination)');
-  console.log('🎯   - NO MORE TIMESTAMP RACE CONDITIONS (sequential enforcement)');
-  console.log('🎯   - NO MORE HARDCODED PRICING (dynamic price generation)');
-  console.log('🎯   - NO MORE API REGISTRATION FAILURES (complete registration)');
+  console.log('🎯 SIMPLIFIED COORDINATION ACHIEVED:');
+  console.log('🎯   - NO MORE THIN CANDLE PREVENTION (all blocking logic removed)');
+  console.log('🎯   - NO MORE TIMESTAMP MODIFICATION (accepts as-is)');
+  console.log('🎯   - NO MORE TIMING VALIDATION (basic pass-through)');
+  console.log('🎯   - NO MORE COMPLEX COORDINATION (simple relay pattern)');
+  console.log('🎯   - NO MORE COMPETING TIMESTAMP AUTHORITIES (trusts SimulationManager)');
+  console.log('🎯   - NO MORE MINIMUM INTERVAL ENFORCEMENT (processes all updates)');
+  console.log('🎯   - BASIC RELAY: CandleUpdateCoordinator → CandleManager');
+  console.log('🎯   - SIMPLE VALIDATION: Only checks for invalid data');
+  console.log('🎯   - PASS-THROUGH: Direct timestamp forwarding');
+  console.log('🎯   - SINGLETON PATTERN: One CandleManager per simulation');
   console.log('🚀 =================================================================');
   console.log('🌐 SUPPORTED DOMAINS:');
   allowedOrigins.forEach(origin => {
@@ -4447,19 +3840,22 @@ server.listen(PORT, () => {
   console.log('📊   WebSocket: Available with TPS support + setPauseState');
   console.log('🚀 =================================================================');
   console.log('🔧 SYSTEM STATUS:');
-  console.log(`🔧   CandleUpdateCoordinator: ${candleUpdateCoordinator ? 'ACTIVE (SINGLETON)' : 'INACTIVE'}`);
+  console.log(`🔧   CandleUpdateCoordinator: ${candleUpdateCoordinator ? 'ACTIVE (SIMPLIFIED)' : 'INACTIVE'}`);
   console.log(`🔧   BroadcastManager: ${broadcastManager ? 'ACTIVE (FIXED)' : 'INACTIVE'}`);
   console.log(`🔧   TransactionQueue: ${transactionQueue ? 'ACTIVE' : 'INACTIVE'}`);
   console.log(`🔧   SimulationManager: ${simulationManager ? 'ACTIVE' : 'INACTIVE'}`);
   console.log(`🔧   ObjectPoolMonitor: ${objectPoolMonitor ? 'ACTIVE' : 'INACTIVE'}`);
   console.log(`🔧   Global CandleManager: ${typeof (globalThis as any).CandleManager === 'function' ? 'AVAILABLE' : 'MISSING'}`);
   console.log(`🔧   Singleton Pattern: ${typeof CandleManager?.getInstance === 'function' ? 'ENFORCED' : 'MISSING'}`);
-  console.log(`🔧   Legacy Validation: ENHANCED (trader count validation + emergency fix)`);
+  console.log(`🔧   Coordination Type: SIMPLIFIED-PASS-THROUGH`);
+  console.log(`🔧   Timestamp Handling: ACCEPTS-AS-IS`);
+  console.log(`🔧   Thin Candle Prevention: REMOVED`);
   console.log('🚀 =================================================================');
   console.log('🎉 BACKEND READY FOR PRODUCTION DEPLOYMENT!');
-  console.log('🎉 ALL CRITICAL FIXES + SINGLETON PATTERN + ENHANCED LEGACY VALIDATION APPLIED - PRODUCTION READY!');
-  console.log('🎉 NO MORE MULTIPLE CANDLEMANAGER INSTANCES - GUARANTEED SINGLE DATA STREAM!');
-  console.log('🎉 NO MORE LEGACY ENDPOINT TRADER FAILURES - COMPREHENSIVE VALIDATION & EMERGENCY FIX!');
+  console.log('🎉 SIMPLIFIED COORDINATION + SINGLETON PATTERN APPLIED - PRODUCTION READY!');
+  console.log('🎉 NO MORE COMPETING TIMESTAMP AUTHORITIES - TRUSTS SIMULATIONMANAGER!');
+  console.log('🎉 NO MORE THIN CANDLE BLOCKING - PROCESSES ALL UPDATES!');
+  console.log('🎉 BASIC PASS-THROUGH RELAY PATTERN - SIMPLE & RELIABLE!');
   console.log('🚀 =================================================================');
 });
 
