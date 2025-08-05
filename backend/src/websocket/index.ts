@@ -1,4 +1,4 @@
-// backend/src/websocket/index.ts - CRITICAL FIX: Variable Scoping Error Resolved
+// backend/src/websocket/index.ts - CRITICAL FIX: Variable Scoping Error Resolved + Enhanced Subscription Validation
 import { WebSocket, WebSocketServer } from 'ws';
 import { BroadcastManager } from '../services/broadcastManager';
 import { PerformanceMonitor } from '../monitoring/performanceMonitor';
@@ -133,9 +133,10 @@ export function setupWebSocketServer(
           initialCandleJumpPrevention: true,
           pauseResumeSupport: true,
           enhancedStateManagement: true,
-          variableScopingFixed: true // NEW: Indicates variable scoping fixes
+          variableScopingFixed: true, // NEW: Indicates variable scoping fixes
+          enhancedSubscriptionValidation: true // NEW: Indicates trader validation fixes
         },
-        version: '2.6.1' // Version bump for variable scoping fixes
+        version: '2.7.0' // Version bump for subscription validation fixes
       }), { binary: false, compress: false, fin: true });
     } catch (error) {
       console.error('❌ [WS CONN] Error sending welcome message:', error);
@@ -277,10 +278,10 @@ export function setupWebSocketServer(
     console.error('❌ [WS ERROR] WebSocket server error:', error);
   });
   
-  console.log('✅ [WS SETUP] WebSocket server setup complete with FIXED variable scoping and enhanced coordination');
+  console.log('✅ [WS SETUP] WebSocket server setup complete with FIXED variable scoping, enhanced coordination, and subscription validation');
 }
 
-// 🚨 CRITICAL FIX: Enhanced subscription with PROPERLY SCOPED variables
+// 🚨 CRITICAL FIX: Enhanced subscription with PROPERLY SCOPED variables + Enhanced Subscription Validation
 async function handleSubscriptionWithRetry(
   ws: WebSocket, 
   message: WebSocketMessage, 
@@ -314,7 +315,7 @@ async function handleSubscriptionWithRetry(
   
   console.log(`🔔 [WS SUB] ${clientId} attempting to subscribe to simulation: ${simulationId}`);
   
-  // Check if simulation exists
+  // Enhanced simulation validation with trader count checking
   console.log(`🔍 [WS SUB] Checking simulation ${simulationId} in SHARED SimulationManager...`);
   const simulation = simulationManager.getSimulation(simulationId);
   
@@ -335,7 +336,39 @@ async function handleSubscriptionWithRetry(
     return;
   }
   
-  console.log(`✅ [WS SUB] FOUND simulation ${simulationId} in SHARED SimulationManager!`);
+  // 🚨 CRITICAL FIX: Validate trader count before allowing subscription
+  const traderCount = simulation.traders ? simulation.traders.length : 0;
+  console.log(`🔥 [WS SUB] Simulation ${simulationId} found with ${traderCount} traders`);
+  
+  if (traderCount === 0) {
+    console.error(`❌ [WS SUB] Simulation ${simulationId} has NO TRADERS - rejecting subscription`);
+    
+    clientState.subscriptionStatus = 'none';
+    
+    ws.send(JSON.stringify({
+      type: 'error',
+      message: `Simulation ${simulationId} has no traders loaded - still initializing`,
+      traderCount: traderCount,
+      expectedTraders: 118,
+      timestamp: Date.now()
+    }), { binary: false, compress: false, fin: true });
+    return;
+  }
+  
+  if (traderCount < 118) {
+    console.warn(`⚠️ [WS SUB] Simulation ${simulationId} has incomplete trader data: ${traderCount}/118`);
+    
+    // Allow subscription but warn about incomplete data
+    ws.send(JSON.stringify({
+      type: 'warning',
+      message: `Simulation ${simulationId} has incomplete trader data`,
+      traderCount: traderCount,
+      expectedTraders: 118,
+      timestamp: Date.now()
+    }), { binary: false, compress: false, fin: true });
+  }
+  
+  console.log(`✅ [WS SUB] Simulation ${simulationId} validated with ${traderCount} traders`);
   
   // Check if simulation is ready for subscriptions
   const isReady = simulationManager.isSimulationReady(simulationId);
@@ -497,7 +530,9 @@ async function handleSubscriptionWithRetry(
     canResume: simulation.isRunning && simulation.isPaused,
     canStop: simulation.isRunning,
     raceConditionPrevention: true,
-    variableScopingFixed: true // NEW: Indicates variable scoping fixes
+    variableScopingFixed: true, // NEW: Indicates variable scoping fixes
+    traderCount: traderCount, // NEW: Include trader count in state
+    traderValidationPassed: true // NEW: Indicates trader validation passed
   };
   
   ws.send(JSON.stringify({
@@ -524,10 +559,13 @@ async function handleSubscriptionWithRetry(
     pauseResumeSupport: true,
     raceConditionPrevention: true,
     variableScopingFixed: true, // NEW: Indicates variable scoping fixes
-    message: `Successfully subscribed to simulation ${simulationId} using SHARED SimulationManager with FIXED variable scoping`
+    traderCount: traderCount, // NEW: Include trader count in confirmation
+    traderValidationPassed: true, // NEW: Indicates trader validation passed
+    enhancedSubscriptionValidation: true, // NEW: Indicates enhanced validation
+    message: `Successfully subscribed to simulation ${simulationId} using SHARED SimulationManager with FIXED variable scoping and enhanced trader validation`
   }), { binary: false, compress: false, fin: true });
   
-  console.log(`🎉 [WS SUB] SUBSCRIPTION SUCCESS! ${clientId} subscribed to ${simulationId}, variableScopingFixed: true`);
+  console.log(`🎉 [WS SUB] SUBSCRIPTION SUCCESS! ${clientId} subscribed to ${simulationId}, traders: ${traderCount}, validation: PASSED`);
 }
 
 // Enhanced pause state change handler with race condition prevention
@@ -1330,7 +1368,8 @@ function handleDebugRequest(ws: WebSocket, clientId: string, broadcastManager?: 
       initialCandleJumpPrevention: true,
       pauseResumeSupport: true,
       enhancedStateManagement: true,
-      variableScopingFixed: true // NEW: Indicates variable scoping fixes
+      variableScopingFixed: true, // NEW: Indicates variable scoping fixes
+      enhancedSubscriptionValidation: true // NEW: Indicates enhanced validation
     }
   };
   
@@ -1466,6 +1505,7 @@ export function getSubscriptionStats(wss: WebSocketServer): {
   raceConditionPrevention: boolean;
   globalOperationLocks: number;
   variableScopingFixed: boolean; // NEW: Indicates variable scoping fixes
+  enhancedSubscriptionValidation: boolean; // NEW: Indicates enhanced validation
 } {
   const stats = {
     totalConnections: wss.clients.size,
@@ -1474,7 +1514,8 @@ export function getSubscriptionStats(wss: WebSocketServer): {
     subscriptionsBySimulation: new Map<string, { confirmed: number; pending: number }>(),
     raceConditionPrevention: true,
     globalOperationLocks: globalOperationLocks.size,
-    variableScopingFixed: true // NEW: Indicates variable scoping fixes
+    variableScopingFixed: true, // NEW: Indicates variable scoping fixes
+    enhancedSubscriptionValidation: true // NEW: Indicates enhanced validation
   };
   
   wss.clients.forEach((client) => {
