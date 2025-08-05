@@ -813,28 +813,29 @@ export class SimulationManager {
     this.broadcastService.registerClient(client);
   }
 
-  // 🚨 CRITICAL FIX: Enhanced trader loading with comprehensive validation and logging
+  // 🚨 CRITICAL FIX: Atomic Simulation Creation with Enhanced Trader Validation
   async createSimulation(parameters: Partial<EnhancedSimulationParameters> = {}): Promise<ExtendedSimulationState> {
     // Global lock to prevent multiple simulations
     if (SimulationManager.globalSimulationLock || SimulationManager.simulationCreationInProgress) {
-      console.warn(`🔒 PREVENTED: Simulation creation blocked - lock: ${SimulationManager.globalSimulationLock}, inProgress: ${SimulationManager.simulationCreationInProgress}`);
+      console.warn(`🔒 PREVENTED: Simulation creation blocked`);
       
       if (SimulationManager.activeSimulationId) {
         const existingSimulation = this.simulations.get(SimulationManager.activeSimulationId);
         if (existingSimulation) {
-          console.log(`✅ REUSE: Returning existing simulation ${SimulationManager.activeSimulationId}`);
-          return existingSimulation;
+          // Only return if it has traders
+          if (existingSimulation.traders && existingSimulation.traders.length >= 118) {
+            console.log(`✅ REUSE: Returning existing simulation with ${existingSimulation.traders.length} traders`);
+            return existingSimulation;
+          }
         }
       }
       
-      throw new Error('Simulation creation is locked - only one simulation allowed at a time');
+      throw new Error('Simulation creation is locked');
     }
     
-    // Lock creation process immediately
     SimulationManager.simulationCreationInProgress = true;
     
     try {
-      // If there's already an active simulation, clean it up first
       if (SimulationManager.activeSimulationId) {
         console.log(`🧹 CLEANUP: Removing existing simulation ${SimulationManager.activeSimulationId}`);
         await this.deleteSimulation(SimulationManager.activeSimulationId);
@@ -843,19 +844,18 @@ export class SimulationManager {
       
       const simulationId = uuidv4();
       
-      console.log(`🏗️ CREATING: Single simulation ${simulationId} with global lock`);
+      console.log(`🏗️ CREATING: Simulation ${simulationId} with ATOMIC trader loading`);
       
       this.simulationRegistrationStatus.set(simulationId, 'creating');
       this.simulationTradeCounters.set(simulationId, { generated: 0, released: 0 });
       
-      // 🚨 CRITICAL FIX: Enhanced Dune API trader loading with proper logging
+      // 🚨 CRITICAL FIX: Load traders FIRST, validate count, THEN create simulation
       console.log(`🔍 TRADERS: Loading real Dune Analytics traders...`);
       
       let traders: any[];
       let traderLoadingMethod = 'unknown';
       
       try {
-        // First attempt: Load from Dune API
         const duneTraders = await duneApi.getPumpFunTraders();
         
         if (duneTraders && duneTraders.length > 0) {
@@ -863,127 +863,120 @@ export class SimulationManager {
           traderLoadingMethod = 'dune_api';
           console.log(`✅ [DUNE SUCCESS] Loaded ${traders.length} real traders from Dune Analytics API`);
         } else {
-          console.warn(`⚠️ [DUNE EMPTY] Dune API returned empty or null data`);
+          console.warn(`⚠️ [DUNE EMPTY] Dune API returned empty data`);
           throw new Error('Dune API returned no traders');
         }
       } catch (duneError) {
         console.error(`❌ [DUNE FAILED] Dune API error:`, duneError);
-        
-        // Fallback: Generate dummy traders
         console.log(`🔄 [FALLBACK] Generating 118 dummy traders as fallback...`);
         traders = this.dataGenerator.generateDummyTraders(118);
         traderLoadingMethod = 'dummy_fallback';
       }
       
-      // 🚨 CRITICAL FIX: Validate trader count and log results
+      // 🚨 CRITICAL VALIDATION: Ensure we have exactly 118 traders
       const traderCount = traders ? traders.length : 0;
       console.log(`🔥 [TRADER COUNT VERIFICATION] Loaded ${traderCount} traders using method: ${traderLoadingMethod}`);
       
       if (traderCount === 0) {
-        console.error(`❌ [TRADER DATA FLOW] CRITICAL: No traders loaded! This will break trading activity.`);
-        console.error(`❌ [TRADER DATA FLOW] Expected: 118 real Dune Analytics traders`);
-        console.error(`❌ [TRADER DATA FLOW] Actual: 0 traders`);
-        
-        // Emergency fallback
-        console.log(`🚨 [EMERGENCY] Creating emergency dummy traders...`);
-        traders = this.dataGenerator.generateDummyTraders(118);
-        traderLoadingMethod = 'emergency_dummy';
-        console.log(`🔥 [EMERGENCY] Created ${traders.length} emergency dummy traders`);
+        console.error(`❌ [ATOMIC CREATION] CRITICAL: No traders loaded! Creation FAILED.`);
+        throw new Error('Failed to load any traders - cannot create simulation');
       }
       
-      // Final validation
-      const finalTraderCount = traders ? traders.length : 0;
-      
-      if (finalTraderCount === 118) {
-        console.log(`🔥 [ALL PARTICIPANTS] Activating ${finalTraderCount}/${finalTraderCount} traders (100%) - Method: ${traderLoadingMethod}`);
-      } else {
-        console.warn(`⚠️ [TRADER COUNT MISMATCH] Expected 118 traders, got ${finalTraderCount} - Method: ${traderLoadingMethod}`);
+      if (traderCount !== 118) {
+        console.warn(`⚠️ [TRADER COUNT] Expected 118 traders, got ${traderCount}`);
+        
+        // If we have too few, pad with dummy traders
+        if (traderCount < 118) {
+          const additionalTraders = this.dataGenerator.generateDummyTraders(118 - traderCount);
+          traders = [...traders, ...additionalTraders];
+          console.log(`🔧 [PADDING] Added ${additionalTraders.length} dummy traders to reach 118`);
+        }
       }
       
-      let simulation: ExtendedSimulationState;
-      
-      if (traders && traders.length > 0) {
-        // Convert traders to proper format
-        const convertedTraders = traders.map(t => ({
-          position: t.position || 0,
-          walletAddress: t.wallet_address || t.walletAddress || `trader_${Math.random().toString(36).substr(2, 8)}`,
-          netPnl: t.net_pnl || t.netPnl || 0,
-          totalVolume: t.total_volume || t.totalVolume || 10000,
-          buyVolume: t.buy_volume || t.buyVolume || 5000,
-          sellVolume: t.sell_volume || t.sellVolume || 5000,
-          tradeCount: t.trade_count || t.tradeCount || 10,
-          feesUsd: t.fees_usd || t.feesUsd || 50,
-          winRate: t.win_rate || t.winRate || 0.5,
-          riskProfile: this.dataGenerator.determineRiskProfile(t),
-          portfolioEfficiency: (t.net_pnl || t.netPnl || 0) / (t.total_volume || t.totalVolume || 1)
-        }));
-        
-        console.log(`🔄 [TRADER PROCESSING] Converting ${convertedTraders.length} traders to profiles...`);
-        const traderProfiles = traderService.generateTraderProfiles(convertedTraders);
-        console.log(`✅ [TRADER PROFILES] Generated ${traderProfiles.length} trader profiles`);
-        
-        simulation = await this.finalizeSimulationCreation(simulationId, parameters, convertedTraders, traderProfiles);
-      } else {
-        console.error(`🚨 [CRITICAL ERROR] No traders available after all attempts!`);
-        throw new Error('Failed to load any traders for simulation');
+      // Final validation before simulation creation
+      const finalTraderCount = traders.length;
+      if (finalTraderCount !== 118) {
+        console.error(`❌ [ATOMIC CREATION] Final trader count validation failed: ${finalTraderCount} !== 118`);
+        throw new Error(`Trader count validation failed: expected 118, got ${finalTraderCount}`);
       }
       
-      // 🚨 CRITICAL FIX: Double-check simulation has traders
+      console.log(`🔥 [ATOMIC CREATION] VALIDATED: ${finalTraderCount} traders ready for simulation`);
+      
+      // Convert traders to proper format
+      const convertedTraders = traders.map(t => ({
+        position: t.position || 0,
+        walletAddress: t.wallet_address || t.walletAddress || `trader_${Math.random().toString(36).substr(2, 8)}`,
+        netPnl: t.net_pnl || t.netPnl || 0,
+        totalVolume: t.total_volume || t.totalVolume || 10000,
+        buyVolume: t.buy_volume || t.buyVolume || 5000,
+        sellVolume: t.sell_volume || t.sellVolume || 5000,
+        tradeCount: t.trade_count || t.tradeCount || 10,
+        feesUsd: t.fees_usd || t.feesUsd || 50,
+        winRate: t.win_rate || t.winRate || 0.5,
+        riskProfile: this.dataGenerator.determineRiskProfile(t),
+        portfolioEfficiency: (t.net_pnl || t.netPnl || 0) / (t.total_volume || t.totalVolume || 1)
+      }));
+      
+      console.log(`🔄 [TRADER PROCESSING] Converting ${convertedTraders.length} traders to profiles...`);
+      const traderProfiles = traderService.generateTraderProfiles(convertedTraders);
+      console.log(`✅ [TRADER PROFILES] Generated ${traderProfiles.length} trader profiles`);
+      
+      // 🚨 CRITICAL FIX: Create simulation with validated traders
+      const simulation = await this.finalizeSimulationCreation(
+        simulationId, 
+        parameters, 
+        convertedTraders, 
+        traderProfiles
+      );
+      
+      // 🚨 FINAL VALIDATION: Double-check simulation has traders before storing
       const simulationTraderCount = simulation.traders ? simulation.traders.length : 0;
-      console.log(`🔥 [FINAL VERIFICATION] Simulation ${simulationId} created with ${simulationTraderCount} traders`);
+      console.log(`🔥 [FINAL VERIFICATION] Simulation created with ${simulationTraderCount} traders`);
       
-      if (simulationTraderCount === 0) {
-        console.error(`❌ [FINAL VERIFICATION] CRITICAL: Simulation created with 0 traders!`);
-        console.error(`❌ [FINAL VERIFICATION] This will cause the TraderEngine to show "No traders found"`);
-        throw new Error('Simulation created with no traders - this will break trading activity');
+      if (simulationTraderCount !== 118) {
+        console.error(`❌ [ATOMIC CREATION] FINAL VALIDATION FAILED: ${simulationTraderCount} !== 118`);
+        throw new Error(`Final validation failed: simulation has ${simulationTraderCount} traders, expected 118`);
       }
       
+      // 🚨 CRITICAL: Only store in map AFTER full validation
       this.simulationRegistrationStatus.set(simulationId, 'registering');
-      
       this.simulations.set(simulationId, simulation);
       this.simulationSpeeds.set(simulationId, simulation.parameters.timeCompressionFactor);
       
       const aggressiveTimeframe: Timeframe = '1m';
       this.simulationTimeframes.set(simulationId, aggressiveTimeframe);
       
-      // Create and coordinate CandleManager during simulation creation
-      console.log(`🕯️ CANDLE: Creating CandleManager for ${simulationId} with price ${simulation.currentPrice}`);
+      // Create CandleManager coordination
+      console.log(`🕯️ CANDLE: Creating CandleManager for ${simulationId}`);
       await this.ensureCandleManagerExists(simulationId, simulation.currentPrice);
       
-      // Wait for CandleManager to be ready
       const isReady = await this.waitForCandleManagerReady(simulationId, 10000);
       if (!isReady) {
-        console.warn(`⚠️ CANDLE: CandleManager not ready for ${simulationId}, but continuing...`);
+        console.warn(`⚠️ CANDLE: CandleManager not ready for ${simulationId}`);
       }
       
       if (this.externalCandleUpdateCallback) {
         this.externalCandleUpdateCallback.ensureCleanStart(simulationId);
-        console.log(`🔗 COORDINATOR: External coordinator initialized for ${simulationId}`);
       }
       
-      console.log(`📊 METRICS: TPS tracking will start when simulation starts`);
-      
+      // Final registration after everything is ready
       await this.verifySimulationRegistration(simulationId);
       
       this.simulationRegistrationStatus.set(simulationId, 'ready');
       this.notifyRegistrationCallbacks(simulationId, 'ready');
       
-      // Set as active simulation and lock globally
+      // Set as active simulation
       SimulationManager.activeSimulationId = simulationId;
       SimulationManager.globalSimulationLock = true;
       
-      console.log(`✅ CREATED: Single simulation ${simulationId} with ${simulationTraderCount} traders and global lock enabled`);
-      console.log(`🔒 GLOBAL STATE: activeId=${SimulationManager.activeSimulationId}, locked=${SimulationManager.globalSimulationLock}`);
+      console.log(`✅ [ATOMIC CREATION] SUCCESS: Simulation ${simulationId} created with ${simulationTraderCount} traders and marked ready`);
       
       return simulation;
       
     } catch (error) {
-      console.error(`❌ Error creating simulation:`, error);
-      
-      // Reset global state on error
+      console.error(`❌ [ATOMIC CREATION] Failed:`, error);
       SimulationManager.globalSimulationLock = false;
       SimulationManager.activeSimulationId = null;
-      
       throw error;
     } finally {
       SimulationManager.simulationCreationInProgress = false;
@@ -1079,15 +1072,30 @@ export class SimulationManager {
     }
   }
 
-  // 🚨 CRITICAL FIX: Restore WebSocket readiness tracking for proper coordination
+  // 🚨 CRITICAL FIX: Enhanced Readiness Validation with Trader Count Check
   isSimulationReady(simulationId: string): boolean {
+    const simulation = this.simulations.get(simulationId);
+    if (!simulation) {
+      console.log(`❌ [READINESS] Simulation ${simulationId} not found`);
+      return false;
+    }
+    
     const status = this.simulationRegistrationStatus.get(simulationId);
     const candleManagerReady = this.candleManagerReadiness.get(simulationId);
     const websocketReady = this.websocketReadinessStatus.get(simulationId);
     
-    return (status === 'ready' || status === 'starting' || status === 'running') && 
-           candleManagerReady === true && 
-           websocketReady !== false; // Allow undefined as ready
+    // 🚨 CRITICAL: Add trader count validation
+    const traderCount = simulation.traders ? simulation.traders.length : 0;
+    const hasValidTraders = traderCount >= 118;
+    
+    const isStatusReady = (status === 'ready' || status === 'starting' || status === 'running');
+    const isReady = isStatusReady && candleManagerReady === true && websocketReady !== false && hasValidTraders;
+    
+    if (!isReady) {
+      console.log(`🔍 [READINESS] ${simulationId} - status: ${status}, candle: ${candleManagerReady}, ws: ${websocketReady}, traders: ${traderCount}/118`);
+    }
+    
+    return isReady;
   }
 
   async waitForSimulationReady(simulationId: string, timeoutMs: number = 5000): Promise<boolean> {
