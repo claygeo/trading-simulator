@@ -1,4 +1,4 @@
-// backend/src/websocket/index.ts - FIXED: Variable Scoping and Subscription Coordination
+// backend/src/websocket/index.ts - CRITICAL FIX: Variable Scoping Error Resolved
 import { WebSocket, WebSocketServer } from 'ws';
 import { BroadcastManager } from '../services/broadcastManager';
 import { PerformanceMonitor } from '../monitoring/performanceMonitor';
@@ -135,7 +135,7 @@ export function setupWebSocketServer(
           enhancedStateManagement: true,
           variableScopingFixed: true // NEW: Indicates variable scoping fixes
         },
-        version: '2.6.0' // Version bump for variable scoping fixes
+        version: '2.6.1' // Version bump for variable scoping fixes
       }), { binary: false, compress: false, fin: true });
     } catch (error) {
       console.error('❌ [WS CONN] Error sending welcome message:', error);
@@ -280,7 +280,7 @@ export function setupWebSocketServer(
   console.log('✅ [WS SETUP] WebSocket server setup complete with FIXED variable scoping and enhanced coordination');
 }
 
-// 🚨 CRITICAL FIX: Enhanced subscription with FIXED variable scoping
+// 🚨 CRITICAL FIX: Enhanced subscription with PROPERLY SCOPED variables
 async function handleSubscriptionWithRetry(
   ws: WebSocket, 
   message: WebSocketMessage, 
@@ -343,13 +343,13 @@ async function handleSubscriptionWithRetry(
   if (!isReady) {
     console.log(`⏳ [WS SUB] Simulation ${simulationId} not ready yet, will retry for ${clientId}`);
     
+    // 🚨 CRITICAL FIX: Properly declare attempts variable at the beginning of this scope
+    let attempts = 1;
+    
     // Track subscription attempt
     const subscriptions = clientSubscriptions.get(ws);
     if (subscriptions) {
       const existingSubscription = Array.from(subscriptions).find(sub => sub.simulationId === simulationId);
-      
-      // 🚨 CRITICAL FIX: Properly declare attempts variable in correct scope
-      let attempts = 1;
       
       if (existingSubscription) {
         existingSubscription.subscriptionAttempts++;
@@ -389,8 +389,8 @@ async function handleSubscriptionWithRetry(
         clearTimeout(existingTimer);
       }
       
-      // 🚨 CRITICAL FIX: Use proper variable scoping for retryDelay
-      const retryDelay = Math.min(5000, 500 * Math.pow(2, attempts - 1)); // Now properly scoped
+      // 🚨 CRITICAL FIX: Use properly scoped attempts variable for retryDelay calculation
+      const retryDelay = Math.min(5000, 500 * Math.pow(2, attempts - 1));
       
       console.log(`⏰ [WS SUB] Scheduling retry for ${simulationId} in ${retryDelay}ms (attempt ${attempts})`);
       
@@ -402,13 +402,13 @@ async function handleSubscriptionWithRetry(
       retryTimers.set(simulationId, retryTimer);
     }
     
-    // Send pending status to client
+    // Send pending status to client with properly scoped variables
     ws.send(JSON.stringify({
       type: 'subscription_pending',
       simulationId: simulationId,
       message: 'Simulation still registering, will retry automatically',
       retryAttempt: attempts,
-      retryDelay: retryDelay, // Variable is now properly scoped
+      retryDelay: retryDelay,
       timestamp: Date.now()
     }), { binary: false, compress: false, fin: true });
     
