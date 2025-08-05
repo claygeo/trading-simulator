@@ -1,4 +1,4 @@
-// backend/src/services/simulation/TraderEngine.ts - COMPLETE FILE WITH CRITICAL POOL LEAK FIXES
+// backend/src/services/simulation/TraderEngine.ts - CRITICAL FIX: Restore Trader Count Verification
 import { v4 as uuidv4 } from 'uuid';
 import { 
   SimulationState, 
@@ -20,7 +20,7 @@ export class TraderEngine implements ITraderEngine {
   private transactionQueue?: TransactionQueue;
   private processedTradesCache: Map<string, Set<string>> = new Map();
   
-  // CRITICAL FIX: Add pool monitoring and cleanup tracking
+  // Pool monitoring and cleanup tracking
   private poolMonitoringInterval: NodeJS.Timeout;
   private lastPoolCleanup: number = Date.now();
   private poolUsageMetrics = {
@@ -38,7 +38,7 @@ export class TraderEngine implements ITraderEngine {
     private broadcastEvent: (simulationId: string, event: any) => void,
     private updateTradesBuffer?: (simulationId: string, trades: Trade[]) => void
   ) {
-    // CRITICAL FIX: Initialize object pools with proper monitoring
+    // Initialize object pools with proper monitoring
     this.tradePool = new ObjectPool<Trade>(
       () => ({
         id: '',
@@ -51,7 +51,6 @@ export class TraderEngine implements ITraderEngine {
         impact: 0
       }),
       (trade) => {
-        // CRITICAL FIX: Enhanced reset function with validation
         try {
           trade.id = '';
           trade.timestamp = 0;
@@ -63,10 +62,10 @@ export class TraderEngine implements ITraderEngine {
           trade.impact = 0;
         } catch (resetError) {
           console.error('❌ POOL: Error resetting trade object:', resetError);
-          throw resetError; // Let pool handle the error
+          throw resetError;
         }
       },
-      5000, // Reduced from 10000 to prevent memory issues
+      5000, // Reduced pool size
       500   // Reduced pre-fill
     );
 
@@ -80,7 +79,6 @@ export class TraderEngine implements ITraderEngine {
         currentPnlPercentage: 0
       }),
       (position) => {
-        // CRITICAL FIX: Enhanced reset function with validation
         try {
           position.trader = {} as any;
           position.entryPrice = 0;
@@ -90,32 +88,27 @@ export class TraderEngine implements ITraderEngine {
           position.currentPnlPercentage = 0;
         } catch (resetError) {
           console.error('❌ POOL: Error resetting position object:', resetError);
-          throw resetError; // Let pool handle the error
+          throw resetError;
         }
       },
-      2500, // Reduced from 5000
+      2500, // Reduced pool size
       250   // Reduced pre-fill
     );
     
-    // CRITICAL FIX: Start pool monitoring to prevent leaks
     this.startPoolMonitoring();
-    
     console.log('✅ POOL: TraderEngine initialized with leak prevention monitoring');
   }
   
-  // CRITICAL FIX: Pool monitoring to detect and prevent leaks
   private startPoolMonitoring(): void {
     this.poolMonitoringInterval = setInterval(() => {
       this.monitorPoolHealth();
-    }, 30000); // Check every 30 seconds
+    }, 30000);
   }
   
-  // CRITICAL FIX: Pool health monitoring
   private monitorPoolHealth(): void {
     const tradeStats = this.tradePool.getStats();
     const positionStats = this.positionPool.getStats();
     
-    // Check for concerning usage patterns
     if (tradeStats.inUse > tradeStats.maxSize * 0.8) {
       console.warn(`⚠️ POOL: Trade pool usage high: ${tradeStats.inUse}/${tradeStats.maxSize}`);
       this.forcePoolCleanup('trade');
@@ -126,7 +119,6 @@ export class TraderEngine implements ITraderEngine {
       this.forcePoolCleanup('position');
     }
     
-    // Check for memory leaks
     const tradeHealthCheck = this.tradePool.healthCheck();
     const positionHealthCheck = this.positionPool.healthCheck();
     
@@ -142,13 +134,11 @@ export class TraderEngine implements ITraderEngine {
       this.forcePoolCleanup('position');
     }
     
-    // Log metrics periodically
-    if (Date.now() - this.lastPoolCleanup > 300000) { // Every 5 minutes
+    if (Date.now() - this.lastPoolCleanup > 300000) {
       this.logPoolMetrics();
     }
   }
   
-  // CRITICAL FIX: Force pool cleanup when issues detected
   private forcePoolCleanup(poolType: 'trade' | 'position'): void {
     console.log(`🧹 POOL: Forcing cleanup of ${poolType} pool due to health issues`);
     
@@ -170,63 +160,73 @@ export class TraderEngine implements ITraderEngine {
     }
   }
   
-  // CRITICAL FIX: Log pool metrics for monitoring
   private logPoolMetrics(): void {
     const tradeStats = this.tradePool.getStats();
     const positionStats = this.positionPool.getStats();
     
     console.log('📊 POOL: Current pool statistics:');
-    console.log(`   Trade Pool: ${tradeStats.inUse}/${tradeStats.maxSize} in use, ${tradeStats.available} available, ${tradeStats.memoryEfficiency} efficiency`);
-    console.log(`   Position Pool: ${positionStats.inUse}/${positionStats.maxSize} in use, ${positionStats.available} available, ${positionStats.memoryEfficiency} efficiency`);
-    console.log(`   Metrics: Acquired=${this.poolUsageMetrics.tradesAcquired}, Released=${this.poolUsageMetrics.tradesReleased}, Cleanups=${this.poolUsageMetrics.forceCleanups}, Errors=${this.poolUsageMetrics.errors}`);
-    
-    if (tradeStats.warnings.length > 0) {
-      console.warn(`⚠️ POOL: Trade pool warnings:`, tradeStats.warnings);
-    }
-    
-    if (positionStats.warnings.length > 0) {
-      console.warn(`⚠️ POOL: Position pool warnings:`, positionStats.warnings);
-    }
+    console.log(`   Trade Pool: ${tradeStats.inUse}/${tradeStats.maxSize} in use, ${tradeStats.available} available`);
+    console.log(`   Position Pool: ${positionStats.inUse}/${positionStats.maxSize} in use, ${positionStats.available} available`);
+    console.log(`   Metrics: Acquired=${this.poolUsageMetrics.tradesAcquired}, Released=${this.poolUsageMetrics.tradesReleased}, Errors=${this.poolUsageMetrics.errors}`);
   }
 
   setTransactionQueue(queue: TransactionQueue): void {
     this.transactionQueue = queue;
-    console.log('✅ POOL: Transaction queue connected to MAXIMUM ACTIVITY TraderEngine');
+    console.log('✅ POOL: Transaction queue connected to TraderEngine');
   }
 
-  // CRITICAL FIX: Enhanced processTraderActions with proper pool management
+  // 🚨 CRITICAL FIX: Restore missing trader count verification and data flow validation
   processTraderActions(simulation: ExtendedSimulationState): void {
-    const traders = simulation.traders; // All 118 real Dune Analytics traders
+    const traders = simulation.traders;
+    const traderCount = traders ? traders.length : 0;
+    
+    // 🔥 CRITICAL FIX: Restore missing trader count logging for debugging
+    console.log(`🔥 [TRADER COUNT VERIFICATION] Processing ${traderCount} traders from simulation.traders array`);
+    
+    // 🚨 CRITICAL FIX: Add proper validation for empty trader arrays
+    if (traderCount === 0) {
+      console.error('❌ [TRADER DATA FLOW] No traders found in simulation! This indicates a data flow problem.');
+      console.error('❌ [TRADER DATA FLOW] Expected: 118 real Dune Analytics traders');
+      console.error('❌ [TRADER DATA FLOW] Actual: 0 traders');
+      console.error('❌ [TRADER DATA FLOW] Check SimulationManager trader loading process');
+      return;
+    }
+    
+    // 🔥 CRITICAL FIX: Ensure 118 traders are properly processed and logged
+    if (traderCount === 118) {
+      console.log(`🔥 [ALL PARTICIPANTS] Activating ${traderCount}/${traderCount} real Dune Analytics traders (100%)`);
+    } else {
+      console.warn(`⚠️ [TRADER COUNT MISMATCH] Expected 118 traders, got ${traderCount}`);
+      console.log(`🔥 [ALL PARTICIPANTS] Activating ${traderCount} traders (${((traderCount/118)*100).toFixed(1)}%)`);
+    }
+    
     const speed = simulation.parameters.timeCompressionFactor;
-    
-    // MAXIMUM ACTIVITY MODE: Calculate ultra-aggressive simulation mode
     const simulationMode = this.getMaximumActivityMode(speed);
-    console.log(`🔥 [MAXIMUM ACTIVITY] ${simulationMode.name}: Targeting ${simulationMode.tradesPerTick} trades/tick from ALL ${traders.length} participants with pool leak prevention`);
     
-    // FORCE MAXIMUM TRADING ACTIVITY
+    console.log(`🔥 [MAXIMUM ACTIVITY] ${simulationMode.name}: Targeting ${simulationMode.tradesPerTick} trades/tick from ALL ${traderCount} participants`);
+    
     const tradesGenerated: Trade[] = [];
     let poolErrors = 0;
     
     try {
-      // 1. FORCE ALL 118 PARTICIPANTS TO BE HYPER-ACTIVE
+      // 1. Force maximum participant activity from all traders
       this.forceMaximumParticipantActivity(simulation, tradesGenerated, simulationMode);
       
-      // 2. GENERATE MASSIVE MARKET MAKER ACTIVITY
+      // 2. Generate additional market maker activity
       this.generateMaximumMarketMakerActivity(simulation, tradesGenerated, simulationMode);
       
-      // 3. GENERATE MASSIVE RETAIL TRADING ACTIVITY  
+      // 3. Generate retail trading activity  
       this.generateMaximumRetailActivity(simulation, tradesGenerated, simulationMode);
       
-      // 4. GENERATE AGGRESSIVE POSITION ACTIVITY
+      // 4. Generate position activity
       this.generateMaximumPositionActivity(simulation, tradesGenerated, simulationMode);
       
-      // 5. ENSURE OVERWHELMING ACTIVITY THRESHOLD
+      // 5. Ensure minimum activity threshold
       this.ensureMaximumActivity(simulation, tradesGenerated, simulationMode);
       
-      // 6. UPDATE ALL TRADER STATS AND RANKINGS
+      // 6. Update trader stats and rankings
       this.updateAllTraderStatsFromTrades(simulation, tradesGenerated);
       
-      // CRITICAL FIX: Monitor pool usage after generation
       const tradeStats = this.tradePool.getStats();
       if (tradeStats.inUse > tradeStats.maxSize * 0.7) {
         console.warn(`⚠️ POOL: High trade pool usage after generation: ${tradeStats.inUse}/${tradeStats.maxSize}`);
@@ -236,7 +236,6 @@ export class TraderEngine implements ITraderEngine {
       console.error('❌ POOL: Error in processTraderActions:', error);
       poolErrors++;
       
-      // CRITICAL FIX: Release any trades that were generated before the error
       tradesGenerated.forEach(trade => {
         try {
           this.tradePool.release(trade);
@@ -249,7 +248,7 @@ export class TraderEngine implements ITraderEngine {
       throw error;
     }
     
-    // CRITICAL FIX: Proper trade handling with automatic cleanup
+    // Handle generated trades with automatic cleanup
     if (tradesGenerated.length > 0) {
       try {
         // Convert and queue trades
@@ -280,7 +279,7 @@ export class TraderEngine implements ITraderEngine {
           simulation.recentTrades.unshift(trade);
         });
         
-        // CRITICAL FIX: Limit recent trades and release old ones
+        // Limit recent trades and release old ones
         if (simulation.recentTrades.length > 5000) {
           const tradesToRemove = simulation.recentTrades.splice(5000);
           tradesToRemove.forEach(trade => {
@@ -300,14 +299,12 @@ export class TraderEngine implements ITraderEngine {
       }
     }
     
-    // Update pool metrics
     this.poolUsageMetrics.errors += poolErrors;
     
     console.log(`✅ POOL: MAXIMUM ACTIVITY COMPLETE - Generated ${tradesGenerated.length} trades with ${poolErrors} pool errors`);
     console.log(`📊 POOL: MASSIVE CHART IMPACT - Total volume: ${tradesGenerated.reduce((sum, t) => sum + t.quantity, 0).toFixed(0)} tokens`);
   }
 
-  // MAXIMUM ACTIVITY: Determine ultra-aggressive simulation mode
   private getMaximumActivityMode(speed: number): {
     name: string;
     tradesPerTick: number;
@@ -318,55 +315,48 @@ export class TraderEngine implements ITraderEngine {
     if (speed <= 5) {
       return {
         name: "MAXIMUM_NORMAL",
-        tradesPerTick: 100, // MUCH higher than before (was 25)
-        participantActivityRate: 0.80, // 80% of 118 participants active per tick
+        tradesPerTick: 100,
+        participantActivityRate: 0.80,
         positionActivityRate: 0.40,
         marketMakerMultiplier: 3
       };
     } else if (speed <= 15) {
       return {
         name: "MAXIMUM_MEDIUM", 
-        tradesPerTick: 200, // MUCH higher (was 75)
-        participantActivityRate: 0.90, // 90% active
+        tradesPerTick: 200,
+        participantActivityRate: 0.90,
         positionActivityRate: 0.60,
         marketMakerMultiplier: 5
       };
     } else {
       return {
         name: "MAXIMUM_FAST",
-        tradesPerTick: 400, // MASSIVE activity (was 150)
-        participantActivityRate: 1.0, // 100% active - ALL participants
+        tradesPerTick: 400,
+        participantActivityRate: 1.0,
         positionActivityRate: 0.80,
         marketMakerMultiplier: 8
       };
     }
   }
 
-  // MAXIMUM ACTIVITY: Force ALL 118 participants to be hyper-active
   private forceMaximumParticipantActivity(
     simulation: ExtendedSimulationState, 
     tradesGenerated: Trade[], 
     mode: any
   ): void {
-    const { traders } = simulation; // All 118 real Dune Analytics traders
+    const { traders } = simulation;
     const activeCount = Math.max(50, Math.floor(traders.length * mode.participantActivityRate));
-    
-    // MAXIMUM MODE: Ensure we use ALL traders in fast mode
     const finalActiveCount = mode.participantActivityRate >= 1.0 ? traders.length : activeCount;
     
-    // Shuffle traders but ensure high activity
     const shuffledTraders = [...traders].sort(() => 0.5 - Math.random());
     const activeTraders = shuffledTraders.slice(0, finalActiveCount);
     
     console.log(`🔥 [ALL PARTICIPANTS] Activating ${finalActiveCount}/${traders.length} real Dune Analytics traders (${(finalActiveCount/traders.length*100).toFixed(1)}%)`);
     
-    // Generate multiple trades per active trader for maximum activity
     activeTraders.forEach((trader, index) => {
-      // MAXIMUM MODE: Each trader can make 1-3 trades per tick
       const tradesPerTrader = mode.participantActivityRate >= 1.0 ? 1 + Math.floor(Math.random() * 3) : 1;
       
       for (let i = 0; i < tradesPerTrader; i++) {
-        // Determine trading action
         const hasPosition = simulation.activePositions.some(p => 
           p.trader.walletAddress === trader.trader.walletAddress
         );
@@ -374,10 +364,8 @@ export class TraderEngine implements ITraderEngine {
         let action: 'buy' | 'sell';
         
         if (hasPosition && Math.random() < 0.4) {
-          // 40% chance to close existing position
           action = this.getPositionCloseAction(simulation, trader);
         } else {
-          // Regular trading action with aggressive strategy
           action = this.determineAggressiveTraderAction(simulation, trader);
         }
         
@@ -385,11 +373,8 @@ export class TraderEngine implements ITraderEngine {
         
         if (trade) {
           tradesGenerated.push(trade);
-          
-          // Create/update position for this trader
           this.updateTraderPosition(simulation, trader, trade);
           
-          // Log first few and random samples for debugging
           if (index < 5 || (index < 20 && Math.random() < 0.3)) {
             console.log(`   🔥 Hyper Trader ${trader.trader.walletAddress.slice(0, 8)}: ${action.toUpperCase()} ${trade.quantity.toFixed(0)} @ $${trade.price.toFixed(6)} (trade ${i+1}/${tradesPerTrader})`);
           }
@@ -400,59 +385,46 @@ export class TraderEngine implements ITraderEngine {
     console.log(`✅ [ALL PARTICIPANTS] Generated trades from ${finalActiveCount} hyper-active participants`);
   }
 
-  // MAXIMUM ACTIVITY: Determine aggressive trading actions
   private determineAggressiveTraderAction(simulation: ExtendedSimulationState, trader: TraderProfile): 'buy' | 'sell' {
     const { strategy } = trader;
     const { trend, volatility } = simulation.marketConditions;
-    const priceHistory = simulation.priceHistory.slice(-10);
-    
-    // Use real trader's historical performance but with aggressive multipliers
     const traderWinRate = trader.trader.winRate || 0.5;
     const traderRisk = trader.trader.riskProfile || 'moderate';
     
-    // MAXIMUM ACTIVITY: More aggressive strategy-based decisions
     switch (strategy) {
       case 'momentum':
         if (trend === 'bullish' && traderWinRate > 0.5) return 'buy';
         if (trend === 'bearish' && traderWinRate > 0.5) return 'sell';
-        // AGGRESSIVE: Even moderate performers trade more
-        return Math.random() > 0.3 ? 'buy' : 'sell'; // 70% chance to trade
+        return Math.random() > 0.3 ? 'buy' : 'sell';
         
       case 'contrarian':
         if (trend === 'bullish' && volatility > 0.02) return 'sell';
         if (trend === 'bearish' && volatility > 0.02) return 'buy';
-        // AGGRESSIVE: Always trade in contrarian mode
-        return Math.random() > 0.4 ? 'buy' : 'sell'; // 60% chance
+        return Math.random() > 0.4 ? 'buy' : 'sell';
         
       case 'scalper':
-        // AGGRESSIVE: Scalpers trade on any movement
         return volatility > 0.005 ? (Math.random() > 0.4 ? 'buy' : 'sell') : 'buy';
         
       default:
-        // AGGRESSIVE: Default behavior with high activity
         if (traderRisk === 'aggressive') {
           return trend === 'bullish' ? 'buy' : 'sell';
         } else if (traderRisk === 'conservative') {
-          return Math.random() > 0.5 ? 'buy' : 'sell'; // More frequent trading
+          return Math.random() > 0.5 ? 'buy' : 'sell';
         } else {
-          return Math.random() > 0.4 ? 'buy' : 'sell'; // 60% chance to trade
+          return Math.random() > 0.4 ? 'buy' : 'sell';
         }
     }
   }
 
-  // Get action to close existing position
   private getPositionCloseAction(simulation: ExtendedSimulationState, trader: TraderProfile): 'buy' | 'sell' {
     const position = simulation.activePositions.find(p => 
       p.trader.walletAddress === trader.trader.walletAddress
     );
     
     if (!position) return 'buy';
-    
-    // Close position = opposite action
     return position.quantity > 0 ? 'sell' : 'buy';
   }
 
-  // CRITICAL FIX: Enhanced trade creation with proper pool management
   private createMaximumActivityTrade(
     simulation: ExtendedSimulationState, 
     trader: TraderProfile, 
@@ -461,16 +433,14 @@ export class TraderEngine implements ITraderEngine {
     let trade: Trade | null = null;
     
     try {
-      // CRITICAL FIX: Acquire trade from pool with error handling
       trade = this.tradePool.acquire();
       this.poolUsageMetrics.tradesAcquired++;
       
       const currentPrice = simulation.currentPrice;
       const baseSize = this.calculateMaximumTradeSize(trader, currentPrice);
-      const priceVariation = (Math.random() - 0.5) * 0.003; // ±0.15% price variation (higher)
+      const priceVariation = (Math.random() - 0.5) * 0.003;
       const tradePrice = currentPrice * (1 + priceVariation);
       
-      // CRITICAL FIX: Populate trade object safely
       trade.id = `max_${trader.trader.walletAddress.slice(0, 8)}-${simulation.currentTime}-${Math.random().toString(36).substr(2, 8)}`;
       trade.timestamp = simulation.currentTime;
       trade.trader = {
@@ -499,7 +469,6 @@ export class TraderEngine implements ITraderEngine {
       console.error('❌ POOL: Error creating trade:', error);
       this.poolUsageMetrics.errors++;
       
-      // CRITICAL FIX: Release trade if acquired but failed to populate
       if (trade) {
         try {
           this.tradePool.release(trade);
@@ -513,53 +482,42 @@ export class TraderEngine implements ITraderEngine {
     }
   }
 
-  // MAXIMUM ACTIVITY: Calculate much larger trade sizes
   private calculateMaximumTradeSize(trader: TraderProfile, currentPrice: number): number {
     const traderVolume = trader.trader.totalVolume || 10000;
     const riskProfile = trader.trader.riskProfile || 'moderate';
     
-    // MAXIMUM ACTIVITY: Much larger base trade sizes
-    let basePercentage = 0.15; // 15% of total volume (was 5%)
+    let basePercentage = 0.15;
     
-    // AGGRESSIVE: Adjust based on risk profile with higher multipliers
     switch (riskProfile) {
       case 'aggressive':
-        basePercentage = 0.30; // 30% of volume (was 15%)
+        basePercentage = 0.30;
         break;
       case 'conservative':
-        basePercentage = 0.10; // 10% of volume (was 2%)
+        basePercentage = 0.10;
         break;
       default:
-        basePercentage = 0.20; // 20% of volume (was 5%)
+        basePercentage = 0.20;
     }
     
-    // Calculate token quantity with higher variation
-    const dollarAmount = traderVolume * basePercentage * (0.5 + Math.random() * 1.0); // ±100% variation
+    const dollarAmount = traderVolume * basePercentage * (0.5 + Math.random() * 1.0);
     const tokenQuantity = dollarAmount / currentPrice;
     
-    // MAXIMUM ACTIVITY: Higher minimum and maximum bounds
-    const minTokens = 500; // Higher minimum (was 100)
-    const maxTokens = currentPrice < 1 ? 100000 : currentPrice < 10 ? 25000 : 15000; // Higher maximums
+    const minTokens = 500;
+    const maxTokens = currentPrice < 1 ? 100000 : currentPrice < 10 ? 25000 : 15000;
     
     return Math.max(minTokens, Math.min(maxTokens, tokenQuantity));
   }
 
-  // MAXIMUM ACTIVITY: Calculate higher trade impact
   private calculateMaximumTradeImpact(simulation: ExtendedSimulationState, tradeValue: number): number {
     const liquidity = simulation.parameters.initialLiquidity;
     const volatility = simulation.marketConditions.volatility;
     
-    // MAXIMUM ACTIVITY: Higher base impact
-    let impact = (tradeValue / liquidity) * 0.002; // Double the impact (was 0.001)
+    let impact = (tradeValue / liquidity) * 0.002;
+    impact *= (1 + volatility * 8);
     
-    // Increase impact in volatile conditions
-    impact *= (1 + volatility * 8); // Higher volatility multiplier
-    
-    // MAXIMUM ACTIVITY: Higher maximum impact
-    return Math.min(0.01, impact); // Max 1% impact per trade (was 0.5%)
+    return Math.min(0.01, impact);
   }
 
-  // CRITICAL FIX: Enhanced position creation with proper pool management
   private updateTraderPosition(
     simulation: ExtendedSimulationState, 
     trader: TraderProfile, 
@@ -570,7 +528,6 @@ export class TraderEngine implements ITraderEngine {
     );
     
     if (!position) {
-      // CRITICAL FIX: Acquire position from pool with error handling
       try {
         position = this.positionPool.acquire();
         this.poolUsageMetrics.positionsAcquired++;
@@ -590,22 +547,18 @@ export class TraderEngine implements ITraderEngine {
         return;
       }
     } else {
-      // Update existing position
       const currentQuantity = position.quantity;
       const newQuantity = trade.action === 'buy' ? trade.quantity : -trade.quantity;
       
       if ((currentQuantity > 0 && newQuantity > 0) || (currentQuantity < 0 && newQuantity < 0)) {
-        // Same direction - increase position
         const totalValue = Math.abs(currentQuantity) * position.entryPrice + Math.abs(newQuantity) * trade.price;
         const totalQuantity = Math.abs(currentQuantity) + Math.abs(newQuantity);
         
         position.entryPrice = totalValue / totalQuantity;
         position.quantity = currentQuantity + newQuantity;
       } else {
-        // Opposite direction - reduce or close position
         position.quantity = currentQuantity + newQuantity;
         
-        // If position is closed or flipped, update entry price
         if ((currentQuantity > 0 && position.quantity <= 0) || (currentQuantity < 0 && position.quantity >= 0)) {
           if (Math.abs(position.quantity) > 0) {
             position.entryPrice = trade.price;
@@ -614,7 +567,6 @@ export class TraderEngine implements ITraderEngine {
         }
       }
       
-      // CRITICAL FIX: Remove position if quantity is very small and release to pool
       if (Math.abs(position.quantity) < 10) {
         const index = simulation.activePositions.indexOf(position);
         if (index > -1) {
@@ -631,13 +583,12 @@ export class TraderEngine implements ITraderEngine {
     }
   }
 
-  // MAXIMUM ACTIVITY: Generate massive market maker activity
   private generateMaximumMarketMakerActivity(
     simulation: ExtendedSimulationState, 
     tradesGenerated: Trade[], 
     mode: any
   ): void {
-    const mmTradeCount = Math.floor(mode.tradesPerTick * 0.4 * mode.marketMakerMultiplier); // Higher percentage
+    const mmTradeCount = Math.floor(mode.tradesPerTick * 0.4 * mode.marketMakerMultiplier);
     
     for (let i = 0; i < mmTradeCount; i++) {
       const trade = this.createMaximumMarketMakerTrade(simulation);
@@ -649,7 +600,6 @@ export class TraderEngine implements ITraderEngine {
     console.log(`🏪 [MAXIMUM MARKET MAKERS] Generated ${mmTradeCount} massive market maker trades`);
   }
 
-  // Create larger market maker trades
   private createMaximumMarketMakerTrade(simulation: ExtendedSimulationState): Trade | null {
     let trade: Trade | null = null;
     
@@ -672,9 +622,9 @@ export class TraderEngine implements ITraderEngine {
       trade.price = action === 'buy' 
         ? currentPrice * (1 - spread)
         : currentPrice * (1 + spread);
-      trade.quantity = 1000 + Math.random() * 3000; // 1000-4000 tokens (larger)
+      trade.quantity = 1000 + Math.random() * 3000;
       trade.value = trade.price * trade.quantity;
-      trade.impact = 0.0002; // Higher impact for MM trades
+      trade.impact = 0.0002;
       
       return trade;
       
@@ -692,20 +642,18 @@ export class TraderEngine implements ITraderEngine {
     }
   }
 
-  // Calculate market spread
   private calculateMarketSpread(simulation: ExtendedSimulationState): number {
     const volatility = simulation.marketConditions.volatility;
-    const baseSpread = 0.002; // 0.2% (higher)
-    return Math.min(0.008, baseSpread + volatility * 3); // Max 0.8% spread
+    const baseSpread = 0.002;
+    return Math.min(0.008, baseSpread + volatility * 3);
   }
 
-  // MAXIMUM ACTIVITY: Generate massive retail trading activity
   private generateMaximumRetailActivity(
     simulation: ExtendedSimulationState, 
     tradesGenerated: Trade[], 
     mode: any
   ): void {
-    const retailTradeCount = Math.floor(mode.tradesPerTick * 0.5); // Higher percentage
+    const retailTradeCount = Math.floor(mode.tradesPerTick * 0.5);
     
     for (let i = 0; i < retailTradeCount; i++) {
       const trade = this.createMaximumRetailTrade(simulation);
@@ -717,13 +665,12 @@ export class TraderEngine implements ITraderEngine {
     console.log(`🏪 [MAXIMUM RETAIL] Generated ${retailTradeCount} massive retail trades`);
   }
 
-  // Create larger retail trades
   private createMaximumRetailTrade(simulation: ExtendedSimulationState): Trade | null {
     let trade: Trade | null = null;
     
     try {
       const currentPrice = simulation.currentPrice;
-      const priceVariation = (Math.random() - 0.5) * 0.015; // ±0.75% variation (higher)
+      const priceVariation = (Math.random() - 0.5) * 0.015;
       const action = Math.random() > 0.5 ? 'buy' : 'sell';
       
       trade = this.tradePool.acquire();
@@ -738,7 +685,7 @@ export class TraderEngine implements ITraderEngine {
       };
       trade.action = action;
       trade.price = currentPrice * (1 + priceVariation);
-      trade.quantity = 200 + Math.random() * 1500; // 200-1700 tokens (larger)
+      trade.quantity = 200 + Math.random() * 1500;
       trade.value = trade.price * trade.quantity;
       trade.impact = this.calculateMaximumTradeImpact(simulation, trade.value);
       
@@ -758,23 +705,20 @@ export class TraderEngine implements ITraderEngine {
     }
   }
 
-  // MAXIMUM ACTIVITY: Generate aggressive position-related activity
   private generateMaximumPositionActivity(
     simulation: ExtendedSimulationState, 
     tradesGenerated: Trade[], 
     mode: any
   ): void {
-    // Randomly close more existing positions
     const positionsToClose = simulation.activePositions
       .filter(() => Math.random() < mode.positionActivityRate)
-      .slice(0, 15); // Allow more closures per tick
+      .slice(0, 15);
     
     positionsToClose.forEach(position => {
       const closeTrade = this.createMaximumPositionCloseTrade(simulation, position);
       if (closeTrade) {
         tradesGenerated.push(closeTrade);
         
-        // Remove position from active list
         const index = simulation.activePositions.indexOf(position);
         if (index > -1) {
           simulation.activePositions.splice(index, 1);
@@ -794,7 +738,6 @@ export class TraderEngine implements ITraderEngine {
     }
   }
 
-  // Create position close trade
   private createMaximumPositionCloseTrade(
     simulation: ExtendedSimulationState, 
     position: TraderPosition
@@ -830,7 +773,6 @@ export class TraderEngine implements ITraderEngine {
     }
   }
 
-  // MAXIMUM ACTIVITY: Ensure overwhelming activity threshold
   private ensureMaximumActivity(
     simulation: ExtendedSimulationState, 
     tradesGenerated: Trade[], 
@@ -853,7 +795,6 @@ export class TraderEngine implements ITraderEngine {
     }
   }
 
-  // Create random trade with maximum parameters
   private createMaximumRandomTrade(simulation: ExtendedSimulationState): Trade | null {
     let trade: Trade | null = null;
     
@@ -872,8 +813,8 @@ export class TraderEngine implements ITraderEngine {
         netPnl: 0
       };
       trade.action = action;
-      trade.price = currentPrice * (0.998 + Math.random() * 0.004); // ±0.2% variation
-      trade.quantity = 500 + Math.random() * 2000; // 500-2500 tokens (larger)
+      trade.price = currentPrice * (0.998 + Math.random() * 0.004);
+      trade.quantity = 500 + Math.random() * 2000;
       trade.value = trade.price * trade.quantity;
       trade.impact = this.calculateMaximumTradeImpact(simulation, trade.value);
       
@@ -893,7 +834,6 @@ export class TraderEngine implements ITraderEngine {
     }
   }
 
-  // MAXIMUM ACTIVITY: Update ALL trader stats from generated trades
   private updateAllTraderStatsFromTrades(
     simulation: ExtendedSimulationState, 
     trades: Trade[]
@@ -904,7 +844,6 @@ export class TraderEngine implements ITraderEngine {
       );
       
       if (trader) {
-        // Update trader statistics with higher multipliers
         trader.trader.tradeCount = (trader.trader.tradeCount || 0) + 1;
         trader.trader.totalVolume = (trader.trader.totalVolume || 0) + trade.value;
         
@@ -914,24 +853,21 @@ export class TraderEngine implements ITraderEngine {
           trader.trader.sellVolume = (trader.trader.sellVolume || 0) + trade.value;
         }
         
-        // Update net PnL based on trade impact
         const pnlImpact = trade.value * trade.impact * (trade.action === 'buy' ? 1 : -1);
         trader.trader.netPnl = (trader.trader.netPnl || 0) + pnlImpact;
       }
     });
     
-    // Update trader rankings
     this.updateTraderRankings(simulation);
   }
 
-  // Existing methods adapted for maximum activity...
+  // Existing interface implementations...
   processTraderActionsBatch(simulation: SimulationState, batchSize: number): void {
-    // Use the enhanced processTraderActions instead
     this.processTraderActions(simulation as ExtendedSimulationState);
   }
 
   applyTraderBehaviorModifiers(simulationId: string, modifiers: any): void {
-    console.log(`Applying MAXIMUM ACTIVITY trader behavior modifiers for simulation ${simulationId}:`, modifiers);
+    console.log(`Applying trader behavior modifiers for simulation ${simulationId}:`, modifiers);
   }
 
   processTraderDecisionParallel(traders: TraderProfile[], marketData: any): TraderDecision[] {
@@ -947,7 +883,6 @@ export class TraderEngine implements ITraderEngine {
     return decisions;
   }
 
-  // MAXIMUM ACTIVITY: More aggressive decision making
   private evaluateMaximumTraderDecision(trader: TraderProfile, marketData: any): TraderDecision {
     const { currentPrice, marketConditions } = marketData;
     const hasPosition = marketData.activePositions.some(
@@ -961,7 +896,6 @@ export class TraderEngine implements ITraderEngine {
       
       const pnlPercentage = this.calculatePnL(position, currentPrice);
       
-      // MAXIMUM ACTIVITY: More aggressive exit conditions
       if (this.shouldExitAggressively(trader, pnlPercentage, position)) {
         return {
           action: 'exit',
@@ -970,7 +904,6 @@ export class TraderEngine implements ITraderEngine {
         };
       }
     } else {
-      // MAXIMUM ACTIVITY: More aggressive entry conditions
       if (this.shouldEnterAggressively(trader, marketData)) {
         const quantity = this.calculateMaximumPositionSize(trader, currentPrice);
         return {
@@ -989,24 +922,22 @@ export class TraderEngine implements ITraderEngine {
     };
   }
 
-  // MAXIMUM ACTIVITY: More aggressive entry conditions
   private shouldEnterAggressively(trader: TraderProfile, marketData: any): boolean {
     const { strategy } = trader;
     const { marketConditions } = marketData;
 
     switch (strategy) {
       case 'scalper':
-        return Math.random() < 0.6 && marketConditions.volatility > 0.01; // Higher chance
+        return Math.random() < 0.6 && marketConditions.volatility > 0.01;
       case 'momentum':
-        return marketConditions.trend === 'bullish' && Math.random() < 0.7; // Higher chance
+        return marketConditions.trend === 'bullish' && Math.random() < 0.7;
       case 'contrarian':
-        return marketConditions.trend === 'bearish' && Math.random() < 0.7; // Higher chance
+        return marketConditions.trend === 'bearish' && Math.random() < 0.7;
       default:
-        return Math.random() < 0.5; // Much higher chance (was 0.2)
+        return Math.random() < 0.5;
     }
   }
 
-  // MAXIMUM ACTIVITY: More aggressive exit conditions
   private shouldExitAggressively(trader: TraderProfile, pnlPercentage: number, position: any): boolean {
     const { strategy } = trader;
     const timeInPosition = position.entryTime ? Date.now() - position.entryTime : 0;
@@ -1014,11 +945,11 @@ export class TraderEngine implements ITraderEngine {
 
     switch (strategy) {
       case 'scalper':
-        return pnlPercentage > 0.003 || pnlPercentage < -0.002 || minutesInPosition > 15; // Faster exits
+        return pnlPercentage > 0.003 || pnlPercentage < -0.002 || minutesInPosition > 15;
       case 'swing':
-        return pnlPercentage > 0.015 || pnlPercentage < -0.008 || minutesInPosition > 90; // Faster exits
+        return pnlPercentage > 0.015 || pnlPercentage < -0.008 || minutesInPosition > 90;
       default:
-        return pnlPercentage > 0.008 || pnlPercentage < -0.004 || minutesInPosition > 30; // Faster exits
+        return pnlPercentage > 0.008 || pnlPercentage < -0.004 || minutesInPosition > 30;
     }
   }
 
@@ -1029,12 +960,11 @@ export class TraderEngine implements ITraderEngine {
     return pnl / entryValue;
   }
 
-  // MAXIMUM ACTIVITY: Calculate larger position sizes
   private calculateMaximumPositionSize(trader: TraderProfile, currentPrice: number): number {
     const { positionSizing } = trader;
-    const baseSize = currentPrice < 1 ? 15000 : currentPrice < 10 ? 20000 : 25000; // Much larger base sizes
-    const sizeMultiplier = positionSizing === 'aggressive' ? 5 : positionSizing === 'moderate' ? 3 : 2; // Higher multipliers
-    const positionValue = baseSize * sizeMultiplier * (0.7 + Math.random() * 0.6); // Higher variation
+    const baseSize = currentPrice < 1 ? 15000 : currentPrice < 10 ? 20000 : 25000;
+    const sizeMultiplier = positionSizing === 'aggressive' ? 5 : positionSizing === 'moderate' ? 3 : 2;
+    const positionValue = baseSize * sizeMultiplier * (0.7 + Math.random() * 0.6);
     return positionValue / currentPrice;
   }
 
@@ -1059,7 +989,6 @@ export class TraderEngine implements ITraderEngine {
       .sort((a, b) => (b.netPnl || 0) - (a.netPnl || 0));
   }
 
-  // CRITICAL FIX: Enhanced cleanup with proper pool release
   integrateProcessedTrades(simulation: ExtendedSimulationState, processedTrades: Trade[]): void {
     if (!this.processedTradesCache.has(simulation.id)) {
       this.processedTradesCache.set(simulation.id, new Set());
@@ -1091,7 +1020,6 @@ export class TraderEngine implements ITraderEngine {
       }
     });
     
-    // CRITICAL FIX: Clean up cache and trades with proper pool management
     if (cache.size > 20000) {
       const entriesToDelete = Array.from(cache).slice(0, 10000);
       entriesToDelete.forEach(id => cache.delete(id));
@@ -1115,16 +1043,13 @@ export class TraderEngine implements ITraderEngine {
     }
   }
 
-  // CRITICAL FIX: Enhanced cleanup method
   cleanup(): void {
     console.log('🧹 POOL: Starting TraderEngine cleanup with pool release...');
     
-    // Stop pool monitoring
     if (this.poolMonitoringInterval) {
       clearInterval(this.poolMonitoringInterval);
     }
     
-    // Release all objects from pools
     try {
       this.tradePool.releaseAll();
       this.positionPool.releaseAll();
@@ -1133,17 +1058,13 @@ export class TraderEngine implements ITraderEngine {
       console.error('❌ POOL: Error releasing all pool objects:', releaseError);
     }
     
-    // Clear caches
     this.processedTradesCache.clear();
-    
-    // Log final metrics
     this.logPoolMetrics();
     
     console.log('✅ POOL: TraderEngine cleanup completed');
     console.log(`📊 POOL: Final metrics - Acquired: ${this.poolUsageMetrics.tradesAcquired}, Released: ${this.poolUsageMetrics.tradesReleased}, Errors: ${this.poolUsageMetrics.errors}`);
   }
 
-  // CRITICAL FIX: Get pool health status for monitoring
   getPoolHealth(): {
     trade: { healthy: boolean; stats: any; issues: string[] };
     position: { healthy: boolean; stats: any; issues: string[] };
