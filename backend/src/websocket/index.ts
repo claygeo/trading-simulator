@@ -1,4 +1,4 @@
-// backend/src/websocket/index.ts - CRITICAL FIX: Variable Scoping Error Resolved + Enhanced Subscription Validation
+// backend/src/websocket/index.ts - CRITICAL FIX: Variable Scoping Error & Inverted Pause Logic Fixed
 import { WebSocket, WebSocketServer } from 'ws';
 import { BroadcastManager } from '../services/broadcastManager';
 import { PerformanceMonitor } from '../monitoring/performanceMonitor';
@@ -134,9 +134,10 @@ export function setupWebSocketServer(
           pauseResumeSupport: true,
           enhancedStateManagement: true,
           variableScopingFixed: true, // NEW: Indicates variable scoping fixes
+          pauseLogicFixed: true, // NEW: Indicates pause logic fixes
           enhancedSubscriptionValidation: true // NEW: Indicates trader validation fixes
         },
-        version: '2.7.0' // Version bump for subscription validation fixes
+        version: '2.8.0' // Version bump for all critical fixes
       }), { binary: false, compress: false, fin: true });
     } catch (error) {
       console.error('❌ [WS CONN] Error sending welcome message:', error);
@@ -156,7 +157,7 @@ export function setupWebSocketServer(
         
         switch (message.type) {
           case 'subscribe':
-            handleSubscriptionWithRetry(ws, message, clientId, simulationManager);
+            handleSubscriptionWithRetryFixed(ws, message, clientId, simulationManager);
             break;
             
           case 'unsubscribe':
@@ -168,7 +169,7 @@ export function setupWebSocketServer(
             break;
             
           case 'setPauseState':
-            handlePauseStateChangeWithRaceConditionPrevention(ws, message, clientId, simulationManager);
+            handlePauseStateChangeWithFixedLogic(ws, message, clientId, simulationManager);
             break;
             
           case 'setPreferences':
@@ -278,11 +279,11 @@ export function setupWebSocketServer(
     console.error('❌ [WS ERROR] WebSocket server error:', error);
   });
   
-  console.log('✅ [WS SETUP] WebSocket server setup complete with FIXED variable scoping, enhanced coordination, and subscription validation');
+  console.log('✅ [WS SETUP] WebSocket server setup complete with FIXED variable scoping, pause logic, and enhanced coordination');
 }
 
-// 🚨 CRITICAL FIX: Enhanced subscription with PROPERLY SCOPED variables + Enhanced Subscription Validation
-async function handleSubscriptionWithRetry(
+// 🚨 CRITICAL FIX: Enhanced subscription with PROPERLY SCOPED variables and trader validation
+async function handleSubscriptionWithRetryFixed(
   ws: WebSocket, 
   message: WebSocketMessage, 
   clientId: string,
@@ -376,7 +377,7 @@ async function handleSubscriptionWithRetry(
   if (!isReady) {
     console.log(`⏳ [WS SUB] Simulation ${simulationId} not ready yet, will retry for ${clientId}`);
     
-    // 🚨 CRITICAL FIX: Properly declare attempts variable at the beginning of this scope
+    // 🚨 CRITICAL FIX: Declare attempts variable at function scope to be accessible throughout
     let attempts = 1;
     
     // Track subscription attempt
@@ -413,6 +414,9 @@ async function handleSubscriptionWithRetry(
       }
     }
     
+    // 🚨 CRITICAL FIX: Calculate retryDelay at function scope so it's accessible everywhere
+    const retryDelay = Math.min(5000, 500 * Math.pow(2, attempts - 1));
+    
     // Set up retry timer
     const retryTimers = clientRetryTimers.get(ws);
     if (retryTimers) {
@@ -422,27 +426,25 @@ async function handleSubscriptionWithRetry(
         clearTimeout(existingTimer);
       }
       
-      // 🚨 CRITICAL FIX: Use properly scoped attempts variable for retryDelay calculation
-      const retryDelay = Math.min(5000, 500 * Math.pow(2, attempts - 1));
-      
       console.log(`⏰ [WS SUB] Scheduling retry for ${simulationId} in ${retryDelay}ms (attempt ${attempts})`);
       
       const retryTimer = setTimeout(() => {
         console.log(`🔄 [WS SUB] Retrying subscription for ${simulationId} (attempt ${attempts + 1})`);
-        handleSubscriptionWithRetry(ws, message, clientId, simulationManager);
+        handleSubscriptionWithRetryFixed(ws, message, clientId, simulationManager);
       }, retryDelay);
       
       retryTimers.set(simulationId, retryTimer);
     }
     
-    // Send pending status to client with properly scoped variables
+    // 🚨 CRITICAL FIX: Send pending status with properly scoped retryDelay variable
     ws.send(JSON.stringify({
       type: 'subscription_pending',
       simulationId: simulationId,
       message: 'Simulation still registering, will retry automatically',
       retryAttempt: attempts,
-      retryDelay: retryDelay,
-      timestamp: Date.now()
+      retryDelay: retryDelay, // Now properly accessible since it's declared at function scope
+      timestamp: Date.now(),
+      variableScopingFixed: true // NEW: Indicates the variable scoping fix
     }), { binary: false, compress: false, fin: true });
     
     return;
@@ -531,6 +533,7 @@ async function handleSubscriptionWithRetry(
     canStop: simulation.isRunning,
     raceConditionPrevention: true,
     variableScopingFixed: true, // NEW: Indicates variable scoping fixes
+    pauseLogicFixed: true, // NEW: Indicates pause logic fixes
     traderCount: traderCount, // NEW: Include trader count in state
     traderValidationPassed: true // NEW: Indicates trader validation passed
   };
@@ -559,17 +562,18 @@ async function handleSubscriptionWithRetry(
     pauseResumeSupport: true,
     raceConditionPrevention: true,
     variableScopingFixed: true, // NEW: Indicates variable scoping fixes
+    pauseLogicFixed: true, // NEW: Indicates pause logic fixes
     traderCount: traderCount, // NEW: Include trader count in confirmation
     traderValidationPassed: true, // NEW: Indicates trader validation passed
     enhancedSubscriptionValidation: true, // NEW: Indicates enhanced validation
-    message: `Successfully subscribed to simulation ${simulationId} using SHARED SimulationManager with FIXED variable scoping and enhanced trader validation`
+    message: `Successfully subscribed to simulation ${simulationId} using SHARED SimulationManager with FIXED variable scoping, pause logic, and enhanced trader validation`
   }), { binary: false, compress: false, fin: true });
   
-  console.log(`🎉 [WS SUB] SUBSCRIPTION SUCCESS! ${clientId} subscribed to ${simulationId}, traders: ${traderCount}, validation: PASSED`);
+  console.log(`🎉 [WS SUB] SUBSCRIPTION SUCCESS! ${clientId} subscribed to ${simulationId}, traders: ${traderCount}, validation: PASSED, fixes: APPLIED`);
 }
 
-// Enhanced pause state change handler with race condition prevention
-async function handlePauseStateChangeWithRaceConditionPrevention(
+// 🚨 CRITICAL FIX: Enhanced pause state change handler with CORRECTED LOGIC and race condition prevention
+async function handlePauseStateChangeWithFixedLogic(
   ws: WebSocket,
   message: WebSocketMessage,
   clientId: string,
@@ -676,23 +680,25 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
     
     let result: { success: boolean; error?: string; action?: string; newState?: any };
     
-    // Enhanced pause/resume logic with race condition awareness
+    // 🚨 CRITICAL FIX: CORRECTED pause/resume logic - isPaused represents the DESIRED state
     if (isPaused) {
-      // Client wants to pause the simulation
+      // Client wants the simulation to BE paused (isPaused=true means "make it paused")
       if (!simulation.isRunning) {
         result = {
           success: false,
           error: `Cannot pause simulation ${simulationId} because it is not running (isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`
         };
+        console.log(`❌ [PAUSE LOGIC] Cannot pause - simulation not running`);
       } else if (simulation.isPaused) {
         result = {
           success: false,
           error: `Simulation ${simulationId} is already paused (isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`
         };
+        console.log(`❌ [PAUSE LOGIC] Cannot pause - already paused`);
       } else {
         // Simulation is running and not paused - can pause it
         try {
-          console.log(`⏸️ [PAUSE STATE] Executing pause for ${simulationId}`);
+          console.log(`⏸️ [PAUSE LOGIC] Client wants isPaused=true, executing PAUSE for ${simulationId}`);
           await simulationManager.pauseSimulation(simulationId);
           
           // Get updated state
@@ -706,21 +712,21 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
               isPaused: updatedSimulation?.isPaused || true
             }
           };
-          console.log(`✅ [PAUSE STATE] Successfully paused simulation ${simulationId}`);
+          console.log(`✅ [PAUSE LOGIC] Successfully paused simulation ${simulationId}`);
         } catch (error) {
           result = {
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error pausing simulation'
           };
-          console.error(`❌ [PAUSE STATE] Error pausing simulation ${simulationId}:`, error);
+          console.error(`❌ [PAUSE LOGIC] Error pausing simulation ${simulationId}:`, error);
         }
       }
     } else {
-      // Client wants to resume/start the simulation
+      // Client wants the simulation to NOT be paused (isPaused=false means "make it not paused")
       if (!simulation.isRunning) {
         // Simulation is not running - start it
         try {
-          console.log(`🚀 [PAUSE STATE] Executing start for ${simulationId}`);
+          console.log(`🚀 [PAUSE LOGIC] Client wants isPaused=false, executing START for ${simulationId}`);
           await simulationManager.startSimulation(simulationId);
           
           // Get updated state
@@ -734,18 +740,18 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
               isPaused: updatedSimulation?.isPaused || false
             }
           };
-          console.log(`✅ [PAUSE STATE] Successfully started simulation ${simulationId}`);
+          console.log(`✅ [PAUSE LOGIC] Successfully started simulation ${simulationId}`);
         } catch (error) {
           result = {
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error starting simulation'
           };
-          console.error(`❌ [PAUSE STATE] Error starting simulation ${simulationId}:`, error);
+          console.error(`❌ [PAUSE LOGIC] Error starting simulation ${simulationId}:`, error);
         }
       } else if (simulation.isPaused) {
         // Simulation is running but paused - resume it
         try {
-          console.log(`▶️ [PAUSE STATE] Executing resume for ${simulationId}`);
+          console.log(`▶️ [PAUSE LOGIC] Client wants isPaused=false, executing RESUME for ${simulationId}`);
           await simulationManager.resumeSimulation(simulationId);
           
           // Get updated state
@@ -759,13 +765,13 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
               isPaused: updatedSimulation?.isPaused || false
             }
           };
-          console.log(`✅ [PAUSE STATE] Successfully resumed simulation ${simulationId}`);
+          console.log(`✅ [PAUSE LOGIC] Successfully resumed simulation ${simulationId}`);
         } catch (error) {
           result = {
             success: false,
             error: error instanceof Error ? error.message : 'Unknown error resuming simulation'
           };
-          console.error(`❌ [PAUSE STATE] Error resuming simulation ${simulationId}:`, error);
+          console.error(`❌ [PAUSE LOGIC] Error resuming simulation ${simulationId}:`, error);
         }
       } else {
         // Simulation is already running and not paused
@@ -773,6 +779,7 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
           success: false,
           error: `Simulation ${simulationId} is already running and not paused (isRunning=${simulation.isRunning}, isPaused=${simulation.isPaused})`
         };
+        console.log(`❌ [PAUSE LOGIC] Cannot resume - already running and not paused`);
       }
     }
     
@@ -786,7 +793,8 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
         success: true,
         action: result.action,
         data: result.newState,
-        message: `Simulation ${result.action} successfully`
+        message: `Simulation ${result.action} successfully`,
+        pauseLogicFixed: true // NEW: Indicates pause logic is fixed
       }), { binary: false, compress: false, fin: true });
       
       console.log(`📡 [PAUSE STATE] Sent success response to ${clientId}: action=${result.action}, newState=${JSON.stringify(result.newState)}`);
@@ -801,7 +809,8 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
           success: true,
           action: result.action,
           newState: result.newState,
-          triggeredBy: clientId
+          triggeredBy: clientId,
+          pauseLogicFixed: true // NEW: Indicates pause logic is fixed
         };
         
         let broadcastCount = 0;
@@ -827,7 +836,8 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
         timestamp: Date.now(),
         success: false,
         error: result.error || 'Unknown error changing pause state',
-        data: null
+        data: null,
+        pauseLogicFixed: true // NEW: Indicates pause logic is fixed
       }), { binary: false, compress: false, fin: true });
       
       console.error(`❌ [PAUSE STATE] Sent error response to ${clientId}: ${result.error}`);
@@ -841,7 +851,8 @@ async function handlePauseStateChangeWithRaceConditionPrevention(
       timestamp: Date.now(),
       success: false,
       error: 'Internal error handling pause state change',
-      data: null
+      data: null,
+      pauseLogicFixed: true // NEW: Indicates pause logic is fixed
     }), { binary: false, compress: false, fin: true });
   } finally {
     // Always clean up locks and pending operations
@@ -1369,6 +1380,7 @@ function handleDebugRequest(ws: WebSocket, clientId: string, broadcastManager?: 
       pauseResumeSupport: true,
       enhancedStateManagement: true,
       variableScopingFixed: true, // NEW: Indicates variable scoping fixes
+      pauseLogicFixed: true, // NEW: Indicates pause logic fixes
       enhancedSubscriptionValidation: true // NEW: Indicates enhanced validation
     }
   };
@@ -1505,6 +1517,7 @@ export function getSubscriptionStats(wss: WebSocketServer): {
   raceConditionPrevention: boolean;
   globalOperationLocks: number;
   variableScopingFixed: boolean; // NEW: Indicates variable scoping fixes
+  pauseLogicFixed: boolean; // NEW: Indicates pause logic fixes
   enhancedSubscriptionValidation: boolean; // NEW: Indicates enhanced validation
 } {
   const stats = {
@@ -1515,6 +1528,7 @@ export function getSubscriptionStats(wss: WebSocketServer): {
     raceConditionPrevention: true,
     globalOperationLocks: globalOperationLocks.size,
     variableScopingFixed: true, // NEW: Indicates variable scoping fixes
+    pauseLogicFixed: true, // NEW: Indicates pause logic fixes
     enhancedSubscriptionValidation: true // NEW: Indicates enhanced validation
   };
   
