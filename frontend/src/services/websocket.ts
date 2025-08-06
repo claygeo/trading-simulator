@@ -1298,3 +1298,4 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       getStateReport: () => stateManager.current.getStateReport()
     }
   };
+};
