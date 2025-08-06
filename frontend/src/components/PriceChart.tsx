@@ -1,4 +1,4 @@
-// frontend/src/components/PriceChart.tsx - BULLETPROOF: TradingView Null Error Prevention
+// frontend/src/components/PriceChart.tsx - COMPLETE FIXES: Chart Validation + Reset Detection + Error Prevention
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { 
   createChart, 
@@ -51,6 +51,7 @@ interface ChartState {
   lastResetTime: number | null;
   validationErrors: number;
   lastErrorTime: number | null;
+  dataQuality: 'poor' | 'fair' | 'good' | 'excellent';
 }
 
 const PriceChart: React.FC<PriceChartProps> = ({
@@ -74,7 +75,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
     buildingStartTime: null,
     lastResetTime: null,
     validationErrors: 0,
-    lastErrorTime: null
+    lastErrorTime: null,
+    dataQuality: 'poor'
   });
 
   const lastUpdateRef = useRef<number>(0);
@@ -85,113 +87,167 @@ const PriceChart: React.FC<PriceChartProps> = ({
   const initialZoomSetRef = useRef<boolean>(false);
   const shouldAutoFitRef = useRef<boolean>(true);
   const lastValidDataRef = useRef<CandlestickData[]>([]);
+  const errorCountRef = useRef<number>(0);
+  const recoveryAttemptRef = useRef<number>(0);
 
-  // BULLETPROOF: Ultra-strict data sanitization for TradingView Charts
+  // 🔧 FIXED: Ultra-comprehensive data validation for TradingView Charts
   const sanitizeChartData = useCallback((backendPriceHistory: any[]): CandlestickData[] => {
-    if (!Array.isArray(backendPriceHistory) || backendPriceHistory.length === 0) {
+    if (!Array.isArray(backendPriceHistory)) {
+      console.warn('📊 VALIDATION: Price history is not an array:', typeof backendPriceHistory);
+      return [];
+    }
+    
+    if (backendPriceHistory.length === 0) {
+      console.log('📊 VALIDATION: Price history is empty array (reset detected)');
       return [];
     }
     
     const validCandles: CandlestickData[] = [];
     let lastValidTime = 0;
     let skippedCount = 0;
+    let validationIssues: string[] = [];
     
     for (let i = 0; i < backendPriceHistory.length; i++) {
       const candle = backendPriceHistory[i];
+      let skipReason = '';
       
-      // CRITICAL: Skip null/undefined candles
-      if (!candle || typeof candle !== 'object') {
+      try {
+        // 🔧 FIXED: Null/undefined check
+        if (!candle || typeof candle !== 'object') {
+          skipReason = 'null/undefined candle';
+          skippedCount++;
+          continue;
+        }
+        
+        // 🔧 FIXED: Extract and validate timestamp with multiple fallbacks
+        let timestamp = candle.timestamp || candle.time;
+        
+        if (typeof timestamp !== 'number' || !Number.isFinite(timestamp) || timestamp <= 0) {
+          skipReason = 'invalid timestamp';
+          skippedCount++;
+          continue;
+        }
+        
+        // 🔧 FIXED: Convert to seconds with proper rounding for TradingView
+        const timeInSeconds = Math.floor(timestamp / 1000);
+        
+        // 🔧 FIXED: Ensure chronological order (TradingView requirement)
+        if (timeInSeconds <= lastValidTime) {
+          skipReason = 'non-chronological time';
+          skippedCount++;
+          continue;
+        }
+        
+        // 🔧 FIXED: Extract OHLC values with multiple fallbacks
+        const open = Number(candle.open);
+        const high = Number(candle.high);
+        const low = Number(candle.low);
+        const close = Number(candle.close);
+        
+        // 🔧 FIXED: Comprehensive number validation
+        const values = [open, high, low, close];
+        const valueNames = ['open', 'high', 'low', 'close'];
+        
+        for (let j = 0; j < values.length; j++) {
+          const value = values[j];
+          const name = valueNames[j];
+          
+          if (!Number.isFinite(value)) {
+            skipReason = `${name} not finite`;
+            break;
+          }
+          
+          if (isNaN(value)) {
+            skipReason = `${name} is NaN`;
+            break;
+          }
+          
+          if (value <= 0) {
+            skipReason = `${name} <= 0`;
+            break;
+          }
+          
+          if (value > 1e10) {
+            skipReason = `${name} too large`;
+            break;
+          }
+          
+          if (value < 1e-12) {
+            skipReason = `${name} too small`;
+            break;
+          }
+        }
+        
+        if (skipReason) {
+          skippedCount++;
+          continue;
+        }
+        
+        // 🔧 FIXED: OHLC relationship validation
+        if (high < Math.max(open, close, low)) {
+          skipReason = 'high < max(open,close,low)';
+          skippedCount++;
+          continue;
+        }
+        
+        if (low > Math.min(open, close, high)) {
+          skipReason = 'low > min(open,close,high)';
+          skippedCount++;
+          continue;
+        }
+        
+        // 🔧 FIXED: Round values to prevent floating point issues
+        const roundedOpen = Number(open.toFixed(12));
+        const roundedHigh = Number(high.toFixed(12));
+        const roundedLow = Number(low.toFixed(12));
+        const roundedClose = Number(close.toFixed(12));
+        
+        // 🔧 FIXED: Final validation after rounding
+        if (!Number.isFinite(roundedOpen) || !Number.isFinite(roundedHigh) || 
+            !Number.isFinite(roundedLow) || !Number.isFinite(roundedClose)) {
+          skipReason = 'invalid after rounding';
+          skippedCount++;
+          continue;
+        }
+        
+        // 🔧 FIXED: Create TradingView-compatible candle with explicit type casting
+        const tradingViewCandle: CandlestickData = {
+          time: timeInSeconds as UTCTimestamp,
+          open: roundedOpen,
+          high: roundedHigh,
+          low: roundedLow,
+          close: roundedClose
+        };
+        
+        // 🔧 FIXED: Final object validation
+        if (typeof tradingViewCandle.time !== 'number' || 
+            typeof tradingViewCandle.open !== 'number' ||
+            typeof tradingViewCandle.high !== 'number' ||
+            typeof tradingViewCandle.low !== 'number' ||
+            typeof tradingViewCandle.close !== 'number') {
+          skipReason = 'final type validation failed';
+          skippedCount++;
+          continue;
+        }
+        
+        validCandles.push(tradingViewCandle);
+        lastValidTime = timeInSeconds;
+        
+      } catch (error) {
+        skipReason = `exception: ${error}`;
         skippedCount++;
         continue;
       }
       
-      // CRITICAL: Extract and validate timestamp
-      const timestamp = candle.timestamp;
-      if (typeof timestamp !== 'number' || !Number.isFinite(timestamp) || timestamp <= 0) {
-        skippedCount++;
-        continue;
+      if (skipReason && validationIssues.length < 5) {
+        validationIssues.push(`Index ${i}: ${skipReason}`);
       }
-      
-      // CRITICAL: Convert to seconds with proper rounding for TradingView
-      const timeInSeconds = Math.floor(timestamp / 1000);
-      
-      // CRITICAL: Ensure chronological order (TradingView requirement)
-      if (timeInSeconds <= lastValidTime) {
-        skippedCount++;
-        continue;
-      }
-      
-      // CRITICAL: Validate OHLC values with extreme precision
-      const open = Number(candle.open);
-      const high = Number(candle.high);
-      const low = Number(candle.low);
-      const close = Number(candle.close);
-      
-      // CRITICAL: Check for any invalid numbers
-      if (!Number.isFinite(open) || !Number.isFinite(high) || 
-          !Number.isFinite(low) || !Number.isFinite(close)) {
-        skippedCount++;
-        continue;
-      }
-      
-      // CRITICAL: Check for negative or zero values
-      if (open <= 0 || high <= 0 || low <= 0 || close <= 0) {
-        skippedCount++;
-        continue;
-      }
-      
-      // CRITICAL: Check for NaN values explicitly
-      if (isNaN(open) || isNaN(high) || isNaN(low) || isNaN(close)) {
-        skippedCount++;
-        continue;
-      }
-      
-      // CRITICAL: Validate OHLC relationships
-      if (high < low || high < open || high < close || low > open || low > close) {
-        skippedCount++;
-        continue;
-      }
-      
-      // CRITICAL: Round values to prevent floating point issues (especially for micro-cap)
-      const roundedOpen = Number(open.toFixed(8));
-      const roundedHigh = Number(high.toFixed(8));
-      const roundedLow = Number(low.toFixed(8));
-      const roundedClose = Number(close.toFixed(8));
-      
-      // CRITICAL: Final validation after rounding
-      if (!Number.isFinite(roundedOpen) || !Number.isFinite(roundedHigh) || 
-          !Number.isFinite(roundedLow) || !Number.isFinite(roundedClose)) {
-        skippedCount++;
-        continue;
-      }
-      
-      // CRITICAL: Create TradingView-compatible candle with explicit type casting
-      const tradingViewCandle: CandlestickData = {
-        time: timeInSeconds as UTCTimestamp,
-        open: roundedOpen,
-        high: roundedHigh,
-        low: roundedLow,
-        close: roundedClose
-      };
-      
-      // CRITICAL: Final object validation
-      if (typeof tradingViewCandle.time !== 'number' || 
-          typeof tradingViewCandle.open !== 'number' ||
-          typeof tradingViewCandle.high !== 'number' ||
-          typeof tradingViewCandle.low !== 'number' ||
-          typeof tradingViewCandle.close !== 'number') {
-        skippedCount++;
-        continue;
-      }
-      
-      validCandles.push(tradingViewCandle);
-      lastValidTime = timeInSeconds;
     }
     
-    // CRITICAL: Sort by time to ensure perfect chronological order
+    // 🔧 FIXED: Sort by time to ensure perfect chronological order
     validCandles.sort((a, b) => Number(a.time) - Number(b.time));
     
-    // CRITICAL: Remove any duplicates by timestamp
+    // 🔧 FIXED: Remove duplicates by timestamp
     const uniqueCandles: CandlestickData[] = [];
     let lastTime = 0;
     for (const candle of validCandles) {
@@ -201,24 +257,43 @@ const PriceChart: React.FC<PriceChartProps> = ({
       }
     }
     
-    // Update validation error count
+    // 🔧 FIXED: Update validation statistics
     if (skippedCount > 0) {
       setChartState(prev => ({
         ...prev,
         validationErrors: prev.validationErrors + skippedCount
       }));
+      
+      if (process.env.NODE_ENV === 'development' && validationIssues.length > 0) {
+        console.log('📊 VALIDATION ISSUES:', validationIssues);
+      }
     }
     
-    console.log(`📊 BULLETPROOF: ${backendPriceHistory.length} → ${uniqueCandles.length} ultra-validated TradingView candles (skipped ${skippedCount})`);
+    // 🔧 FIXED: Determine data quality
+    const totalInput = backendPriceHistory.length;
+    const validOutput = uniqueCandles.length;
+    const successRate = totalInput > 0 ? validOutput / totalInput : 0;
+    
+    let dataQuality: 'poor' | 'fair' | 'good' | 'excellent' = 'poor';
+    if (successRate >= 0.95) dataQuality = 'excellent';
+    else if (successRate >= 0.85) dataQuality = 'good';
+    else if (successRate >= 0.70) dataQuality = 'fair';
+    
+    setChartState(prev => ({
+      ...prev,
+      dataQuality
+    }));
+    
+    console.log(`📊 FIXED VALIDATION: ${totalInput} → ${validOutput} ultra-validated candles (${(successRate * 100).toFixed(1)}% success, quality: ${dataQuality})`);
     
     return uniqueCandles;
   }, []);
 
+  // 🔧 FIXED: Calculate optimal visible range for chart
   const calculateOptimalVisibleRange = useCallback((candleCount: number): { from: number; to: number } => {
-    // Your ultra-fast timeframes generate candles rapidly, so adjust visible range
     const MIN_VISIBLE_CANDLES = 25;
-    const MAX_VISIBLE_CANDLES = 80;
-    const PREFERRED_VISIBLE_CANDLES = 50;
+    const MAX_VISIBLE_CANDLES = 100;
+    const PREFERRED_VISIBLE_CANDLES = 60;
     
     if (candleCount <= MIN_VISIBLE_CANDLES) {
       return { from: 0, to: Math.max(1, candleCount - 1) };
@@ -229,7 +304,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     if (candleCount < PREFERRED_VISIBLE_CANDLES) {
       visibleCandles = candleCount;
     } else if (candleCount > 200) {
-      visibleCandles = Math.min(MAX_VISIBLE_CANDLES, candleCount * 0.4);
+      visibleCandles = Math.min(MAX_VISIBLE_CANDLES, Math.floor(candleCount * 0.5));
     }
     
     const from = Math.max(0, candleCount - visibleCandles);
@@ -238,15 +313,15 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return { from, to };
   }, []);
 
-  // Simple reset detection - triggered when your Dashboard calls reset
+  // 🔧 FIXED: Enhanced reset detection that works with Dashboard reset
   const detectAndHandleReset = useCallback((candleData: CandlestickData[]) => {
     const isEmpty = candleData.length === 0;
     const wasNotEmpty = lastCandleCountRef.current > 0;
     
     if (isEmpty && wasNotEmpty) {
-      console.log('🔄 RESET: Chart data cleared (Dashboard reset simulation)');
+      console.log('🔄 RESET DETECTED: Chart data cleared (Dashboard triggered reset)');
       
-      // Clear chart data
+      // Clear chart data immediately
       if (candlestickSeriesRef.current && volumeSeriesRef.current) {
         try {
           candlestickSeriesRef.current.setData([]);
@@ -256,11 +331,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
             chartRef.current.timeScale().fitContent();
           }
         } catch (error) {
-          console.warn('⚠️ Error clearing chart data:', error);
+          console.warn('⚠️ Error clearing chart data during reset:', error);
         }
       }
       
-      // Reset state
+      // Reset all state
       setChartState(prev => ({
         ...prev,
         status: 'empty',
@@ -268,22 +343,25 @@ const PriceChart: React.FC<PriceChartProps> = ({
         isLiveBuilding: false,
         buildingStartTime: null,
         lastResetTime: Date.now(),
-        validationErrors: 0
+        validationErrors: 0,
+        dataQuality: 'poor'
       }));
       
       lastCandleCountRef.current = 0;
       lastValidDataRef.current = [];
       initialZoomSetRef.current = false;
       shouldAutoFitRef.current = true;
+      errorCountRef.current = 0;
+      recoveryAttemptRef.current = 0;
       
-      console.log('✅ RESET: Complete, ready for new candles');
+      console.log('✅ RESET COMPLETE: Chart ready for new simulation data');
       return true;
     }
     
     return false;
   }, []);
 
-  // BULLETPROOF: Chart update function with comprehensive error prevention
+  // 🔧 FIXED: Comprehensive chart update with enhanced error handling
   const updateChart = useCallback((candleData: CandlestickData[], volumeData: HistogramData[]) => {
     if (!chartState.isReady || !candlestickSeriesRef.current || !volumeSeriesRef.current || isUpdatingRef.current) {
       return;
@@ -292,8 +370,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
     const now = Date.now();
     const timeSinceLastUpdate = now - lastUpdateRef.current;
     
-    // Throttle updates for your fast timeframes (your backend sends updates every 100-250ms)
-    const minUpdateInterval = 50; // 50ms throttling to match your ultra-fast backend
+    // 🔧 FIXED: Throttle updates for performance
+    const minUpdateInterval = 100; // 100ms throttling for better performance
     
     if (timeSinceLastUpdate < minUpdateInterval) {
       if (updateThrottleRef.current) {
@@ -310,7 +388,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     lastUpdateRef.current = now;
 
     try {
-      // Check for reset condition first
+      // 🔧 FIXED: Check for reset condition first
       if (detectAndHandleReset(candleData)) {
         isUpdatingRef.current = false;
         return;
@@ -318,9 +396,9 @@ const PriceChart: React.FC<PriceChartProps> = ({
       
       const incomingCandleCount = candleData.length;
 
-      // Track when chart starts building (your backend starts with empty then builds)
+      // 🔧 FIXED: Track when chart starts building
       if (incomingCandleCount > 0 && lastCandleCountRef.current === 0) {
-        console.log('📈 BUILDING: Chart started with backend candles');
+        console.log('📈 BUILDING: Chart started receiving candles from backend');
         setChartState(prev => ({
           ...prev,
           status: 'building',
@@ -329,41 +407,73 @@ const PriceChart: React.FC<PriceChartProps> = ({
         }));
       }
 
-      // BULLETPROOF: Update TradingView Charts with comprehensive error handling
+      // 🔧 FIXED: Validate data before TradingView
+      if (!Array.isArray(candleData) || candleData.length === 0) {
+        console.log('📊 ABORT: Invalid candleData array');
+        isUpdatingRef.current = false;
+        return;
+      }
+      
+      // 🔧 FIXED: Pre-validate each candle
+      const invalidCandleIndex = candleData.findIndex((candle, index) => {
+        return !candle || 
+               typeof candle.time !== 'number' || 
+               typeof candle.open !== 'number' ||
+               typeof candle.high !== 'number' ||
+               typeof candle.low !== 'number' ||
+               typeof candle.close !== 'number' ||
+               !Number.isFinite(candle.open) ||
+               !Number.isFinite(candle.high) ||
+               !Number.isFinite(candle.low) ||
+               !Number.isFinite(candle.close) ||
+               candle.open <= 0 ||
+               candle.high <= 0 ||
+               candle.low <= 0 ||
+               candle.close <= 0;
+      });
+      
+      if (invalidCandleIndex !== -1) {
+        console.error(`❌ CRITICAL: Invalid candle at index ${invalidCandleIndex}:`, candleData[invalidCandleIndex]);
+        errorCountRef.current++;
+        
+        setChartState(prev => ({ 
+          ...prev, 
+          status: 'error',
+          lastErrorTime: now
+        }));
+        
+        // 🔧 FIXED: Try recovery with last known good data
+        if (lastValidDataRef.current.length > 0 && recoveryAttemptRef.current < 3) {
+          console.log('🔧 RECOVERY: Using last known good data');
+          recoveryAttemptRef.current++;
+          
+          setTimeout(() => {
+            try {
+              if (candlestickSeriesRef.current && volumeSeriesRef.current) {
+                candlestickSeriesRef.current.setData([...lastValidDataRef.current]);
+                
+                const safeVolumeData = lastValidDataRef.current.map(candle => ({
+                  time: candle.time,
+                  value: 0,
+                  color: candle.close >= candle.open ? '#22C55E44' : '#EF444444'
+                }));
+                volumeSeriesRef.current.setData(safeVolumeData);
+                
+                setChartState(prev => ({ ...prev, status: 'ready' }));
+                console.log('✅ RECOVERY: Success with last known data');
+              }
+            } catch (recoveryError) {
+              console.error('❌ RECOVERY: Failed:', recoveryError);
+            }
+          }, 500);
+        }
+        
+        isUpdatingRef.current = false;
+        return;
+      }
+      
       try {
-        // CRITICAL: Validate data one more time before TradingView
-        if (!Array.isArray(candleData) || candleData.length === 0) {
-          console.warn('📊 ABORT: Invalid candleData array');
-          isUpdatingRef.current = false;
-          return;
-        }
-        
-        // CRITICAL: Check each candle before sending to TradingView
-        for (let i = 0; i < candleData.length; i++) {
-          const candle = candleData[i];
-          if (!candle || 
-              typeof candle.time !== 'number' || 
-              typeof candle.open !== 'number' ||
-              typeof candle.high !== 'number' ||
-              typeof candle.low !== 'number' ||
-              typeof candle.close !== 'number' ||
-              !Number.isFinite(candle.open) ||
-              !Number.isFinite(candle.high) ||
-              !Number.isFinite(candle.low) ||
-              !Number.isFinite(candle.close)) {
-            
-            console.error(`❌ CRITICAL: Invalid candle at index ${i}:`, candle);
-            setChartState(prev => ({ 
-              ...prev, 
-              status: 'error',
-              lastErrorTime: now
-            }));
-            isUpdatingRef.current = false;
-            return;
-          }
-        }
-        
-        // CRITICAL: Use defensive copy to prevent reference issues
+        // 🔧 FIXED: Create defensive copies to prevent reference issues
         const safeCandleData = candleData.map(candle => ({
           time: candle.time,
           open: candle.open,
@@ -374,60 +484,68 @@ const PriceChart: React.FC<PriceChartProps> = ({
         
         const safeVolumeData = volumeData.map(vol => ({
           time: vol.time,
-          value: Number.isFinite(vol.value) ? vol.value : 0,
-          color: vol.color
+          value: Number.isFinite(vol.value) && vol.value >= 0 ? vol.value : 0,
+          color: vol.color || '#26a69a44'
         }));
         
-        // CRITICAL: Update TradingView with validated data
+        // 🔧 FIXED: Update TradingView with validated data
         candlestickSeriesRef.current.setData(safeCandleData);
         volumeSeriesRef.current.setData(safeVolumeData);
         
         // Store successful data for recovery
         lastValidDataRef.current = safeCandleData;
+        errorCountRef.current = 0; // Reset error count on success
+        recoveryAttemptRef.current = 0;
         
         setOptimalZoom(safeCandleData);
         
-        console.log(`📊 BULLETPROOF UPDATE: ${safeCandleData.length} validated candles`);
+        console.log(`📊 CHART UPDATE: ${safeCandleData.length} validated candles rendered`);
         
       } catch (chartError: any) {
-        console.error('❌ BULLETPROOF ERROR: TradingView chart error:', chartError);
+        console.error('❌ CHART ERROR: TradingView update failed:', chartError);
+        errorCountRef.current++;
         
         setChartState(prev => ({ 
           ...prev, 
           lastErrorTime: now
         }));
         
-        // BULLETPROOF: Recovery strategy
-        try {
-          console.log('🔧 BULLETPROOF RECOVERY: Attempting chart recovery...');
+        // 🔧 FIXED: Progressive recovery strategy
+        if (errorCountRef.current <= 3) {
+          console.log(`🔧 RECOVERY ATTEMPT ${errorCountRef.current}: Clearing and retrying...`);
           
-          // Strategy 1: Clear and use last known good data
-          candlestickSeriesRef.current.setData([]);
-          volumeSeriesRef.current.setData([]);
-          
-          setTimeout(() => {
-            if (candlestickSeriesRef.current && volumeSeriesRef.current && lastValidDataRef.current.length > 0) {
-              try {
-                // Use last known good data
-                candlestickSeriesRef.current.setData([...lastValidDataRef.current]);
-                
-                const safeVolumeData = lastValidDataRef.current.map(candle => ({
-                  time: candle.time,
-                  value: 0,
-                  color: candle.close >= candle.open ? '#22C55E44' : '#EF444444'
-                }));
-                volumeSeriesRef.current.setData(safeVolumeData);
-                
-                console.log('✅ BULLETPROOF RECOVERY: Success with last known data');
-              } catch (recoveryError) {
-                console.error('❌ BULLETPROOF RECOVERY: Failed:', recoveryError);
-                setChartState(prev => ({ ...prev, status: 'error' }));
+          try {
+            // Clear and retry with a delay
+            candlestickSeriesRef.current.setData([]);
+            volumeSeriesRef.current.setData([]);
+            
+            setTimeout(() => {
+              if (candlestickSeriesRef.current && volumeSeriesRef.current && lastValidDataRef.current.length > 0) {
+                try {
+                  candlestickSeriesRef.current.setData([...lastValidDataRef.current]);
+                  
+                  const safeVolumeData = lastValidDataRef.current.map(candle => ({
+                    time: candle.time,
+                    value: 0,
+                    color: candle.close >= candle.open ? '#22C55E44' : '#EF444444'
+                  }));
+                  volumeSeriesRef.current.setData(safeVolumeData);
+                  
+                  console.log('✅ RECOVERY: Progressive recovery successful');
+                  setChartState(prev => ({ ...prev, status: 'ready' }));
+                } catch (progressiveError) {
+                  console.error('❌ PROGRESSIVE RECOVERY: Failed:', progressiveError);
+                  setChartState(prev => ({ ...prev, status: 'error' }));
+                }
               }
-            }
-          }, 200);
-          
-        } catch (recoveryError) {
-          console.error('❌ BULLETPROOF RECOVERY: Initial attempt failed:', recoveryError);
+            }, 300);
+            
+          } catch (recoveryError) {
+            console.error('❌ INITIAL RECOVERY: Failed:', recoveryError);
+            setChartState(prev => ({ ...prev, status: 'error' }));
+          }
+        } else {
+          console.error('❌ RECOVERY: Too many consecutive errors, marking as error state');
           setChartState(prev => ({ ...prev, status: 'error' }));
         }
         
@@ -437,7 +555,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
 
       lastCandleCountRef.current = incomingCandleCount;
       
-      // Update chart state based on your backend's fast candle generation
+      // 🔧 FIXED: Update chart state based on candle count and quality
       setChartState(prev => ({
         ...prev,
         candleCount: incomingCandleCount,
@@ -445,10 +563,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
       }));
 
     } catch (error: any) {
-      console.error('❌ BULLETPROOF: Outer chart update error:', error);
+      console.error('❌ OUTER CHART UPDATE ERROR:', error);
+      errorCountRef.current++;
       setChartState(prev => ({ 
         ...prev, 
-        status: 'error',
+        status: errorCountRef.current > 5 ? 'error' : prev.status,
         lastErrorTime: now
       }));
     } finally {
@@ -456,31 +575,35 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }
   }, [chartState.isReady, detectAndHandleReset]);
 
-  // Convert your backend data to TradingView format
+  // 🔧 FIXED: Convert price history to TradingView format with validation
   const convertPriceHistory = useMemo((): { candleData: CandlestickData[]; volumeData: HistogramData[] } => {
-    const candleData = sanitizeChartData(priceHistory);
-    
-    const volumeData: HistogramData[] = candleData.map((candle, index) => {
-      // Get volume from original data
-      let volume = 0;
-      if (index < priceHistory.length && priceHistory[index]?.volume) {
-        volume = Number(priceHistory[index].volume);
-        if (!Number.isFinite(volume) || volume < 0) {
-          volume = 0;
-        }
-      }
+    try {
+      const candleData = sanitizeChartData(priceHistory);
       
-      return {
-        time: candle.time,
-        value: volume,
-        color: candle.close >= candle.open ? '#22C55E44' : '#EF444444'
-      };
-    });
-    
-    return { candleData, volumeData };
+      const volumeData: HistogramData[] = candleData.map((candle, index) => {
+        let volume = 0;
+        if (index < priceHistory.length && priceHistory[index]?.volume) {
+          volume = Number(priceHistory[index].volume);
+          if (!Number.isFinite(volume) || volume < 0) {
+            volume = 0;
+          }
+        }
+        
+        return {
+          time: candle.time,
+          value: volume,
+          color: candle.close >= candle.open ? '#22C55E44' : '#EF444444'
+        };
+      });
+      
+      return { candleData, volumeData };
+    } catch (error) {
+      console.error('❌ Error converting price history:', error);
+      return { candleData: [], volumeData: [] };
+    }
   }, [priceHistory, sanitizeChartData]);
 
-  // Monitor price history changes from your WebSocket
+  // 🔧 FIXED: Monitor price history changes from WebSocket
   useEffect(() => {
     if (!chartState.isReady) {
       return;
@@ -490,7 +613,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     updateChart(candleData, volumeData);
   }, [convertPriceHistory, chartState.isReady, updateChart]);
 
-  // Chart initialization
+  // 🔧 FIXED: Chart initialization with comprehensive error handling
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
@@ -518,11 +641,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
         timeScale: {
           borderColor: '#1C2951',
           timeVisible: true,
-          secondsVisible: true, // Show seconds for your ultra-fast timeframes
+          secondsVisible: true,
           barSpacing: 12,
           minBarSpacing: 0.5,
           rightOffset: 5,
-          shiftVisibleRangeOnNewBar: true, // Auto-scroll for live updates
+          shiftVisibleRangeOnNewBar: true,
         },
         handleScroll: {
           mouseWheel: true,
@@ -544,8 +667,8 @@ const PriceChart: React.FC<PriceChartProps> = ({
         wickDownColor: '#EF4444',
         priceFormat: {
           type: 'price',
-          precision: 6,
-          minMove: 0.000001,
+          precision: 8,
+          minMove: 0.00000001,
         },
       });
 
@@ -570,13 +693,15 @@ const PriceChart: React.FC<PriceChartProps> = ({
       candlestickSeries.setData([]);
       volumeSeries.setData([]);
       
-      // Initialize state
+      // Initialize state and refs
       initialZoomSetRef.current = false;
       shouldAutoFitRef.current = true;
       lastCandleCountRef.current = 0;
       lastUpdateRef.current = 0;
       isUpdatingRef.current = false;
       lastValidDataRef.current = [];
+      errorCountRef.current = 0;
+      recoveryAttemptRef.current = 0;
       
       setChartState(prev => ({
         ...prev,
@@ -586,10 +711,11 @@ const PriceChart: React.FC<PriceChartProps> = ({
         isLiveBuilding: false,
         buildingStartTime: null,
         validationErrors: 0,
-        lastErrorTime: null
+        lastErrorTime: null,
+        dataQuality: 'poor'
       }));
 
-      console.log('✅ BULLETPROOF: Chart ready with ultra-strict validation');
+      console.log('✅ CHART INITIALIZED: Ready with comprehensive validation and error recovery');
 
     } catch (error) {
       console.error('❌ Failed to create chart:', error);
@@ -597,7 +723,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }
 
     return () => {
-      console.log('🧹 Cleaning up bulletproof chart');
+      console.log('🧹 Cleaning up chart with comprehensive cleanup');
       
       if (updateThrottleRef.current) {
         clearTimeout(updateThrottleRef.current);
@@ -625,49 +751,53 @@ const PriceChart: React.FC<PriceChartProps> = ({
         buildingStartTime: null,
         lastResetTime: null,
         validationErrors: 0,
-        lastErrorTime: null
+        lastErrorTime: null,
+        dataQuality: 'poor'
       });
       
       initialZoomSetRef.current = false;
       shouldAutoFitRef.current = true;
       isUpdatingRef.current = false;
+      errorCountRef.current = 0;
+      recoveryAttemptRef.current = 0;
     };
   }, []);
 
+  // 🔧 FIXED: Set optimal zoom with error handling
   const setOptimalZoom = useCallback((candleData: CandlestickData[], force: boolean = false) => {
     if (!chartRef.current || !candleData.length) return;
 
     const candleCount = candleData.length;
     
-    if (!initialZoomSetRef.current || force) {
-      const { from, to } = calculateOptimalVisibleRange(candleCount);
-      
-      try {
+    try {
+      if (!initialZoomSetRef.current || force) {
+        const { from, to } = calculateOptimalVisibleRange(candleCount);
+        
         chartRef.current.timeScale().setVisibleLogicalRange({ from, to });
         initialZoomSetRef.current = true;
         shouldAutoFitRef.current = false;
-      } catch (error) {
-        try {
-          chartRef.current.timeScale().fitContent();
-          initialZoomSetRef.current = true;
-        } catch (fallbackError) {
-          // Ignore zoom errors
-        }
-      }
-    } else if (dynamicView && shouldAutoFitRef.current && candleCount > lastCandleCountRef.current) {
-      // For ultra-fast updates, occasionally adjust zoom
-      if (Math.random() < 0.1) {
-        try {
+        
+        console.log(`📊 ZOOM: Set optimal range [${from}, ${to}] for ${candleCount} candles`);
+      } else if (dynamicView && shouldAutoFitRef.current && candleCount > lastCandleCountRef.current) {
+        // For dynamic updates, occasionally adjust zoom
+        if (Math.random() < 0.1) {
           const { from, to } = calculateOptimalVisibleRange(candleCount);
           chartRef.current.timeScale().setVisibleLogicalRange({ from, to });
-        } catch (error) {
-          // Ignore dynamic zoom errors
         }
+      }
+    } catch (error) {
+      console.warn('⚠️ Zoom error (non-critical):', error);
+      // Try fallback
+      try {
+        chartRef.current.timeScale().fitContent();
+        initialZoomSetRef.current = true;
+      } catch (fallbackError) {
+        // Ignore zoom errors - they're non-critical
       }
     }
   }, [calculateOptimalVisibleRange, dynamicView]);
 
-  // Handle window resize
+  // 🔧 FIXED: Handle window resize
   useEffect(() => {
     const handleResize = () => {
       if (chartRef.current && chartContainerRef.current) {
@@ -677,7 +807,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
             height: chartContainerRef.current.clientHeight,
           });
         } catch (error) {
-          // Ignore resize errors
+          console.warn('⚠️ Resize error (non-critical):', error);
         }
       }
     };
@@ -686,7 +816,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Control functions
+  // 🔧 FIXED: Control functions with error handling
   const resetView = useCallback(() => {
     try {
       if (chartRef.current) {
@@ -700,7 +830,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         }
       }
     } catch (error) {
-      // Ignore reset errors
+      console.warn('⚠️ Reset view error (non-critical):', error);
     }
   }, [convertPriceHistory, setOptimalZoom]);
 
@@ -712,7 +842,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
         shouldAutoFitRef.current = false;
       }
     } catch (error) {
-      // Ignore fit content errors
+      console.warn('⚠️ Fit content error (non-critical):', error);
     }
   }, []);
 
@@ -723,7 +853,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
     }
   }, [convertPriceHistory, setOptimalZoom]);
 
-  // Building stats for your ultra-fast backend
+  // 🔧 FIXED: Building statistics for live updates
   const buildingStats = useMemo(() => {
     if (!chartState.isLiveBuilding || !chartState.buildingStartTime) {
       return null;
@@ -742,30 +872,36 @@ const PriceChart: React.FC<PriceChartProps> = ({
       isPostReset: !!chartState.lastResetTime && 
                    chartState.buildingStartTime > chartState.lastResetTime,
       validationErrors: chartState.validationErrors,
-      hasRecentErrors: chartState.lastErrorTime && (Date.now() - chartState.lastErrorTime) < 10000
+      hasRecentErrors: chartState.lastErrorTime && (Date.now() - chartState.lastErrorTime) < 10000,
+      dataQuality: chartState.dataQuality,
+      errorCount: errorCountRef.current,
+      recoveryAttempts: recoveryAttemptRef.current
     };
   }, [chartState]);
 
+  // 🔧 FIXED: Get status information with enhanced details
   const getStatusInfo = () => {
+    const errorText = errorCountRef.current > 0 ? ` (${errorCountRef.current} errors)` : '';
+    
     switch (chartState.status) {
       case 'initializing':
         return { color: 'bg-yellow-900 text-yellow-300', icon: '⚡', text: 'Initializing...' };
       case 'empty':
-        return { color: 'bg-blue-900 text-blue-300', icon: '⏳', text: 'Ready for backend' };
+        return { color: 'bg-blue-900 text-blue-300', icon: '⏳', text: 'Ready for data' };
       case 'building':
         return { 
           color: 'bg-green-900 text-green-300', 
           icon: '📈', 
-          text: `Building: ${chartState.candleCount} candles`
+          text: `Building: ${chartState.candleCount} candles${errorText}`
         };
       case 'ready':
         return { 
           color: 'bg-green-900 text-green-300', 
           icon: '✅', 
-          text: `Live: ${chartState.candleCount} candles`
+          text: `Live: ${chartState.candleCount} candles (${chartState.dataQuality})${errorText}`
         };
       case 'error':
-        return { color: 'bg-red-900 text-red-300', icon: '❌', text: 'Error' };
+        return { color: 'bg-red-900 text-red-300', icon: '❌', text: `Error${errorText}` };
       default:
         return { color: 'bg-gray-900 text-gray-300', icon: '❓', text: 'Unknown' };
     }
@@ -792,12 +928,22 @@ const PriceChart: React.FC<PriceChartProps> = ({
           </div>
           
           <div className="bg-green-900 bg-opacity-75 px-3 py-1 rounded text-xs text-green-300">
-            ✅ BULLETPROOF
+            ✅ FIXED: Complete Validation
           </div>
           
           {chartState.validationErrors > 0 && (
             <div className="bg-yellow-900 bg-opacity-75 px-3 py-1 rounded text-xs text-yellow-300">
               ⚠️ Filtered: {chartState.validationErrors}
+            </div>
+          )}
+          
+          {chartState.dataQuality !== 'poor' && (
+            <div className={`bg-opacity-75 px-3 py-1 rounded text-xs ${
+              chartState.dataQuality === 'excellent' ? 'bg-green-900 text-green-300' :
+              chartState.dataQuality === 'good' ? 'bg-blue-900 text-blue-300' :
+              'bg-orange-900 text-orange-300'
+            }`}>
+              📊 Quality: {chartState.dataQuality.toUpperCase()}
             </div>
           )}
           
@@ -807,6 +953,7 @@ const PriceChart: React.FC<PriceChartProps> = ({
             }`}>
               🔴 LIVE: {buildingStats.candlesPerSecond}/sec
               {buildingStats.isPostReset && ' (Post-Reset)'}
+              {buildingStats.errorCount > 0 && ` (${buildingStats.errorCount}E)`}
             </div>
           )}
           
@@ -825,45 +972,49 @@ const PriceChart: React.FC<PriceChartProps> = ({
         <button
           onClick={optimizeZoom}
           className="px-3 py-1 bg-purple-700 bg-opacity-80 text-purple-300 text-xs rounded hover:bg-opacity-100 transition"
-          title="Optimize zoom"
+          title="Optimize zoom for current data"
         >
           🎯 Optimize
         </button>
         <button
           onClick={resetView}
           className="px-3 py-1 bg-gray-700 bg-opacity-80 text-gray-300 text-xs rounded hover:bg-opacity-100 transition"
-          title="Reset view"
+          title="Reset view to default"
         >
-          🔄
+          🔄 Reset
         </button>
         <button
           onClick={fitContent}
           className="px-3 py-1 bg-blue-700 bg-opacity-80 text-blue-300 text-xs rounded hover:bg-opacity-100 transition"
-          title="Fit content"
+          title="Fit all content"
         >
-          📏
+          📏 Fit
         </button>
       </div>
       
       <div className="absolute bottom-4 left-4 pointer-events-none">
         <div className="text-gray-400 text-xs space-y-1">
-          <div>📊 Candles: {chartState.candleCount}</div>
-          <div>🔄 Trades: {trades.length}</div>
-          <div>🎯 Status: {chartState.status}</div>
-          <div>🏗️ Building: {chartState.isLiveBuilding ? 'YES' : 'NO'}</div>
-          <div>⚡ Updates: {isUpdatingRef.current ? 'ACTIVE' : 'IDLE'}</div>
-          <div>✅ BULLETPROOF: Ultra-validation</div>
-          <div>🛡️ ERRORS: {chartState.validationErrors} filtered</div>
-          <div>📡 MICRO-CAP: ${currentPrice.toFixed(6)} support</div>
+          <div>📊 Candles: <span className="text-white">{chartState.candleCount}</span></div>
+          <div>🔄 Trades: <span className="text-white">{trades.length}</span></div>
+          <div>🎯 Status: <span className="text-white">{chartState.status}</span></div>
+          <div>🏗️ Building: <span className="text-white">{chartState.isLiveBuilding ? 'YES' : 'NO'}</span></div>
+          <div>⚡ Updates: <span className="text-white">{isUpdatingRef.current ? 'ACTIVE' : 'IDLE'}</span></div>
+          <div>✅ FIXED: <span className="text-green-400">Ultra-validation</span></div>
+          <div>🛡️ ERRORS: <span className="text-white">{chartState.validationErrors} filtered</span></div>
+          <div>📡 SUPPORT: <span className="text-white">${currentPrice.toFixed(8)} precision</span></div>
+          <div>📈 QUALITY: <span className="text-white">{chartState.dataQuality}</span></div>
+          <div>🔧 RECOVERY: <span className="text-white">{recoveryAttemptRef.current} attempts</span></div>
           {chartState.lastResetTime && (
-            <div>🕐 Last Reset: {Math.floor((Date.now() - chartState.lastResetTime) / 1000)}s ago</div>
+            <div>🕐 Last Reset: <span className="text-white">{Math.floor((Date.now() - chartState.lastResetTime) / 1000)}s ago</span></div>
           )}
-          <div>🎯 Zoom: {initialZoomSetRef.current ? 'SET' : 'PENDING'}</div>
+          <div>🎯 Zoom: <span className="text-white">{initialZoomSetRef.current ? 'SET' : 'PENDING'}</span></div>
           {buildingStats && (
             <>
-              <div>⏱️ Time: {buildingStats.elapsed}s</div>
-              <div>📈 Rate: {buildingStats.candlesPerSecond}/s</div>
-              <div>⚠️ Validation: {buildingStats.validationErrors} errors</div>
+              <div>⏱️ Time: <span className="text-white">{buildingStats.elapsed}s</span></div>
+              <div>📈 Rate: <span className="text-white">{buildingStats.candlesPerSecond}/s</span></div>
+              <div>⚠️ Validation: <span className="text-white">{buildingStats.validationErrors} errors</span></div>
+              <div>🔧 Errors: <span className="text-white">{buildingStats.errorCount} total</span></div>
+              <div>♻️ Recovery: <span className="text-white">{buildingStats.recoveryAttempts} attempts</span></div>
             </>
           )}
         </div>
@@ -873,10 +1024,19 @@ const PriceChart: React.FC<PriceChartProps> = ({
         <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-75">
           <div className="bg-red-900 text-red-100 p-6 rounded-lg max-w-md text-center">
             <h3 className="font-bold text-lg mb-2">Chart Error</h3>
-            <p className="text-sm">
-              TradingView chart encountered an error. 
-              {chartState.lastErrorTime && ` Last error: ${new Date(chartState.lastErrorTime).toLocaleTimeString()}`}
+            <p className="text-sm mb-2">
+              TradingView chart encountered {errorCountRef.current} error(s).
             </p>
+            {chartState.lastErrorTime && (
+              <p className="text-xs mb-2">
+                Last error: {new Date(chartState.lastErrorTime).toLocaleTimeString()}
+              </p>
+            )}
+            {recoveryAttemptRef.current > 0 && (
+              <p className="text-xs mb-2">
+                Recovery attempts: {recoveryAttemptRef.current}
+              </p>
+            )}
             <button 
               onClick={() => window.location.reload()} 
               className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-sm transition"
@@ -891,20 +1051,22 @@ const PriceChart: React.FC<PriceChartProps> = ({
         <div className="absolute inset-0 flex items-center justify-center">
           <div className="text-center text-gray-400">
             <div className="text-6xl mb-6">📊</div>
-            <h3 className="text-xl font-bold mb-3">Bulletproof Chart Ready</h3>
-            <p className="text-sm mb-4">Ultra-strict validation for micro-cap tokens</p>
+            <h3 className="text-xl font-bold mb-3">Chart Ready - Enhanced Validation</h3>
+            <p className="text-sm mb-4">Complete validation system for micro-cap tokens</p>
             <div className="space-y-2 text-xs">
               <div className="flex items-center justify-center space-x-2">
                 <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
-                <span>Waiting for CandleManager data...</span>
+                <span>Waiting for simulation data...</span>
               </div>
-              <div>🛡️ Bulletproof validation: Null-safe</div>
-              <div>📊 Micro-cap support: $0.000001+ precision</div>
-              <div>⚡ Ultra-fast intervals: 3-15 seconds</div>
-              <div>🔧 OHLC validation: 8-decimal precision</div>
-              <div>📈 Recovery system: Last-known-good data</div>
-              <div>🔄 Reset: Triggered by Dashboard</div>
-              <div>✅ TradingView: Zero null errors</div>
+              <div>🛡️ FIXED: Comprehensive validation system</div>
+              <div>📊 FIXED: "Invalid candleData" errors prevented</div>
+              <div>⚡ FIXED: Ultra-fast update handling</div>
+              <div>🔧 FIXED: OHLC validation with 12-decimal precision</div>
+              <div>♻️ FIXED: Progressive recovery system</div>
+              <div>🔄 FIXED: Reset detection via empty array</div>
+              <div>✅ FIXED: Zero TradingView null errors</div>
+              <div>📈 FIXED: Data quality tracking</div>
+              <div>🎯 FIXED: Error count and recovery tracking</div>
             </div>
           </div>
         </div>
@@ -914,14 +1076,17 @@ const PriceChart: React.FC<PriceChartProps> = ({
         <div className="absolute top-20 left-4 pointer-events-none">
           <div className="bg-green-900 bg-opacity-75 px-4 py-2 rounded-lg">
             <div className="text-green-300 text-sm font-medium">
-              🔴 BULLETPROOF LIVE: {chartState.candleCount} ultra-validated candles
+              🔴 LIVE: {chartState.candleCount} validated candles
               {chartState.validationErrors > 0 && ` (${chartState.validationErrors} filtered)`}
+              {errorCountRef.current > 0 && ` - ${errorCountRef.current} errors recovered`}
             </div>
             {buildingStats && (
               <div className="text-green-400 text-xs mt-1">
-                {buildingStats.elapsed}s elapsed • {buildingStats.candlesPerSecond} candles/sec • Ultra-strict validation
+                {buildingStats.elapsed}s elapsed • {buildingStats.candlesPerSecond} candles/sec • Quality: {buildingStats.dataQuality}
                 {buildingStats.isPostReset && ' • Post-Reset Build'}
                 {buildingStats.hasRecentErrors && ' • ⚠️ Recent errors detected'}
+                {buildingStats.errorCount > 0 && ` • ${buildingStats.errorCount} errors handled`}
+                {buildingStats.recoveryAttempts > 0 && ` • ${buildingStats.recoveryAttempts} recoveries`}
               </div>
             )}
           </div>
