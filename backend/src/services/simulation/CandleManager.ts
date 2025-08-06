@@ -17,6 +17,7 @@ export class CandleManager {
   private instanceId: string;
   private isDestroyed: boolean = false;
   private isInitialized: boolean = false;
+  private createdFrom: string = 'unknown'; // Track creation source
   
   private isResetting: boolean = false;
   private resetPromise: Promise<void> | null = null;
@@ -40,11 +41,22 @@ export class CandleManager {
     this.instanceId = `${simulationId}-${++CandleManager.globalInstanceCounter}`;
     this.candleInterval = Math.min(candleInterval, 15000);
     
+    // 🚨🚨🚨 DIAGNOSTIC LOGGING: Capture exact creation source
+    const stack = new Error().stack;
+    const caller = stack?.split('\n')[3]?.trim() || 'unknown'; // Skip constructor and Error
+    this.createdFrom = caller;
+    
+    console.log(`🚨🚨🚨 CANDLEMANAGER CREATED: ${this.instanceId} | Interval: ${this.candleInterval}ms | Called from: ${caller}`);
     console.log(`🕯️ SINGLETON: CandleManager CREATED: ${this.instanceId} with ${this.candleInterval/1000}s intervals`);
   }
   
   // 🚨 CRITICAL FIX: Enhanced async singleton getInstance with atomic creation and strict validation
   static async getInstance(simulationId: string, candleInterval: number = 10000): Promise<CandleManager> {
+    // 🔍🔍🔍 DIAGNOSTIC LOGGING: Capture all getInstance calls
+    const stack = new Error().stack;
+    const caller = stack?.split('\n')[2]?.trim() || 'unknown';
+    console.log(`🔍🔍🔍 GETINSTANCE CALLED: ${simulationId} | Interval: ${candleInterval}ms | From: ${caller}`);
+    
     // CRITICAL: Set atomic creation lock IMMEDIATELY to prevent race conditions
     if (CandleManager.creationLocks.get(simulationId)) {
       console.log(`🔒 SINGLETON: Creation locked for ${simulationId}, waiting for completion...`);
@@ -172,6 +184,24 @@ export class CandleManager {
     return instance;
   }
   
+  // 🚨 CRITICAL DIAGNOSTIC: Static method to detect bypass constructor calls
+  static detectBypassCreation(): void {
+    // Override the constructor to catch any direct instantiation attempts
+    const originalConstructor = CandleManager.prototype.constructor;
+    const OverriddenCandleManager = class extends CandleManager {
+      constructor(simulationId: string, candleInterval: number = 10000) {
+        const stack = new Error().stack;
+        const caller = stack?.split('\n')[2]?.trim() || 'unknown';
+        console.log(`🚨🚨🚨 BYPASS DETECTED: Direct CandleManager constructor called from: ${caller}`);
+        console.log(`🚨🚨🚨 FULL STACK TRACE:`, stack);
+        super(simulationId, candleInterval);
+      }
+    };
+    
+    // Replace the constructor in the global scope (if exported directly)
+    (global as any).CandleManager = OverriddenCandleManager;
+  }
+  
   // 🚨 CRITICAL FIX: Enhanced cleanup method with comprehensive destruction and timeout
   static async cleanup(simulationId: string): Promise<void> {
     console.log(`🧹 SINGLETON: Starting comprehensive cleanup for ${simulationId}`);
@@ -199,6 +229,7 @@ export class CandleManager {
     const instance = CandleManager.instances.get(simulationId);
     if (instance) {
       console.log(`🧹 SINGLETON: Cleaning up CandleManager for ${simulationId} (instance: ${instance.instanceId})`);
+      console.log(`🧹 CREATED FROM: ${instance.createdFrom}`);
       
       // CRITICAL: Mark as destroyed first to prevent reuse
       instance.isDestroyed = true;
@@ -229,6 +260,11 @@ export class CandleManager {
   // 🚨 CRITICAL FIX: Force cleanup all instances with timeout protection
   static async cleanupAll(): Promise<void> {
     console.log(`🧹 SINGLETON: Starting cleanup of ALL instances (${CandleManager.instances.size} active, ${CandleManager.pendingInstances.size} pending)`);
+    
+    // 🚨 DIAGNOSTIC: Log all current instances and their creation sources
+    CandleManager.instances.forEach((instance, simId) => {
+      console.log(`🔍 ACTIVE INSTANCE: ${simId} -> ${instance.instanceId} | Created from: ${instance.createdFrom}`);
+    });
     
     // Wait for all pending creations with timeout
     const pendingPromises = Array.from(CandleManager.pendingInstances.values());
@@ -311,6 +347,7 @@ export class CandleManager {
       isInitialized: instance.isInitialized,
       lastUpdate: instance.lastPriceUpdate,
       interval: instance.candleInterval,
+      createdFrom: instance.createdFrom, // Include creation source
       validationStats: instance.validationStats
     }));
     
@@ -335,6 +372,15 @@ export class CandleManager {
   
   isInstanceInitialized(): boolean {
     return this.isInitialized && !this.isDestroyed;
+  }
+  
+  // 🚨 DIAGNOSTIC: Get creation info for this instance
+  getCreationInfo(): { instanceId: string; createdFrom: string; simulationId: string } {
+    return {
+      instanceId: this.instanceId,
+      createdFrom: this.createdFrom,
+      simulationId: this.simulationId
+    };
   }
   
   initialize(simulationStartTime: number, initialPrice?: number): void {
@@ -770,6 +816,7 @@ export class CandleManager {
         isDestroyed: true,
         isInitialized: false,
         candleCount: 0,
+        createdFrom: this.createdFrom,
         error: 'Instance is destroyed'
       };
     }
@@ -790,6 +837,7 @@ export class CandleManager {
       candleInterval: this.candleInterval,
       lastPrice: lastCandle ? lastCandle.close : 0,
       totalVolume: this.candles.reduce((sum, c) => sum + (c.volume || 0), 0),
+      createdFrom: this.createdFrom, // Include creation source in stats
       validationStats: {
         ...this.validationStats,
         successRate: this.validationStats.totalUpdates > 0 ? 
