@@ -1,4 +1,4 @@
-// backend/src/services/simulation/MarketEngine.ts - FIXED: Proper Timestamp Handling
+// backend/src/services/simulation/MarketEngine.ts - FIXED: Proper Timestamp Handling + Singleton Pattern
 import { 
   SimulationState, 
   PricePoint, 
@@ -171,7 +171,7 @@ export class MarketEngine implements IMarketEngine {
     extendedSim.currentPrice = Math.max(SIMULATION_CONSTANTS.MIN_PRICE, newPrice);
 
     // CRITICAL FIX: Use synchronous candle updates with proper timestamp handling
-    this.updatePriceCandlesSync(extendedSim);
+    await this.updatePriceCandlesSync(extendedSim);
 
     this.updateAggressiveMarketTrend(extendedSim);
     
@@ -228,27 +228,26 @@ export class MarketEngine implements IMarketEngine {
     extendedSim.currentPrice = Math.max(SIMULATION_CONSTANTS.MIN_PRICE, newPrice);
 
     // CRITICAL FIX: Use synchronous candle updates
-    this.updatePriceCandlesSync(extendedSim);
+    await this.updatePriceCandlesSync(extendedSim);
   }
 
-  // CRITICAL FIX: Synchronous candle update method to prevent ordering issues
-  private updatePriceCandlesSync(simulation: ExtendedSimulationState): void {
+  // 🚨 CRITICAL FIX: Async candle update method with proper singleton usage
+  private async updatePriceCandlesSync(simulation: ExtendedSimulationState): Promise<void> {
     const timeframe = this.simulationTimeframes.get(simulation.id) || this.getCurrentTimeframe(simulation.id);
     const config = this.timeframeConfig(timeframe);
-    const candleManager = this.candleManagers.get(simulation.id);
+    let candleManager = this.candleManagers.get(simulation.id);
     
     if (!candleManager) {
       console.error(`❌ No CandleManager found for simulation ${simulation.id}`);
-      const newCandleManager = this.initializeCandleManager(simulation.id, config.interval);
-      console.log(`🔄 Recreated CandleManager for simulation ${simulation.id}`);
-      
-      if (!this.candleManagers.get(simulation.id)) {
-        console.error(`💥 Failed to recreate CandleManager`);
+      try {
+        const newCandleManager = await this.initializeCandleManager(simulation.id, config.interval);
+        console.log(`🔄 Recreated CandleManager for simulation ${simulation.id}`);
+        candleManager = newCandleManager;
+      } catch (error) {
+        console.error(`💥 Failed to recreate CandleManager:`, error);
         return;
       }
     }
-    
-    const manager = this.candleManagers.get(simulation.id)!;
     
     // CRITICAL FIX: Use simulation time directly without rounding
     // The CandleManager will handle proper alignment internally
@@ -261,10 +260,10 @@ export class MarketEngine implements IMarketEngine {
     
     try {
       // CRITICAL FIX: Synchronous candle update
-      manager.updateCandle(currentTime, simulation.currentPrice, currentVolume);
+      candleManager.updateCandle(currentTime, simulation.currentPrice, currentVolume);
       
       // Get updated candles from manager
-      simulation.priceHistory = manager.getCandles(500);
+      simulation.priceHistory = candleManager.getCandles(500);
       const finalCandleCount = simulation.priceHistory.length;
       
       if (finalCandleCount > previousCandleCount) {
@@ -308,13 +307,15 @@ export class MarketEngine implements IMarketEngine {
     return baseVolume + volumeBoost;
   }
 
-  private initializeCandleManager(simulationId: string, candleInterval: number): CandleManager {
+  // 🚨 CRITICAL FIX: Use singleton pattern instead of direct instantiation
+  private async initializeCandleManager(simulationId: string, candleInterval: number): Promise<CandleManager> {
     try {
       console.log(`🏭 Creating CandleManager for ${simulationId}...`);
       
       const aggressiveInterval = Math.min(candleInterval, 8000);
       
-      const manager = new CandleManager(aggressiveInterval);
+      // 🚨 FIXED: Use singleton pattern instead of direct instantiation
+      const manager = await CandleManager.getInstance(simulationId, aggressiveInterval);
       this.candleManagers.set(simulationId, manager);
       
       console.log(`🏭 CREATED: CandleManager for ${simulationId}:`);
@@ -326,24 +327,51 @@ export class MarketEngine implements IMarketEngine {
       console.error(`❌ Failed to create CandleManager for ${simulationId}:`, error);
       
       try {
-        const fallbackManager = new CandleManager(5000);
+        // 🚨 FIXED: Use singleton pattern for fallback too
+        const fallbackManager = await CandleManager.getInstance(simulationId, 5000);
         this.candleManagers.set(simulationId, fallbackManager);
         console.log(`✅ Emergency CandleManager created successfully`);
         return fallbackManager;
       } catch (fallbackError) {
         console.error(`💥 Even fallback creation failed:`, fallbackError);
-        
-        const mockManager = {
-          updateCandle: () => { console.log('Mock candle update'); },
-          getCandles: () => [],
-          clear: () => { console.log('Mock candle clear'); },
-          shutdown: () => { console.log('Mock candle shutdown'); }
-        } as any;
-        
-        this.candleManagers.set(simulationId, mockManager);
-        console.log(`🆘 Mock manager created to prevent crash`);
-        return mockManager;
+        throw new Error(`Failed to create CandleManager for ${simulationId}: ${fallbackError}`);
       }
+    }
+  }
+
+  // 🚨 NEW: Method to cleanup CandleManager for a simulation
+  async cleanupCandleManager(simulationId: string): Promise<void> {
+    const manager = this.candleManagers.get(simulationId);
+    if (manager) {
+      try {
+        await manager.shutdown();
+        this.candleManagers.delete(simulationId);
+        await CandleManager.cleanup(simulationId);
+        console.log(`✅ Cleaned up CandleManager for simulation ${simulationId}`);
+      } catch (error) {
+        console.error(`❌ Error cleaning up CandleManager for ${simulationId}:`, error);
+      }
+    }
+  }
+
+  // 🚨 NEW: Method to cleanup all CandleManagers
+  async cleanupAllCandleManagers(): Promise<void> {
+    const cleanupPromises = Array.from(this.candleManagers.keys()).map(async (simulationId) => {
+      try {
+        await this.cleanupCandleManager(simulationId);
+      } catch (error) {
+        console.error(`❌ Error cleaning up CandleManager for ${simulationId}:`, error);
+      }
+    });
+    
+    await Promise.allSettled(cleanupPromises);
+    this.candleManagers.clear();
+    
+    try {
+      await CandleManager.cleanupAll();
+      console.log(`✅ All CandleManagers cleaned up successfully`);
+    } catch (error) {
+      console.error(`❌ Error during global CandleManager cleanup:`, error);
     }
   }
 
