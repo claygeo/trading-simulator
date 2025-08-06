@@ -736,7 +736,7 @@ export const SimulationApi = {
     }
   },
   
-  // 🔧 COMMUNICATION FIX: Enhanced speed setting with validation
+  // 🔧 COMMUNICATION FIX: Enhanced speed setting with validation - FIXED
   setSimulationSpeed: async (id: string, speed: number): Promise<ApiResponse<any>> => {
     try {
       const response = await api.post(`/simulation/${id}/speed`, { 
@@ -751,8 +751,8 @@ export const SimulationApi = {
       }
       
       return { 
-        data: response.data,
-        error: null 
+        data: response.data
+        // FIXED: Removed error: null - it's optional so we omit it
       };
     } catch (error: any) {
       console.error(`❌ COMMUNICATION: Error setting simulation speed for ${id}:`, error);
@@ -764,7 +764,7 @@ export const SimulationApi = {
     }
   },
 
-  // NEW: Set TPS mode for stress testing
+  // NEW: Set TPS mode for stress testing - FIXED
   setTPSMode: async (id: string, mode: string): Promise<ApiResponse<any>> => {
     try {
       const response = await api.post(`/simulation/${id}/tps-mode`, { 
@@ -773,8 +773,8 @@ export const SimulationApi = {
         requestId: Math.random().toString(36).substr(2, 9)
       });
       return { 
-        data: response.data,
-        error: null 
+        data: response.data
+        // FIXED: Removed error: null
       };
     } catch (error: any) {
       console.error(`❌ COMMUNICATION: Error setting TPS mode for ${id}:`, error);
@@ -786,7 +786,7 @@ export const SimulationApi = {
     }
   },
 
-  // NEW: Trigger liquidation cascade
+  // NEW: Trigger liquidation cascade - FIXED
   triggerLiquidationCascade: async (id: string): Promise<ApiResponse<any>> => {
     try {
       const response = await api.post(`/simulation/${id}/stress-test/liquidation-cascade`, {
@@ -794,8 +794,8 @@ export const SimulationApi = {
         requestId: Math.random().toString(36).substr(2, 9)
       });
       return { 
-        data: response.data,
-        error: null 
+        data: response.data
+        // FIXED: Removed error: null
       };
     } catch (error: any) {
       console.error(`❌ COMMUNICATION: Error triggering liquidation cascade for ${id}:`, error);
