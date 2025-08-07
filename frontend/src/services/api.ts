@@ -17,6 +17,8 @@ const getApiBaseUrl = (): string => {
 
 const API_BASE_URL = getApiBaseUrl();
 
+console.log('🔍 API_BASE_URL Debug:', API_BASE_URL, 'Env vars:', process.env.REACT_APP_API_BASE_URL, process.env.REACT_APP_BACKEND_URL);
+
 // 🔧 COMMUNICATION FIX: Enhanced axios instance with better error handling
 const api = axios.create({
   baseURL: API_BASE_URL,
