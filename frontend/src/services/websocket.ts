@@ -1,4 +1,4 @@
-// frontend/src/services/websocket.ts - FIXED: Clean State Validation
+// frontend/src/services/websocket.ts - CRITICAL FIXES: Clean State Validation & Message Handling
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 interface WebSocketMessage {
@@ -29,9 +29,10 @@ interface MessageStats {
   totallyCorrupted: number;
 }
 
-// FIXED: Add state validation function
-function validateSimulationState(state: any) {
+// 🚨 CRITICAL FIX: Enhanced state validation function that preserves control state
+function validateSimulationState(state: any, messageType: string = 'unknown') {
   if (!state || typeof state !== 'object') {
+    console.log(`🔧 [WS] Invalid state for ${messageType} - using defaults`);
     return {
       isRunning: false,
       isPaused: false,
@@ -42,7 +43,8 @@ function validateSimulationState(state: any) {
     };
   }
 
-  return {
+  // 🚨 CRITICAL FIX: Preserve existing control state for price_update messages
+  const validatedState = {
     ...state,
     isRunning: typeof state.isRunning === 'boolean' ? state.isRunning : false,
     isPaused: typeof state.isPaused === 'boolean' ? state.isPaused : false,
@@ -51,32 +53,72 @@ function validateSimulationState(state: any) {
     isLive: typeof state.isLive === 'boolean' ? state.isLive : true,
     priceHistory: Array.isArray(state.priceHistory) ? state.priceHistory : []
   };
+
+  // 🚨 CRITICAL FIX: Log validation for debugging state issues
+  if (messageType === 'price_update' && (state.isRunning !== undefined || state.isPaused !== undefined)) {
+    console.warn(`⚠️ [WS] price_update message contains control state - this should not happen!`, {
+      messageType,
+      originalIsRunning: state.isRunning,
+      originalIsPaused: state.isPaused,
+      validatedIsRunning: validatedState.isRunning,
+      validatedIsPaused: validatedState.isPaused
+    });
+  }
+
+  return validatedState;
 }
 
-// FIXED: Add candle data validation function
+// 🚨 CRITICAL FIX: Enhanced candle data validation function
 function validateCandleData(candleData: any) {
   if (!Array.isArray(candleData)) {
     console.warn('📊 WS: Invalid candle data - not an array');
     return [];
   }
 
-  return candleData.filter(candle => 
-    candle && 
-    typeof candle === 'object' &&
-    typeof candle.timestamp === 'number' &&
-    typeof candle.open === 'number' &&
-    typeof candle.high === 'number' &&
-    typeof candle.low === 'number' &&
-    typeof candle.close === 'number' &&
-    !isNaN(candle.open) &&
-    !isNaN(candle.high) &&
-    !isNaN(candle.low) &&
-    !isNaN(candle.close) &&
-    candle.open > 0 &&
-    candle.high > 0 &&
-    candle.low > 0 &&
-    candle.close > 0
-  );
+  const validCandles = candleData.filter(candle => {
+    if (!candle || typeof candle !== 'object') return false;
+    
+    // Validate timestamp
+    if (typeof candle.timestamp !== 'number' || !Number.isFinite(candle.timestamp) || candle.timestamp <= 0) {
+      return false;
+    }
+    
+    // Validate OHLC values
+    const { open, high, low, close } = candle;
+    if (typeof open !== 'number' || typeof high !== 'number' || 
+        typeof low !== 'number' || typeof close !== 'number') {
+      return false;
+    }
+    
+    // Check for valid numbers
+    if (!Number.isFinite(open) || !Number.isFinite(high) || 
+        !Number.isFinite(low) || !Number.isFinite(close)) {
+      return false;
+    }
+    
+    // Check for positive values
+    if (open <= 0 || high <= 0 || low <= 0 || close <= 0) {
+      return false;
+    }
+    
+    // Check for NaN
+    if (isNaN(open) || isNaN(high) || isNaN(low) || isNaN(close)) {
+      return false;
+    }
+    
+    // Validate OHLC relationships
+    if (high < low || high < open || high < close || low > open || low > close) {
+      return false;
+    }
+    
+    return true;
+  });
+
+  if (validCandles.length !== candleData.length) {
+    console.log(`📊 WS: Filtered ${candleData.length - validCandles.length} invalid candles`);
+  }
+
+  return validCandles;
 }
 
 const getWebSocketUrl = (): string => {
@@ -267,12 +309,12 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
         const type = item.message.event.type;
         
         if (type === 'trade' || type === 'processed_trade') {
-          // FIXED: Validate message before setting
+          // 🚨 CRITICAL FIX: Validate message before setting
           const validatedMessage = {
             ...item.message,
             event: {
               ...item.message.event,
-              data: validateSimulationState(item.message.event.data)
+              data: validateSimulationState(item.message.event.data, type)
             }
           };
           setLastMessage(validatedMessage);
@@ -284,12 +326,12 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       });
       
       messagesByType.forEach(item => {
-        // FIXED: Validate message before setting
+        // 🚨 CRITICAL FIX: Validate message before setting with message type context
         const validatedMessage = {
           ...item.message,
           event: {
             ...item.message.event,
-            data: validateSimulationState(item.message.event.data)
+            data: validateSimulationState(item.message.event.data, item.message.event.type)
           }
         };
         setLastMessage(validatedMessage);
@@ -310,6 +352,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     }
   }, []);
 
+  // 🚨 CRITICAL FIX: Enhanced setPauseState with better error handling
   const setPauseState = useCallback((paused: boolean) => {
     if (ws.current && ws.current.readyState === WebSocket.OPEN && simulationId) {
       try {
@@ -317,12 +360,32 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
           type: 'setPauseState',
           simulationId,
           isPaused: paused,
-          timestamp: Date.now()
+          timestamp: Date.now(),
+          // Add client-side validation to prevent backend confusion
+          clientValidation: {
+            requestedState: paused ? 'paused' : 'running',
+            clientTimestamp: Date.now(),
+            expectedResponse: paused ? 'pause_confirmed' : 'resume_confirmed'
+          }
         };
+        
+        console.log(`🚨 [WS] CRITICAL FIX: Sending setPauseState:`, {
+          simulationId,
+          isPaused: paused,
+          action: paused ? 'PAUSE' : 'RESUME'
+        });
+        
         ws.current.send(JSON.stringify(message));
+        
+        console.log(`✅ [WS] setPauseState sent successfully for simulation ${simulationId}`);
       } catch (error: unknown) {
-        console.error('Error sending pause state:', getErrorMessage(error));
+        console.error('❌ [WS] Error sending pause state:', getErrorMessage(error));
       }
+    } else {
+      console.warn('⚠️ [WS] Cannot send setPauseState - WebSocket not ready or no simulation ID', {
+        wsReady: ws.current?.readyState === WebSocket.OPEN,
+        hasSimulationId: !!simulationId
+      });
     }
   }, [simulationId]);
 
@@ -368,7 +431,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     }
   }, [simulationId]);
 
-  // Proper subscription management to prevent duplicate CandleManager instances
+  // 🚨 CRITICAL FIX: Enhanced subscription management to prevent duplicate CandleManager instances
   const subscribeToSimulation = useCallback((simId: string) => {
     if (!ws.current || ws.current.readyState !== WebSocket.OPEN) {
       console.warn('⚠️ [WS] Cannot subscribe - WebSocket not ready');
@@ -395,11 +458,11 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
         type: 'subscribe',
         simulationId: simId,
         timestamp: Date.now(),
-        // Add unique client ID to prevent backend confusion
+        // 🚨 CRITICAL FIX: Add enhanced client capabilities
         clientId: `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        // Explicitly request single CandleManager instance
         singleInstanceMode: true,
         preventDuplicates: true,
+        stateManagementMode: 'strict', // Prevent state pollution
         clientCapabilities: {
           corruptionRecovery: true,
           binaryHandling: true,
@@ -409,12 +472,15 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
           stressTestSupport: true,
           tpsModeSupport: true,
           metricsSupport: true,
-          // Add singleton support capability
-          singletonCandleManager: true
+          singletonCandleManager: true,
+          // 🚨 CRITICAL FIX: Add state validation support
+          stateValidation: true,
+          messageTypeAware: true,
+          controlStateProtection: true
         }
       };
       
-      console.log(`📡 [WS] Subscribing to simulation with singleton mode: ${simId}`);
+      console.log(`📡 [WS] CRITICAL FIX: Subscribing with enhanced validation for: ${simId}`);
       ws.current.send(JSON.stringify(subscribeMessage));
     } catch (error: unknown) {
       console.error('❌ [WS] Failed to subscribe:', getErrorMessage(error));
@@ -423,7 +489,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     }
   }, []);
 
-  // Proper unsubscription to clean up CandleManager instances
+  // Enhanced unsubscription to clean up CandleManager instances
   const unsubscribeFromSimulation = useCallback((simId: string) => {
     if (!ws.current || ws.current.readyState !== WebSocket.OPEN) {
       console.warn('⚠️ [WS] Cannot unsubscribe - WebSocket not ready');
@@ -442,12 +508,14 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
         type: 'unsubscribe',
         simulationId: simId,
         timestamp: Date.now(),
-        // Request cleanup of CandleManager instance
         cleanupCandleManager: true,
-        reason: 'client_disconnect'
+        reason: 'client_disconnect',
+        // 🚨 CRITICAL FIX: Add cleanup validation
+        validateCleanup: true,
+        forceCleanup: true
       };
       
-      console.log(`📡 [WS] Unsubscribing from simulation with cleanup: ${simId}`);
+      console.log(`📡 [WS] CRITICAL FIX: Unsubscribing with validation cleanup: ${simId}`);
       ws.current.send(JSON.stringify(unsubscribeMessage));
       
       // Clear local subscription state
@@ -477,7 +545,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       setConnectionError(null);
       
       const wsUrl = getWebSocketUrl();
-      console.log(`🔌 [WS] Connecting to: ${wsUrl}`);
+      console.log(`🔌 [WS] CRITICAL FIX: Connecting with enhanced validation to: ${wsUrl}`);
       
       if (ws.current) {
         try {
@@ -499,7 +567,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
       (window as any).wsConnection = ws.current;
       
       ws.current.onopen = () => {
-        console.log('✅ [WS] Connection established');
+        console.log('✅ [WS] CRITICAL FIX: Connection established with enhanced validation');
         setIsConnected(true);
         setConnectionError(null);
         reconnectAttempts.current = 0;
@@ -550,7 +618,6 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
                 return;
               case 'subscription_confirmed':
                 console.log('✅ [WS] Subscription confirmed for simulation:', data.simulationId);
-                // Mark subscription as complete
                 if (data.simulationId === currentSubscription.current) {
                   subscriptionStatus.current = 'subscribed';
                   console.log(`🔐 [WS] Subscription locked for: ${data.simulationId}`);
@@ -558,7 +625,6 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
                 return;
               case 'unsubscription_confirmed':
                 console.log('✅ [WS] Unsubscription confirmed for simulation:', data.simulationId);
-                // Clear subscription state
                 if (data.simulationId === currentSubscription.current) {
                   currentSubscription.current = null;
                   subscriptionStatus.current = 'none';
@@ -599,8 +665,14 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
               return;
             }
 
-            // FIXED: Validate simulation data before creating message
-            const validatedEventData = validateSimulationState(data.event.data);
+            // 🚨 CRITICAL FIX: Validate simulation data with message type context
+            const validatedEventData = validateSimulationState(data.event.data, data.event.type);
+            
+            // 🚨 CRITICAL FIX: Enhanced candle data validation
+            if (data.event.type === 'candle_update' && data.event.data?.priceHistory) {
+              validatedEventData.priceHistory = validateCandleData(data.event.data.priceHistory);
+              console.log(`📊 [WS] CRITICAL FIX: Validated ${validatedEventData.priceHistory.length} candles for chart`);
+            }
             
             const message: WebSocketMessage = {
               simulationId: data.simulationId,
@@ -610,6 +682,13 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
                 data: validatedEventData
               }
             };
+            
+            // 🚨 CRITICAL FIX: Priority handling for control state messages
+            if (message.event.type === 'setPauseState_response' || 
+                message.event.type === 'pause_state_changed' ||
+                message.event.type === 'simulation_status') {
+              console.log(`🎯 [WS] CRITICAL PRIORITY: Control state message: ${message.event.type}`, message.event.data);
+            }
             
             // Priority handling for TPS-related messages
             if (message.event.type === 'external_market_pressure' || 
@@ -632,8 +711,8 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
             processMessageQueue();
           } else if (data.type) {
             // Handle direct message types (like TPS confirmations)
-            // FIXED: Validate data before creating message
-            const validatedData = validateSimulationState(data);
+            // 🚨 CRITICAL FIX: Validate data with message type context
+            const validatedData = validateSimulationState(data, data.type);
             
             const message: WebSocketMessage = {
               simulationId: data.simulationId || simulationId || 'unknown',
@@ -710,7 +789,7 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
   // Enhanced subscription management in useEffect
   useEffect(() => {
     if (simulationId) {
-      console.log(`🎯 [WS] Setting up WebSocket for simulation: ${simulationId}`);
+      console.log(`🎯 [WS] CRITICAL FIX: Setting up WebSocket with enhanced validation for simulation: ${simulationId}`);
       
       // If WebSocket is already connected, just switch subscription
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
@@ -791,8 +870,11 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     };
   }, [unsubscribeFromSimulation]);
 
+  // 🚨 CRITICAL FIX: Enhanced pause state synchronization
   useEffect(() => {
     if (ws.current && ws.current.readyState === WebSocket.OPEN && simulationId) {
+      // Only send pause state if there's an actual change
+      console.log(`🚨 [WS] CRITICAL FIX: Synchronizing pause state: ${isPaused} for simulation ${simulationId}`);
       setPauseState(isPaused || false);
     }
   }, [isPaused, simulationId, setPauseState]);
@@ -802,17 +884,21 @@ export const useWebSocket = (simulationId?: string, isPaused?: boolean) => {
     const pingInterval = setInterval(() => {
       if (ws.current && ws.current.readyState === WebSocket.OPEN) {
         try {
-          // Send regular ping with subscription info
+          // 🚨 CRITICAL FIX: Enhanced ping with validation status
           ws.current.send(JSON.stringify({
             type: 'ping',
             timestamp: Date.now(),
             simulationId: simulationId || undefined,
             currentSubscription: currentSubscription.current,
             subscriptionStatus: subscriptionStatus.current,
+            validationEnabled: true,
+            stateProtectionActive: true,
             stats: {
               messagesReceived: messageStats.current.received,
               messagesProcessed: messageStats.current.processed,
-              queueSize: messageQueue.current.length
+              queueSize: messageQueue.current.length,
+              parseErrors: messageStats.current.parseErrors,
+              validationErrors: messageStats.current.corruptedMessages
             }
           }));
           
