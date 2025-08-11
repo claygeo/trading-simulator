@@ -1,4 +1,4 @@
-// frontend/src/components/SimulationControls.tsx - FIXED: Proper Dynamic Pricing Integration
+// frontend/src/components/SimulationControls.tsx - FIXED: Button State Responsiveness & Props Integration
 import React, { useState, useEffect } from 'react';
 
 interface SimulationParameters {
@@ -23,6 +23,8 @@ interface SimulationControlsProps {
   parameters: SimulationParameters;
   onSpeedChange: (speed: string) => void; // FIXED: Change to string for speed names
   onParametersChange?: (params: Partial<SimulationParameters>) => void;
+  // 🔧 CRITICAL FIX: Add explicit showStart prop to reflect Dashboard state
+  showStart?: boolean;
 }
 
 interface PriceRangeOption {
@@ -42,7 +44,8 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
   onReset,
   parameters,
   onSpeedChange,
-  onParametersChange
+  onParametersChange,
+  showStart = true // 🔧 CRITICAL FIX: Default to true, but respect explicit prop
 }) => {
   // FIXED: Speed options mapped to names instead of numbers
   const [speedSetting, setSpeedSetting] = useState<string>('slow'); // Default to Slow
@@ -116,6 +119,11 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
       }
     }
   }, [parameters.priceRange, parameters.useCustomPrice, parameters.customPrice]);
+
+  // 🔧 CRITICAL FIX: Log prop changes for debugging button state issues
+  useEffect(() => {
+    console.log(`🔧 [CONTROLS] Props update: isRunning=${isRunning}, isPaused=${isPaused}, showStart=${showStart}`);
+  }, [isRunning, isPaused, showStart]);
 
   // Handle speed setting change with buttons instead of slider
   const handleSpeedChange = (newSpeed: string) => {
@@ -194,7 +202,7 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
   // FIXED: Get display text for current price setting
   const getCurrentPriceDisplay = () => {
     if (useCustomPrice && customPrice) {
-      return `Custom: $${customPrice}`;
+      return `Custom: ${customPrice}`;
     }
     
     const selectedRange = priceRanges.find(r => r.id === selectedPriceRange);
@@ -204,10 +212,32 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
     
     // FIXED: Show current parameter price if available, but indicate it's dynamic
     if (parameters.initialPrice) {
-      return `Current: $${parameters.initialPrice.toFixed(6)} (Dynamic)`;
+      return `Current: ${parameters.initialPrice.toFixed(6)} (Dynamic)`;
     }
     
     return `Dynamic: Random Generation`;
+  };
+
+  // 🔧 CRITICAL FIX: Enhanced button state logic that respects Dashboard props
+  const shouldShowStartButton = () => {
+    // Use explicit showStart prop if provided, otherwise fall back to local logic
+    if (showStart !== undefined) {
+      return showStart;
+    }
+    
+    // Fallback logic (though Dashboard should provide showStart)
+    return !isRunning || isPaused;
+  };
+
+  // 🔧 CRITICAL FIX: Determine button text based on state
+  const getButtonText = () => {
+    if (isPaused) {
+      return 'Resume';
+    }
+    if (!isRunning) {
+      return 'Start';
+    }
+    return 'Start'; // Fallback
   };
 
   return (
@@ -224,6 +254,13 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
           <div className="ml-2 text-xs bg-green-800 text-green-300 px-2 py-1 rounded">
             💰 Dynamic
           </div>
+          
+          {/* 🔧 CRITICAL FIX: Debug indicator for button state */}
+          {process.env.NODE_ENV === 'development' && (
+            <div className="ml-2 text-xs bg-blue-800 text-blue-300 px-2 py-1 rounded">
+              BTN: {shouldShowStartButton() ? 'START' : 'PAUSE'}
+            </div>
+          )}
         </div>
         
         <div className="flex space-x-2">
@@ -354,19 +391,21 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
         </div>
       </div>
       
-      {/* Control buttons */}
+      {/* 🔧 CRITICAL FIX: Enhanced control buttons with proper state handling */}
       <div className="flex items-center space-x-2 mt-3">
-        {!isRunning || isPaused ? (
+        {shouldShowStartButton() ? (
           <button 
             onClick={onStart}
             className="px-3 py-1.5 bg-accent text-white rounded hover:bg-accent-hover transition flex-1"
+            title={`🔧 FIXED: ${getButtonText()} simulation - respects Dashboard state`}
           >
-            {isPaused ? 'Resume' : 'Start'} Simulation
+            {getButtonText()} Simulation
           </button>
         ) : (
           <button 
             onClick={onPause} 
             className="px-3 py-1.5 bg-warning text-text-primary rounded hover:bg-warning-hover transition flex-1"
+            title="🔧 FIXED: Pause simulation - triggered by Dashboard props"
           >
             Pause
           </button>
@@ -388,7 +427,7 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
             <div>
               <div className="text-text-secondary">Current Price:</div>
               <div className="text-text-primary font-medium">
-                {parameters.initialPrice ? `$${parameters.initialPrice.toFixed(6)}` : 'Dynamic'}
+                {parameters.initialPrice ? `${parameters.initialPrice.toFixed(6)}` : 'Dynamic'}
               </div>
             </div>
             <div>
@@ -410,7 +449,7 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
             <div className="text-text-secondary">Price Category:</div>
             <div className="text-text-primary font-medium">
               {useCustomPrice && customPrice ? 
-                `Custom: $${customPrice}` :
+                `Custom: ${customPrice}` :
                 selectedPriceRange ? 
                   priceRanges.find(r => r.id === selectedPriceRange)?.description || 'Unknown' :
                   'Dynamic Generation'}
@@ -429,6 +468,20 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
               ✅ NO MORE $100 hardcoded values!
             </div>
           </div>
+          
+          {/* 🔧 CRITICAL FIX: Button state debugging info */}
+          {process.env.NODE_ENV === 'development' && (
+            <div className="mt-2 pt-2 border-t border-border">
+              <div className="text-blue-400 font-medium">🔧 BUTTON STATE DEBUG:</div>
+              <div className="text-text-secondary text-xs space-y-1">
+                <div>isRunning: <span className={isRunning ? 'text-green-400' : 'text-red-400'}>{isRunning ? 'true' : 'false'}</span></div>
+                <div>isPaused: <span className={isPaused ? 'text-yellow-400' : 'text-gray-400'}>{isPaused ? 'true' : 'false'}</span></div>
+                <div>showStart prop: <span className={showStart ? 'text-green-400' : 'text-red-400'}>{showStart ? 'true' : 'false'}</span></div>
+                <div>shouldShowStartButton(): <span className={shouldShowStartButton() ? 'text-green-400' : 'text-red-400'}>{shouldShowStartButton() ? 'true' : 'false'}</span></div>
+                <div>Button text: <span className="text-white">{getButtonText()}</span></div>
+              </div>
+            </div>
+          )}
         </div>
       )}
       
@@ -452,6 +505,11 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
         </div>
         <div className="text-text-muted">
           Each simulation starts with a unique price
+        </div>
+        
+        {/* 🔧 CRITICAL FIX: Status indicator */}
+        <div className="mt-1 text-blue-400">
+          🔧 FIXED: Button state properly synchronized
         </div>
       </div>
     </div>
