@@ -1,4 +1,4 @@
-// frontend/src/components/SimulationControls.tsx - FIXED: Button State Responsiveness & Props Integration
+// frontend/src/components/SimulationControls.tsx - CRITICAL FIXES: Button State Responsiveness & Props Integration
 import React, { useState, useEffect } from 'react';
 
 interface SimulationParameters {
@@ -23,7 +23,7 @@ interface SimulationControlsProps {
   parameters: SimulationParameters;
   onSpeedChange: (speed: string) => void; // FIXED: Change to string for speed names
   onParametersChange?: (params: Partial<SimulationParameters>) => void;
-  // 🔧 CRITICAL FIX: Add explicit showStart prop to reflect Dashboard state
+  // 🚨 CRITICAL FIX: Add explicit showStart prop to reflect Dashboard state
   showStart?: boolean;
 }
 
@@ -45,7 +45,7 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
   parameters,
   onSpeedChange,
   onParametersChange,
-  showStart = true // 🔧 CRITICAL FIX: Default to true, but respect explicit prop
+  showStart // 🚨 CRITICAL FIX: Respect explicit prop from Dashboard
 }) => {
   // FIXED: Speed options mapped to names instead of numbers
   const [speedSetting, setSpeedSetting] = useState<string>('slow'); // Default to Slow
@@ -120,9 +120,9 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
     }
   }, [parameters.priceRange, parameters.useCustomPrice, parameters.customPrice]);
 
-  // 🔧 CRITICAL FIX: Log prop changes for debugging button state issues
+  // 🚨 CRITICAL FIX: Log prop changes for debugging button state issues
   useEffect(() => {
-    console.log(`🔧 [CONTROLS] Props update: isRunning=${isRunning}, isPaused=${isPaused}, showStart=${showStart}`);
+    console.log(`🚨 [CONTROLS] CRITICAL PROPS UPDATE: isRunning=${isRunning}, isPaused=${isPaused}, showStart=${showStart}`);
   }, [isRunning, isPaused, showStart]);
 
   // Handle speed setting change with buttons instead of slider
@@ -218,18 +218,20 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
     return `Dynamic: Random Generation`;
   };
 
-  // 🔧 CRITICAL FIX: Enhanced button state logic that respects Dashboard props
+  // 🚨 CRITICAL FIX: Enhanced button state logic that ALWAYS respects Dashboard props
   const shouldShowStartButton = () => {
-    // Use explicit showStart prop if provided, otherwise fall back to local logic
+    // 🚨 CRITICAL: ALWAYS use showStart prop if provided by Dashboard
     if (showStart !== undefined) {
+      console.log(`🚨 [CONTROLS] Using Dashboard showStart prop: ${showStart}`);
       return showStart;
     }
     
-    // Fallback logic (though Dashboard should provide showStart)
+    // Fallback logic (should never be used if Dashboard provides showStart)
+    console.warn(`⚠️ [CONTROLS] No showStart prop - using fallback logic`);
     return !isRunning || isPaused;
   };
 
-  // 🔧 CRITICAL FIX: Determine button text based on state
+  // 🚨 CRITICAL FIX: Determine button text based on actual state
   const getButtonText = () => {
     if (isPaused) {
       return 'Resume';
@@ -238,6 +240,43 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
       return 'Start';
     }
     return 'Start'; // Fallback
+  };
+
+  // 🚨 CRITICAL FIX: Get button action based on state
+  const getButtonAction = () => {
+    const shouldShowStart = shouldShowStartButton();
+    
+    if (shouldShowStart) {
+      return onStart;
+    } else {
+      return onPause;
+    }
+  };
+
+  // 🚨 CRITICAL FIX: Get button styling based on state
+  const getButtonStyle = () => {
+    const shouldShowStart = shouldShowStartButton();
+    
+    if (shouldShowStart) {
+      return 'px-3 py-1.5 bg-accent text-white rounded hover:bg-accent-hover transition flex-1';
+    } else {
+      return 'px-3 py-1.5 bg-warning text-text-primary rounded hover:bg-warning-hover transition flex-1';
+    }
+  };
+
+  // 🚨 CRITICAL FIX: Get button title based on state
+  const getButtonTitle = () => {
+    const shouldShowStart = shouldShowStartButton();
+    
+    if (shouldShowStart) {
+      if (isPaused) {
+        return '🚨 CRITICAL FIX: Resume simulation - respects Dashboard state';
+      } else {
+        return '🚨 CRITICAL FIX: Start simulation - respects Dashboard state';
+      }
+    } else {
+      return '🚨 CRITICAL FIX: Pause simulation - triggered by Dashboard props';
+    }
   };
 
   return (
@@ -255,7 +294,7 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
             💰 Dynamic
           </div>
           
-          {/* 🔧 CRITICAL FIX: Debug indicator for button state */}
+          {/* 🚨 CRITICAL FIX: Debug indicator for button state */}
           {process.env.NODE_ENV === 'development' && (
             <div className="ml-2 text-xs bg-blue-800 text-blue-300 px-2 py-1 rounded">
               BTN: {shouldShowStartButton() ? 'START' : 'PAUSE'}
@@ -391,25 +430,15 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
         </div>
       </div>
       
-      {/* 🔧 CRITICAL FIX: Enhanced control buttons with proper state handling */}
+      {/* 🚨 CRITICAL FIX: Enhanced control buttons with proper state handling */}
       <div className="flex items-center space-x-2 mt-3">
-        {shouldShowStartButton() ? (
-          <button 
-            onClick={onStart}
-            className="px-3 py-1.5 bg-accent text-white rounded hover:bg-accent-hover transition flex-1"
-            title={`🔧 FIXED: ${getButtonText()} simulation - respects Dashboard state`}
-          >
-            {getButtonText()} Simulation
-          </button>
-        ) : (
-          <button 
-            onClick={onPause} 
-            className="px-3 py-1.5 bg-warning text-text-primary rounded hover:bg-warning-hover transition flex-1"
-            title="🔧 FIXED: Pause simulation - triggered by Dashboard props"
-          >
-            Pause
-          </button>
-        )}
+        <button 
+          onClick={getButtonAction()}
+          className={getButtonStyle()}
+          title={getButtonTitle()}
+        >
+          {shouldShowStartButton() ? `${getButtonText()} Simulation` : 'Pause'}
+        </button>
         
         <button 
           onClick={onReset}
@@ -469,16 +498,17 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
             </div>
           </div>
           
-          {/* 🔧 CRITICAL FIX: Button state debugging info */}
+          {/* 🚨 CRITICAL FIX: Button state debugging info */}
           {process.env.NODE_ENV === 'development' && (
             <div className="mt-2 pt-2 border-t border-border">
-              <div className="text-blue-400 font-medium">🔧 BUTTON STATE DEBUG:</div>
+              <div className="text-red-400 font-medium">🚨 CRITICAL FIX: BUTTON STATE DEBUG</div>
               <div className="text-text-secondary text-xs space-y-1">
                 <div>isRunning: <span className={isRunning ? 'text-green-400' : 'text-red-400'}>{isRunning ? 'true' : 'false'}</span></div>
                 <div>isPaused: <span className={isPaused ? 'text-yellow-400' : 'text-gray-400'}>{isPaused ? 'true' : 'false'}</span></div>
-                <div>showStart prop: <span className={showStart ? 'text-green-400' : 'text-red-400'}>{showStart ? 'true' : 'false'}</span></div>
+                <div>showStart prop: <span className={showStart !== undefined ? (showStart ? 'text-green-400' : 'text-red-400') : 'text-gray-400'}>{showStart !== undefined ? showStart ? 'true' : 'false' : 'undefined'}</span></div>
                 <div>shouldShowStartButton(): <span className={shouldShowStartButton() ? 'text-green-400' : 'text-red-400'}>{shouldShowStartButton() ? 'true' : 'false'}</span></div>
-                <div>Button text: <span className="text-white">{getButtonText()}</span></div>
+                <div>Button text: <span className="text-white">{shouldShowStartButton() ? getButtonText() : 'Pause'}</span></div>
+                <div>CRITICAL: <span className="text-green-400">Always respects Dashboard props ✅</span></div>
               </div>
             </div>
           )}
@@ -507,9 +537,9 @@ const SimulationControls: React.FC<SimulationControlsProps> = ({
           Each simulation starts with a unique price
         </div>
         
-        {/* 🔧 CRITICAL FIX: Status indicator */}
-        <div className="mt-1 text-blue-400">
-          🔧 FIXED: Button state properly synchronized
+        {/* 🚨 CRITICAL FIX: Status indicator */}
+        <div className="mt-1 text-red-400">
+          🚨 CRITICAL FIX: Button state properly synchronized with Dashboard
         </div>
       </div>
     </div>
