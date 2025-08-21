@@ -178,7 +178,7 @@ function validateSimulationState(state: any, messageType: string = 'unknown') {
 
   // 🚨 CRITICAL FIX: Validate trade data arrays
   if (validatedState.recentTrades && Array.isArray(validatedState.recentTrades)) {
-    validatedState.recentTrades = validatedState.recentTrades.filter(trade => {
+    validatedState.recentTrades = validatedState.recentTrades.filter((trade: any) => {
       return trade && typeof trade === 'object' && 
              typeof trade.price === 'number' && 
              typeof trade.timestamp === 'number';
@@ -187,7 +187,7 @@ function validateSimulationState(state: any, messageType: string = 'unknown') {
 
   // 🚨 CRITICAL FIX: Validate active positions array
   if (validatedState.activePositions && Array.isArray(validatedState.activePositions)) {
-    validatedState.activePositions = validatedState.activePositions.filter(position => {
+    validatedState.activePositions = validatedState.activePositions.filter((position: any) => {
       return position && typeof position === 'object' && 
              typeof position.quantity === 'number' && 
              typeof position.entryPrice === 'number';
